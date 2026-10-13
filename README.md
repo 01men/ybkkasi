@@ -34,6 +34,12 @@
 > **Agent 自治与 A2A**（autonomy A0-A3 + 点名调用端点，[contract-c3-agent-a2a.md](docs/contract-c3-agent-a2a.md)）·
 > IAM 场景级授权（sceneCode，deny→allow→fail-closed）· 审计证据锚点与场景维度时间线 · 通知中心持久化——
 > 详见 [docs/release-notes-2026-09-11-iaw-batch.md](docs/release-notes-2026-09-11-iaw-batch.md)。
+>
+> **语言口径（2026-10-13，REFACTOR-2026-10-13 阶段 2）**：本项目为**全中文单语**产品，不维护英文界面版本。
+> 表现层（控制台/面板/门户/CLI 输出/通知与审批文案/错误提示）一律中文；**协议层例外**——事件名、权限点、
+> 错误原因码、API 信封字段（ok/data/error）、环境变量名、浏览器存储键保留 ASCII 键不改写，因为它们是
+> 跨系统机器契约（RQ-DSH 定制轨、既有 MCP 客户端、selftest 断言、dsh 宿主校验均依赖）。每个协议键的中文
+> 释义见 [docs/协议键中文对照总表.md](docs/协议键中文对照总表.md)（R10）；新增对外协议键须同步该表。
 
 ---
 
