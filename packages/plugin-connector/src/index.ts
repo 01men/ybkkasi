@@ -16,7 +16,7 @@ import { Service } from '@deepseek-ai/cordis'
 import { PlatformEvents, newId, sha256Hex, scanSensitiveKeys, type Collection, type RecordBase, type ToolPrincipal } from '../../platform-core/src/index.ts'
 import { OcClient, OC_VERSION_PIN, type OcConnectionSummary, type OcRunLog, type OcTokenPolicy } from './client.ts'
 import { OcError } from './errors.ts'
-import { heuristicRiskLevel, rankOf, type RiskLevel } from './risk.ts'
+import { rankOf, resolveRiskLevel, riskTierOf, type RiskLevel, type RiskTier } from './risk.ts'
 import { inOdd, normalizeOdd, type OddDeclaration } from './odd.ts'
 import * as connectorTools from './tools.ts'
 
@@ -45,6 +45,8 @@ export interface CatalogActionRecord {
   name?: string
   description?: string
   riskLevel: RiskLevel
+  /** R6 声明式风险目录的 provider 分层（S1=低风险常规 / S2=高敏）；无声明时缺省，仅展示、审批联动后续迭代。 */
+  riskTier?: RiskTier
   requiredScopes: string[]
   providerPermissions: string[]
   inputSchema: Record<string, unknown>
@@ -568,12 +570,16 @@ export class ConnectorHubService extends Service {
       if (!service || !validServices.has(service)) continue
       const scopes = (Array.isArray(action.requiredScopes) ? action.requiredScopes : []).map(String)
       const perms = (Array.isArray(action.providerPermissions) ? action.providerPermissions : []).map(String)
+      // R6：风险级走声明目录（resolveRiskLevel：显式 > 声明 actions > 声明 defaultRisk > 启发式），
+      // 有 provider 声明时随记录带上 riskTier（S1/S2，仅展示、审批联动后续迭代）。
+      const riskTier = riskTierOf(service)
       mapped.push({
         id: action.id,
         service,
         ...(action.name !== undefined ? { name: String(action.name) } : {}),
         ...(action.description !== undefined ? { description: String(action.description) } : {}),
-        riskLevel: heuristicRiskLevel(action),
+        riskLevel: resolveRiskLevel(action, service),
+        ...(riskTier ? { riskTier } : {}),
         requiredScopes: scopes,
         providerPermissions: perms,
         inputSchema: action.inputSchema && typeof action.inputSchema === 'object' ? action.inputSchema : { type: 'object', properties: {} },
@@ -1137,7 +1143,7 @@ export class ConnectorHubService extends Service {
       }))
   }
 
-  /** 计划书 §2.4：pattern 命中 + riskCap ≥ action.riskLevel + readOnly/denyParams 强制（补齐 mcp 侧缺口）。 */
+  /** 计划书 §2.4：pattern 命中 + riskCap ≥ 风险级（R6：resolveRiskLevel 统一入口，声明目录优先）+ readOnly/denyParams 强制（补齐 mcp 侧缺口）。 */
   authorizeAgainst(group: ConnectorPermGroupRecord, action: CatalogActionRecord, input: Record<string, unknown>): { ok: true; policy: ProviderPolicy } | { ok: false; reason: string } {
     const policy = group.policies[action.service]
     if (!policy) return { ok: false, reason: `权限组 ${group.name} 未配置 provider ${action.service} 的策略` }
@@ -1150,11 +1156,12 @@ export class ConnectorHubService extends Service {
     const patternHit = patterns.some((pattern) => pattern === '*' || pattern === action.id
       || (pattern.endsWith('.*') && action.service === pattern.slice(0, -2)))
     if (!patternHit) return { ok: false, reason: `action ${action.id} 不在权限组 ${group.name} 的允许模式内` }
-    if (rankOf(policy.riskCap) < rankOf(action.riskLevel)) {
-      return { ok: false, reason: `action 风险级 ${action.riskLevel} 超出权限组 ${group.name} 的 riskCap ${policy.riskCap}` }
+    const riskLevel = resolveRiskLevel(action, action.service)
+    if (rankOf(policy.riskCap) < rankOf(riskLevel)) {
+      return { ok: false, reason: `action 风险级 ${riskLevel} 超出权限组 ${group.name} 的 riskCap ${policy.riskCap}` }
     }
-    if (policy.constraints?.readOnly && action.riskLevel !== 'read') {
-      return { ok: false, reason: `权限组 ${group.name} 为只读模式，action ${action.id}（${action.riskLevel}）被拒绝` }
+    if (policy.constraints?.readOnly && riskLevel !== 'read') {
+      return { ok: false, reason: `权限组 ${group.name} 为只读模式，action ${action.id}（${riskLevel}）被拒绝` }
     }
     for (const deniedKey of policy.constraints?.denyParams ?? []) {
       if (hasInputKey(input, deniedKey)) {

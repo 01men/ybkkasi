@@ -73,3 +73,33 @@ export function heuristicRiskLevel(action: RiskInputLike): RiskLevel {
   if ((action.description ?? '').length > 0 && WRITE_NAME.test(action.description!)) return 'write'
   return 'admin'
 }
+
+function isRiskLevel(value: unknown): value is RiskLevel {
+  return value === 'read' || value === 'write' || value === 'admin'
+}
+
+/**
+ * 风险分级统一入口（R6 声明式目录）。优先级：
+ *   action 显式 riskLevel > 声明目录 actions 级 > 声明目录 provider defaultRisk
+ *   > heuristicRiskLevel 启发式（含 admin 兜底）。
+ * service 取参（显式入参优先于 action.service）；声明命中后不再走启发式——声明即口径。
+ */
+export function resolveRiskLevel(action: RiskInputLike, service?: string): RiskLevel {
+  if (isRiskLevel((action as { riskLevel?: unknown }).riskLevel)) {
+    return (action as { riskLevel: RiskLevel }).riskLevel
+  }
+  const svc = String(service ?? action.service ?? '').trim()
+  const override = svc ? RISK_OVERRIDES[svc] : undefined
+  if (override) {
+    const declared = action.id !== undefined ? override.actions[String(action.id)] : undefined
+    if (isRiskLevel(declared)) return declared
+    return override.defaultRisk
+  }
+  return heuristicRiskLevel(action)
+}
+
+/** provider 风险分层读取（声明目录命中时返回 S1/S2，否则 undefined）。 */
+export function riskTierOf(service: unknown): RiskTier | undefined {
+  const svc = String(service ?? '').trim()
+  return svc ? RISK_OVERRIDES[svc]?.riskTier : undefined
+}
