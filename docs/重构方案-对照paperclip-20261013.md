@@ -274,3 +274,21 @@
 ---
 
 （本方案为全局基线文档；各阶段执行时以「阶段出口准则」为验收口径，执行记录回填至本文附录。）
+
+## 八、执行记录（REFACTOR-2026-10-13 实施回填）
+
+**执行窗口**：2026-10-13（阶段 0–4 单日完成，自洽并行推进）｜分支 `refactor/paperclip-alignment`｜回滚锚点 tag `refactor-stage-0..3`
+
+| 阶段 | 状态 | 出口锚点 | 基线报告 |
+|---|---|---|---|
+| 0 基线冻结与安全网 | ✔ | `refactor-stage-0`（selftest 1199/1199，R3/R11 双工具入库+构造性红测验证） | docs/重构基线-阶段0-20261013.md |
+| 1 清债（结构重构） | ✔ | `refactor-stage-1`（R5 鉴权收敛 rest-gate 单实现；R4 console 后端 4,702→300 行 15 域文件 + 前端 iam 六模块；定制轨同步演练：rebase 可行，差异仅 CRLF+4 行命名空间映射） | docs/重构基线-阶段1-20261013.md |
+| 2 汉化收敛 | ✔ | `refactor-stage-2`（R10 总表 280 键；错误映射全集断言 1201；R1 真实残留清零 + 279 条机制料豁免底册；lint:cjk 0 命中/strict 绿；全中文单语口径入 README/llms） | docs/重构基线-阶段2-20261013.md |
+| 3 paperclip 模式吸收 | ✔ | `refactor-stage-3`（R6 声明式风险目录 8 provider/43 action+生成校验链；R7 tokens.css 三端单源；R9 评审文档；R8 登记后续专项） | docs/重构基线-阶段3-20261013.md |
+| 4 dsh 适配回归 | ✔（发布环节待确认） | 契约清单逐项打钩（bundle.patch/compatibility/profiles/依赖位置/files 闭包双 yml 一致）；独立宿主回归全绿（selftest 1201 + full-chain-drill 27/27 + morning-peak-entry 50 并发零失败）；`@ybkk/gate-01` 正式发布涉 npm publish 与 push RQ-DSH 外部动作，待所有者确认后按 scripts/release.mjs 流程执行 | 本节 |
+
+**质量门全程记录**：selftest 1199（基线）→ 1200（收编 R6 单测）→ **1201**（错误映射全集断言），零下降；lint:manifests / contract-lint / lint-timers / check-boot-order 全程 0 错误。
+
+**顺带修复的产品级缺陷**（重构中发现）：① boot 连接器自动同步启动延迟 15s→90s（慢启动环境抢先 SSO 断言污染）；② 孤儿权限点 nas.ownership.write 补录 PermissionCatalog（自定义角色此前无法勾选）。
+
+**开发组织备注**：主控 + 后台并行代理（峰值五路）混合推进；代理因配额/认证故障中断两次，中断产物经主控验证修复后收口（教训已沉淀：字节级搬运须配套符号依赖全盘点；`git add -A` 在并行场景禁用，改精确路径暂存）。
