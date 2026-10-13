@@ -61,10 +61,17 @@ const TOKEN_WHITELIST = new Set([
   // 布尔 / 空 / 单位
   'true', 'false', 'null', 'undefined', 'none', 'None', 'NaN', 'ms', 'qps',
   'KB', 'MB', 'GB', 'TB', 'KiB', 'MiB', 'GiB', 'TiB', 'bytes', 'min', 'hour',
+  // 编码/密钥格式（协议层）
+  'base64', 'base64url', 'pkcs8', 'spki', 'pem', 'hex', 'utf8',
   // 前端技术标识符常见词（类名/键名拼料）
   'grid', 'flex', 'auto', 'none', 'hidden', 'block', 'inline', 'wrap', 'items',
   'center', 'start', 'dark', 'light', 'primary', 'danger', 'warning', 'info',
   'badge', 'card', 'panel', 'modal', 'toast', 'table', 'page', 'size', 'small',
+  // UI 语义 tone / 类名 token（CSS 语义色与样式族，协议层保留 ASCII）
+  'success', 'warning', 'danger', 'info', 'primary', 'default', 'secondary', 'ghost',
+  'btn', 'icon', 'tab', 'tabs', 'nav', 'row', 'col', 'wrap', 'gap', 'pill', 'dot',
+  'kbd', 'chart', 'terminal', 'ticket', 'globe', 'file', 'files', 'download', 'link',
+  'focus', 'hover', 'active', 'disabled', 'checked', 'selected', 'expanded',
   'medium', 'large', 'full', 'half', 'left', 'right', 'middle', 'top', 'bottom',
   'collapse', 'expand', 'search', 'filter', 'sort', 'reset', 'submit', 'cancel',
   'close', 'open', 'copy', 'copied', 'edit', 'delete', 'create', 'update', 'view',
@@ -121,7 +128,7 @@ export function extractHtmlVisibleTexts(html) {
 const METADATA_KEY_RE = /(?:icon|badge|perm|path|ext|landing|type|key|field|ref|view|tab|mode|size|tone|color|src|slot|align|shape|variant|scope|role|format|category|group|tags?|code|prop|attr|event|signal|channel|source|target|driver|adapter|strategy|slot)\s*:\s*$/
 
 /** DOM / 代码料调用上下文：字符串紧随这些调用形式出现 → 不判定 */
-const DOM_CALL_RE = /(?:\$|\bicon|\besc|\bcls|querySelectorAll|querySelector|getElementById|closest|createElement|addEventListener|removeEventListener|classList(?:\.[a-z]+)?|setAttribute|getAttribute|insertAdjacentHTML|dataset\.[a-zA-Z]+)\(\s*$/
+const DOM_CALL_RE = /(?:\$|\bicon|\besc|\bcls|\bh|querySelectorAll|querySelector|getElementById|closest|createElement|addEventListener|removeEventListener|classList(?:\.[a-z]+)?|setAttribute|getAttribute|insertAdjacentHTML|dataset\.[a-zA-Z]+)\(\s*$/
 
 /** HTML 片段 → 标签间文本节点数组（类名/属性被自然剥除） */
 export function extractTemplateTextNodes(fragment) {
@@ -250,18 +257,23 @@ export function scanJsFile(file, text) {
     if (METADATA_KEY_RE.test(before)) continue
     // DOM / 代码料调用上下文 → 代码料
     if (DOM_CALL_RE.test(before)) continue
-    // 比较操作右侧（e.key === 'Escape'、status === 'warn'）→ 枚举判定，代码料
-    if (/[=!]==?\s*$/.test(before)) continue
-    // 普通字符串内嵌 HTML / SVG 片段：走文本节点提取（SVG 无文本节点自然零命中）
-    if (lit.quote !== '`' && lit.value.includes('<') && lit.value.includes('>')) {
+    // 比较操作右侧（e.key === 'Escape'、status === 'warn'）与默认值右侧（params.get('tab') ?? 'catalog'）→ 枚举判定，代码料
+    if (/[=!]==?\s*$/.test(before) || /\?\?\s*$/.test(before) || /\|\|\s*$/.test(before)) continue
+    // CSS 值料（渐变/颜色函数）：样式非文案
+    if (lit.quote !== '`' && /(linear|radial)-gradient\(|rgba?\(|#[0-9a-fA-F]{3,8}\b/.test(lit.value) && !lit.value.includes(' ')) continue
+    // SVG 图形字符串（path/rect/circle 等绘图元素）：无用户可见文本，整串跳过
+    if (lit.quote !== '`' && /<(svg|path|rect|circle|line|polyline|polygon|g)[\s/>]/.test(lit.value)) continue
+    // 普通字符串内嵌 HTML / SVG 片段：走文本节点提取（需闭合标签；SVG 无文本节点自然零命中）
+    if (lit.quote !== '`' && lit.value.includes('<') && lit.value.includes('>') && /<\/[a-zA-Z]/.test(lit.value)) {
       for (const node of extractTemplateTextNodes(lit.value)) {
         if (isSuspectLiteral(node)) hits.push({ file, line: lineOf(lit.index), literal: node })
       }
       continue
     }
     if (lit.quote === '`') {
-      // 模板字面量：HTML 片段取文本节点；YAML 脚手架结构行跳过；其余按行判定
-      if (lit.value.includes('<') && lit.value.includes('>')) {
+      // 模板字面量：HTML 片段取文本节点；YAML 脚手架结构行跳过；其余按行判定。
+      // HTML 判定需存在闭合标签（CLI usage 的 <占位符> 无闭合，走按行判定）
+      if (lit.value.includes('<') && lit.value.includes('>') && /<\/[a-zA-Z]/.test(lit.value)) {
         for (const node of extractTemplateTextNodes(lit.value)) {
           if (isSuspectLiteral(node)) hits.push({ file, line: lineOf(lit.index), literal: node })
         }
@@ -270,13 +282,37 @@ export function scanJsFile(file, text) {
       for (const line of lit.value.split(/\r?\n/)) {
         const trimmed = line.trim()
         if (!trimmed || isYamlStructureLine(trimmed)) continue
+        // CLI usage 语法行（含 ≥2 个 --flag 或含命令管道 |）：接口语法契约非文案；真实文案行含 CJK 早已放行
+        if (isUsageSyntaxLine(trimmed)) continue
         if (isSuspectLiteral(trimmed)) hits.push({ file, line: lineOf(lit.index), literal: trimmed })
       }
       continue
     }
+    // CLI flag/option 语法 token（--user / --orgId= / -n）：接口语法契约，非文案
+    if (isFlagToken(lit.value)) continue
+    // CLI 域纯标识符字面量（字段键/枚举值如 pluginId、createdAt、online）：协议层保留 ASCII，
+    // 用户可见表头/枚举经 HEADER_ZH / zhEnum 中文伴随映射展示；句式（含空格）不受此规则豁免
+    if (/(^|[\\/])cli[\\/]/.test(file) && /^[a-z][a-zA-Z0-9_]{1,19}$/.test(lit.value)) continue
+    // YAML/JSON 结构行（脚手架模板、manifest 片段）：协议内容非文案（CLI 域放宽——脚手架为逐行字符串数组）
+    if (isYamlStructureLine(lit.value) && (/[\[\]{}:|]/.test(lit.value) || /(^|[\\/])cli[\\/]/.test(file))) continue
+    // URL 查询串模板（?path= / ?q=&kind=）：协议内容非文案
+    if (/^\?[\w=&%-]*$/.test(lit.value.trim())) continue
     if (isSuspectLiteral(lit.value)) hits.push({ file, line: lineOf(lit.index), literal: lit.value })
   }
   return hits
+}
+
+/** CLI usage 语法行：≥2 个 --flag 记号，或含命令管道分隔（真实文案不会命中） */
+export function isUsageSyntaxLine(line) {
+  if (/[一-鿿]/.test(line)) return false
+  const flagCount = (line.match(/--[\w-]+=?/g) ?? []).length
+  return flagCount >= 2 || /^\|\s/.test(line) || / \| /.test(line)
+}
+
+/** CLI flag/option 语法 token：--flag / --flag= / -f / --flag=value 形态 */
+export function isFlagToken(token) {
+  const t = token.trim()
+  return /^--?[a-zA-Z][\w-]*(=.{0,40})?$/.test(t) && t.length <= 44
 }
 
 /** 扫描单个 HTML 文件（文本节点与可见属性） */

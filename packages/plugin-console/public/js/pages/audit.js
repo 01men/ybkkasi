@@ -249,7 +249,7 @@ export async function renderAudit(content, params, ctx) {
       const table = renderTable({
         columns: [
           { title: dim === 'date' ? '日期' : dim === 'app' ? '应用' : dim === 'agent' ? 'Agent' : '组织', render: (r) => `<span class="col-strong">${esc(r.key)}</span>` },
-          { title: 'LLM Token', render: (r) => `<span class="col-num">${fmtNum(r.llmTokens)}</span>` },
+          { title: 'LLM Token 用量', render: (r) => `<span class="col-num">${fmtNum(r.llmTokens)}</span>` },
           { title: '工具调用', render: (r) => `<span class="col-num">${fmtNum(r.toolCalls)}</span>` },
           { title: '成本', render: (r) => `<span style="font-weight:600">${fmtCost(r.costYuan)}</span>` },
         ],

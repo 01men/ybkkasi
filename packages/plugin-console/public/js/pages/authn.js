@@ -79,7 +79,7 @@ export async function renderAuthn(content, params, ctx) {
               return `<span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;max-width:300px" title="生效权限点：${esc(tip)}">${summary || `<span class="mono fs-11">${esc(tip)}</span>`}</span>`
             },
           },
-          { title: 'ClientId', render: (p) => p.clientId ? `<span class="mono fs-12">${esc(p.clientId)}</span>` : '<span class="text-4">—</span>' },
+          { title: '客户端 ID', render: (p) => p.clientId ? `<span class="mono fs-12">${esc(p.clientId)}</span>` : '<span class="text-4">—</span>' },
           { title: '活跃令牌', width: 90, render: (p) => `<span class="col-num">${p.activeTokens}</span>` },
           { title: '状态', width: 90, render: (p) => statusBadge(p.status === 'active' ? 'active' : 'frozen', p.status === 'active' ? '正常' : '已禁用') },
           {
