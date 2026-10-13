@@ -192,9 +192,9 @@
      `var(--rq-*, fallback)` 引用：fallback 必须与本节值一字不差（改色双处同步）。
      dsh 宿主页面（或定制轨）在 :root 覆写任一 --rq-* 即可换卡片皮肤。 */
   --rq-edge: #e2e6ee;        /* 卡片描边 */
-  --rq-surface: #fff;        /* 卡片底/按钮底 */
+  --rq-surface: #fff;        /* 卡片/按钮底与反白文字 */
   --rq-muted-bg: #eef1f6;    /* 弱化底（chip/骨架/悬停） */
-  --rq-muted-fg: #5b6472;    /* 弱化文字（chip/参数/取消钮） */
+  --rq-muted-fg: #5b6472;    /* 弱化文字（chip/参数/取消钮）与灰底徽标 */
   --rq-info-bg: #e8f1fd;     /* 进行中浅底 */
   --rq-info-fg: #2563c4;     /* 主行动蓝（链接/进行中） */
   --rq-ok-bg: #e6f5ee;       /* 完成/成功浅底 */
