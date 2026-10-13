@@ -22,7 +22,7 @@ try {
 
 import { renderLogin } from './pages/login.js'
 import { renderDashboard } from './pages/dashboard.js'
-import { renderIam } from './pages/iam.js'
+import { renderIam } from './pages/iam/index.js'
 import { renderAuthn } from './pages/authn.js'
 import { renderMcp } from './pages/mcp.js'
 import { renderNas } from './pages/nas.js'
