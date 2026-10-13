@@ -204,8 +204,8 @@ button { font-family: inherit; }
   user-select: none;
 }
 .btn svg { width: 15px; height: 15px; }
-.btn-primary { background: var(--brand-500); color: var(--white); box-shadow: 0 2px 6px rgba(79, 110, 247, 0.3); }
-.btn-primary:hover { background: var(--brand-600); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79, 110, 247, 0.35); }
+.btn-primary { background: var(--brand-primary); color: var(--white); box-shadow: 0 2px 6px rgba(79, 110, 247, 0.3); }
+.btn-primary:hover { background: var(--brand-primary-deep); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79, 110, 247, 0.35); }
 .btn-primary:active { transform: translateY(0); }
 .btn-default { background: var(--surface); border-color: var(--border-strong); color: var(--text-2); }
 .btn-default:hover { border-color: var(--brand-400); color: var(--brand-600); background: var(--brand-50); }
@@ -334,7 +334,7 @@ textarea.form-control { height: auto; min-height: 88px; padding: 9px 12px; resiz
   color: var(--text-2); cursor: pointer; transition: all 0.15s; white-space: nowrap;
 }
 .chip:hover { border-color: var(--brand-300); color: var(--brand-600); }
-.chip.active { background: var(--brand-500); border-color: var(--brand-500); color: var(--white); font-weight: 500; }
+.chip.active { background: var(--brand-primary); border-color: var(--brand-primary); color: var(--white); font-weight: 500; }
 
 /* tabs（页内） */
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 18px; overflow-x: auto; }
@@ -345,7 +345,7 @@ textarea.form-control { height: auto; min-height: 88px; padding: 9px 12px; resiz
   transition: color 0.15s; user-select: none;
 }
 .tab:hover { color: var(--text-1); }
-.tab.active { color: var(--brand-600); font-weight: 600; border-bottom-color: var(--brand-500); }
+.tab.active { color: var(--brand-primary-deep); font-weight: 600; border-bottom-color: var(--brand-primary); }
 .tab .tab-count { font-size: var(--fs-11); background: var(--surface-2); border-radius: 8px; padding: 0 6px; color: var(--text-3); }
 
 /* segmented */
@@ -1100,7 +1100,7 @@ textarea.form-control { height: auto; min-height: 88px; padding: 9px 12px; resiz
   border-radius: 999px; padding: 3px 12px; font-size: var(--fs-12); cursor: pointer; transition: all 0.15s;
 }
 .chip:hover { border-color: var(--brand-300); color: var(--brand-600); }
-.chip.active { background: var(--brand-500); border-color: var(--brand-500); color: var(--white); }
+.chip.active { background: var(--brand-primary); border-color: var(--brand-primary); color: var(--white); }
 .asset-flow { display: flex; flex-direction: column; gap: 8px; }
 .asset-card {
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
