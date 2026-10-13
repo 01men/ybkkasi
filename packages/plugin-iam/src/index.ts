@@ -246,6 +246,9 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'nas.authz.check', label: 'NAS 数据权限判定（check/scope）', group: 'NAS 存储' },
   { point: 'nas.authz.read', label: '查看 NAS 数据权限规则与判定留痕', group: 'NAS 存储' },
   { point: 'nas.authz.write', label: '管理 NAS 数据权限规则/例外（含破窗 override）', group: 'NAS 存储' },
+  // 孤儿权限点补录（R10 总表发现，2026-10-13）：plugin-nas/manifest/permissions.yaml 已声明、
+  // console 两处 guarded 路由（所有权登记/改写）实际校验，但目录此前未收录——自定义角色无法勾选
+  { point: 'nas.ownership.write', label: '管理 NAS 文件所有权（上传登记/重命名改写/删除移除）', group: 'NAS 存储' },
   { point: 'agent.read', label: '查看 Agent', group: 'Agent 本体' },
   { point: 'agent.write', label: '管理 Agent', group: 'Agent 本体' },
   { point: 'agent.approve', label: '审批 Agent 上线', group: 'Agent 本体' },

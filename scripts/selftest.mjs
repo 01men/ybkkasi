@@ -4708,6 +4708,10 @@ try {
   const toolsLiteTest = spawn(process.execPath, ['packages/platform-core/src/tools-lite.test.mjs'], { stdio: 'pipe' })
   await new Promise((resolve) => toolsLiteTest.on('close', resolve))
   check('工具注册契约随包单测全绿（node --test）', toolsLiteTest.exitCode === 0, `exit=${toolsLiteTest.exitCode}`)
+  // 连接器风险目录声明式化自证（R6：resolveRiskLevel 优先级链/riskTier/生成物一致性）
+  const connectorRiskTest = spawn(process.execPath, ['packages/plugin-connector/src/risk.test.mjs'], { stdio: 'pipe' })
+  await new Promise((resolve) => connectorRiskTest.on('close', resolve))
+  check('连接器风险目录声明式化随包单测全绿（node --test）', connectorRiskTest.exitCode === 0, `exit=${connectorRiskTest.exitCode}`)
   // 审批卫生与规则源自证（OPT-P2-02：敏感面掩码/拒绝 + 补偿注册表编排）
   const approvalTest = spawn(process.execPath, ['packages/plugin-audit/src/approval.test.mjs'], { stdio: 'pipe' })
   await new Promise((resolve) => approvalTest.on('close', resolve))
