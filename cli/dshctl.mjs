@@ -82,6 +82,41 @@ async function ensureToken() {
 }
 
 // ------------------------------------------------------------------ 输出
+// 表头中文标签：键为列名（--output json 的协议键，保留 ASCII），值为 table 模式的中文显示名
+const HEADER_ZH = {
+  id: 'ID', name: '名称', status: '状态', createdAt: '创建时间', username: '用户名', org: '组织',
+  code: '编码', builtin: '内置', permissions: '权限', provider: '提供方', kind: '类型',
+  jti: '令牌标识', principal: '主体', expires: '过期时间', principalId: '主体ID', clientId: '客户端ID',
+  refType: '关联类型', scopes: '权限范围', activeTokens: '有效令牌', version: '版本', gray: '灰度',
+  health: '健康', tools: '工具数', calls: '调用量', successRate: '成功率', p95Latency: 'P95延迟',
+  tokens: '令牌量', tool: '工具', ok: '成功', avgLatency: '平均延迟', type: '类型', depth: '深度',
+  rootPath: '根路径', nasId: 'NAS资产', reachable: '可达', error: '错误', downloads: '下载量',
+  rating: '评分', findings: '扫描发现', latencyMs: '延迟(ms)', reason: '原因', service: '服务',
+  riskLevel: '风险级', description: '描述', alias: '别名', authType: '认证类型', maskedProfile: '凭证摘要',
+  ocConnectionId: '连接器连接', policies: '策略', subjects: '主体数', actionId: '动作ID',
+  runtimeTokenId: '运行时令牌', startedAt: '开始时间', checkedRuns: '已核运行', matchedMeters: '已匹配计量',
+  bypass: '绕行', cursor: '游标', permGroupId: '权限组ID', ocTokenId: '连接器令牌', hash: '策略指纹',
+  lastSyncedAt: '最近同步', model: '模型', success: '成功率', clientSecret: '客户端密钥', note: '备注',
+  url: '地址', dau: 'DAU', agentName: 'Agent名称', llmTokens: 'LLM令牌', toolCalls: '工具调用',
+  costYuan: '成本(元)', time: '时间', action: '动作', actor: '操作者', resource: '资源', result: '结果',
+  severity: '级别', title: '标题', read: '已读', requester: '申请人', key: '键', runtime: '运行时',
+  plugins: '插件', collections: '集合', plugin: '插件', event_id: '事件ID', subject: '主体',
+  meters: '计量', charge: '费用(分)', codeMask: '接入码', template: '模板', expiresAt: '过期时间',
+  usedBy: '使用者', remark: '备注', hostname: '主机名', lastUsedAt: '最近使用', isError: '出错',
+  durationMs: '耗时(ms)', value: '返回值', developer: '开发者', installs: '安装量', usageKey: '计量键',
+}
+// 状态枚举中文伴随：协议值保留 ASCII（json 输出原样），table 模式经此映射展示（对齐 errors.js 映射表做法）
+const STATUS_ZH = {
+  active: '活跃', inactive: '停用', pending: '待审批', approved: '已通过', rejected: '已驳回',
+  published: '已上架', deprecated: '已弃用', online: '在线', offline: '离线', degraded: '降级',
+  healthy: '健康', unhealthy: '异常', draft: '草稿', frozen: '已冻结', used: '已使用',
+  expired: '已过期', disabled: '已禁用', enabled: '已启用', running: '运行中', failed: '失败',
+  succeeded: '成功', allow: '放行', deny: '拒绝', info: '提示', warning: '警告', critical: '严重',
+  submitted: '已提交', reviewing: '审批中', stopped: '已停止', unknown: '未知',
+}
+const zhEnum = (value) => STATUS_ZH[String(value)] ?? value
+const isEnumCol = (col) => col === 'status' || col === 'health' || col === 'severity' || col === 'decision'
+
 function out(data, columns, title) {
   if (OUTPUT === 'json') {
     console.log(JSON.stringify(data, null, 2))
@@ -91,10 +126,12 @@ function out(data, columns, title) {
   const entries = Object.entries(data ?? {})
   if (entries.length === 0) { console.log('（空结果）'); return }
   if (typeof data !== 'object') { console.log(data); return }
-  const width = Math.max(...entries.map(([key]) => key.length)) + 2
+  const labelOf = (key) => HEADER_ZH[key] ?? key
+  const width = Math.max(...entries.map(([key]) => labelOf(key).length)) + 2
   for (const [key, value] of entries) {
-    const text = typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')
-    console.log(`  ${(key + ':').padEnd(width)}${text.length > 100 ? text.slice(0, 100) + '…' : text}`)
+    const shown = isEnumCol(key) ? zhEnum(value) : value
+    const text = typeof shown === 'object' ? JSON.stringify(shown) : String(shown ?? '—')
+    console.log(`  ${(labelOf(key) + ':').padEnd(width)}${text.length > 100 ? text.slice(0, 100) + '…' : text}`)
   }
 }
 
@@ -102,11 +139,16 @@ function table(rows, columns, title) {
   if (title) console.log(`\n${title}（${rows.length}）`)
   if (!rows.length) { console.log('  （无数据）'); return }
   const cols = columns ?? Object.keys(rows[0]).slice(0, 6)
-  const widths = cols.map((col) => Math.max(col.length, ...rows.map((row) => String(row[col] ?? '').length, 20)))
+  const labelOf = (col) => HEADER_ZH[col] ?? col
+  const cellOf = (row, col) => {
+    const value = isEnumCol(col) ? zhEnum(row[col]) : row[col]
+    return value
+  }
+  const widths = cols.map((col) => Math.max(labelOf(col).length, ...rows.map((row) => String(cellOf(row, col) ?? '').length, 20)))
   const line = (cells) => '  ' + cells.map((cell, i) => String(cell ?? '').slice(0, 32).padEnd(widths[i])).join('  ')
-  console.log(line(cols))
+  console.log(line(cols.map(labelOf)))
   console.log(line(widths.map((w) => '─'.repeat(Math.min(w, 32)))))
-  for (const row of rows) console.log(line(cols.map((col) => row[col])))
+  for (const row of rows) console.log(line(cols.map((col) => cellOf(row, col))))
 }
 
 function ok(message) {
@@ -124,76 +166,76 @@ dshctl —— 企业 AI 资源平台 CLI（基于 DeepSeek Harness 一切皆插�
 用法：dshctl <resource> <action> [参数] [全局选项]
 
 资源与动作：
-  org       list | create --name=<名称> [--parent=<orgId>]
-  user      list [--org= --status= --q=] | create --username= --displayName= --orgId=
+  org       list | create --name=<名称> [--parent=<orgId>]   组织树 / 新建组织
+  user      list [--org= --status= --q=] | create --username= --displayName= --orgId=   用户列表 / 新建账号
             freeze <userId> --reason=<原因>   （L4：自动联动吊销令牌）
-  role      list
-  group     list
+  role      list                            角色列表
+  group     list                            用户组列表
   sync      run --provider=dingtalk          触发三方通讯录同步
-  conflict  list | resolve <id> --keep=third_party|platform
-  token     list [--principalId=] | issue --principalId= --ttlHours=
-            revoke <jti> --reason=<原因>
+  conflict  list | resolve <id> --keep=third_party|platform   同步冲突列表 / 裁决保留侧
+  token     list [--principalId=] | issue --principalId= --ttlHours=   令牌列表 / 签发
+            revoke <jti> --reason=<原因>     吊销令牌
   credential list                                        列出机器凭证（principalId/clientId/scopes/状态）
           create --name= --scope=a,b[,c|*] [--refType= --refId=]   （clientSecret 仅返回一次）
           scopes <principalId> --scopes=a,b[,c|*]   调整权限范围（存量令牌联动吊销）
           rotate <principalId>                       轮换 clientSecret（仅本次展示，旧值立即失效）
-  mcp       list [--status=] | get <id> | metrics <id> | health <id>
-            deploy <id> [--gray=20] [--version=] [--changelog=] [--dry-run]
-            rollback <id> --targetVersion=
+  mcp       list [--status=] | get <id> | metrics <id> | health <id>   MCP 服务列表 / 详情 / 指标 / 探活
+            deploy <id> [--gray=20] [--version=] [--changelog=] [--dry-run]   发布（灰度/预演）
+            rollback <id> --targetVersion=     回滚到指定版本
             offline <id> --reason=<原因>      （L4：生成审批单）
-            invoke <id> --tool=<工具名> [--args=<JSON>]
-  skill     list [--q= --category=] | get <id>
-            submit --name= --content-file=<SKILL.md路径> [--category=] [--package=<skill.zip>]
-            approve <id> --level=domain|security --decision=approve|reject --opinion=
-            publish <id> | install <id> --agentId= | deprecate <id> --reason=
-            storage get | storage set --mode=local|nas [--nas-id= --base-path=]
-  nas       list [--status= --q=] | get <id>
-            create --name= --gateway-url= --token= --nas-ip= [--root-path=] [--staging-dir=]
+            invoke <id> --tool=<工具名> [--args=<JSON>]   调用服务内工具
+  skill     list [--q= --category=] | get <id>           Skill 列表 / 详情
+            submit --name= --content-file=<SKILL.md路径> [--category=] [--package=<skill.zip>]   提交审核
+            approve <id> --level=domain|security --decision=approve|reject --opinion=   审批（领域/安全两级）
+            publish <id> | install <id> --agentId= | deprecate <id> --reason=   上架 / 安装到 Agent / 弃用
+            storage get | storage set --mode=local|nas [--nas-id= --base-path=]   Skill 包存储位
+  nas       list [--status= --q=] | get <id>             NAS 资产列表 / 详情
+            create --name= --gateway-url= --token= --nas-ip= [--root-path=] [--staging-dir=]   注册 NAS 资产
             import --config=<mcpServers JSON 或 @文件> [--name=]   （synology-filestation 配置一键纳管）
-            health <id> | online <id> | offline <id> --reason=
-            shares <id> | files <id> [--path=] | mkdir <id> --path= | delete <id> --path=
-            upload <id> --file=<本地路径> --dest=<NAS路径> | search <id> --pattern= [--path=]
-            authz check --nas=<id> --user=<平台或钉钉userId> --path=<路径> --op=read|download|write|modify|delete|share|admin [--override]
-            authz scope --nas=<id> --user=<userId>
-            authz rules get | rules set [--observe-only=on|off] [--degrade-readonly=on|off] [--c-groups=组名1,组名2]
-            authz rules import --file=<rules.json> | decisions [--decision=deny] [--limit=50]
-  connector gateway get | gateway set --base-url= --admin-token-env=VAR | gateway health
-            catalog providers [--search=] | catalog actions [--service=] [--search=]
-            catalog action <actionId> [--guide]
-            connections list [--org=] | connections create --provider= --auth-type=no_auth|api_key|oauth
+            health <id> | online <id> | offline <id> --reason=     探活 / 上线 / 下线
+            shares <id> | files <id> [--path=] | mkdir <id> --path= | delete <id> --path=   共享/文件浏览/建目录/删除
+            upload <id> --file=<本地路径> --dest=<NAS路径> | search <id> --pattern= [--path=]   上传 / 搜索
+            authz check --nas=<id> --user=<平台或钉钉userId> --path=<路径> --op=read|download|write|modify|delete|share|admin [--override]   数据权限判定
+            authz scope --nas=<id> --user=<userId>     查询用户在某 NAS 的作用域
+            authz rules get | rules set [--observe-only=on|off] [--degrade-readonly=on|off] [--c-groups=组名1,组名2]   规则查看 / 调整
+            authz rules import --file=<rules.json> | decisions [--decision=deny] [--limit=50]   规则导入 / 判定流水
+  connector gateway get | gateway set --base-url= --admin-token-env=VAR | gateway health   网关配置 / 探活
+            catalog providers [--search=] | catalog actions [--service=] [--search=]   目录：提供方 / 动作
+            catalog action <actionId> [--guide]        动作详情（--guide 输出接入指引）
+            connections list [--org=] | connections create --provider= --auth-type=no_auth|api_key|oauth   连接列表 / 创建
                      --org=<orgId> [--alias-suffix=main] [--values=@file.json] [--scopes=a,b]
-                     connections delete <id> --yes [--force]
+                     connections delete <id> --yes [--force]   删除连接（被引用时 --force 解除）
             gateway offline --reason=<原因> [--direct] | gateway online     （L4 审批 / 直连留痕）
-            connections offline <id> --reason= [--direct] | online <id>
-            execute --action=<actionId> [--connection=<alias>] [--input=@file.json] [--dry-run]
-            perm-groups list | get | create --file=@group.json | impact <id> | delete <id> --yes
-            runs [--service=] [--ok=true|false] [--limit=50]
+            connections offline <id> --reason= [--direct] | online <id>     连接下线 / 恢复
+            execute --action=<actionId> [--connection=<alias>] [--input=@file.json] [--dry-run]   执行连接器动作
+            perm-groups list | get | create --file=@group.json | impact <id> | delete <id> --yes   权限组管理
+            runs [--service=] [--ok=true|false] [--limit=50]     运行流水
             reconcile                              runs 对账（有 run 无 meter 即绕行告警，人工复核口径）
             tokens                                 oct_ 台账（永不返回令牌值）
-  agent     list [--status=] | get <id> | metrics <id> | topology <id>
-            create --name= --model= --riskLevel=
+  agent     list [--status=] | get <id> | metrics <id> | topology <id>   Agent 列表 / 详情 / 指标 / 拓扑
+            create --name= --model= --riskLevel=     注册 Agent
             offline <id> --reason=<原因> --requesterId= --requesterName=   （L4 审批）
-            bind <id> --userId=
-  app       list | get <id> | metrics <id> | topology <id> | cost <id>
+            bind <id> --userId=                      绑定用户
+  app       list | get <id> | metrics <id> | topology <id> | cost <id>   应用列表 / 详情 / 指标 / 拓扑 / 成本
             report <id> [--dau= --sessions= --avg-depth= --retention7= --date=]   （应用指标主动上报）
   usage     record --org= --subject= --principal= --resource= --meter=key:value:unit[,...]
                                             （计量事件主动推送，schema v1 + 幂等键；
                                              meter key 须与价格簿一致：mcp:* → tokens、model:<slug> → output_tokens，
                                              不匹配会被硬拒绝，报错直接给出期望键）
-            [--idempotency-key= --tenant-id=]
-            events [--principal= --resource= --limit=] | totals [--principal= --from=]
-  audit     logs [--type= --resourceId= --limit=] | alerts [--unread] | read-all
-  approval  list [--pending] | decide <id> --decision=approve|reject --opinion=
-  cost      report --groupBy=app|agent|org|date
+            [--idempotency-key= --tenant-id=]        幂等键 / 租户（可选）
+            events [--principal= --resource= --limit=] | totals [--principal= --from=]   计量事件查询 / 汇总
+  audit     logs [--type= --resourceId= --limit=] | alerts [--unread] | read-all   审计日志 / 告警 / 全部已读
+  approval  list [--pending] | decide <id> --decision=approve|reject --opinion=    审批单列表 / 裁决
+  cost      report --groupBy=app|agent|org|date      成本报表（按应用/Agent/组织/日期）
   platform  info                              插件树 / 工具目录 / 集合
   update    status | check                    平台版本与上游更新状态 / 立即检查（60s 冷却）
             apply [--dry-run] [--reason=<原因>]  一键升级（git pull + npm install，source 形态）
             set [--auto=on|off] [--hours=24]   自动检查偏好
-  connect   code [--template=readonly|operator|full] [--ttl=15] [--remark=]
+  connect   code [--template=readonly|operator|full] [--ttl=15] [--remark=]   签发接入码
             （创建一次性接入码：远程 dsh 凭此申请机器凭证）
-            codes | clients | disable <clientId> --reason=<原因>
+            codes | clients | disable <clientId> --reason=<原因>   接入码列表 / 已接入客户端 / 禁用
   tool      exec --name=<工具名> [--args=<JSON>]   直接调用注册的工具
-  plugin    init --id=<com.vendor.name> [--dir=./my-plugin]
+  plugin    init --id=<com.vendor.name> [--dir=./my-plugin]   初始化插件脚手架
             （本地脚手架：契约五面 + Ed25519 发布者密钥对 + Hello World 提示词包）
             sign --dir=<目录>                对五面指纹签名（输出 signature）
             submit --dir=<目录> --user=<开发者账号> [--password=<密码>]
@@ -296,7 +338,7 @@ dshctl —— 企业 AI 资源平台 CLI（基于 DeepSeek Harness 一切皆插�
         console.log(`  发布者公钥（注册开发者账号时提交）：\n  ${publicKeyBase64}`)
         console.log(`  私钥已写入 ${path.join(dir, 'publisher-private-key.pem')}（仅本地保存，切勿上传）`)
         console.log(`  下一步：`)
-        console.log(`   1) POST /api/market/developers/register （username/email/password/publicKey）`)
+        console.log(`   1) 调用 POST /api/market/developers/register 注册开发者（字段：username/email/password/publicKey）`)
         console.log(`   2) dshctl plugin sign --dir=${dir}      （生成五面签名）`)
         console.log(`   3) dshctl plugin submit --dir=${dir} --user=<开发者账号>`)
         return
@@ -325,7 +367,7 @@ dshctl —— 企业 AI 资源平台 CLI（基于 DeepSeek Harness 一切皆插�
         const login = await call('POST', '/api/market/developers/login', { username: user, password: argOf('--password') ?? '' })
         token = login.token
         const submission = await call('POST', '/api/market/submit', { files, signature })
-        ok(`已提交：${submission.pluginId}@${submission.version}（${submission.status}）`)
+        ok(`已提交：${submission.pluginId}@${submission.version}（${zhEnum(submission.status)}）`)
         out(submission)
         return
       }
@@ -554,7 +596,7 @@ dshctl —— 企业 AI 资源平台 CLI（基于 DeepSeek Harness 一切皆插�
           if (!await confirm()) { console.log('已取消'); return }
         }
         const data = await call('POST', `/api/mcp/services/${id}/deploy`, body)
-        ok(`已发布：v${data.currentVersion}（${data.status}）`)
+        ok(`已发布：v${data.currentVersion}（${zhEnum(data.status)}）`)
         return
       }
       if (action === 'rollback') {
@@ -599,7 +641,7 @@ dshctl —— 企业 AI 资源平台 CLI（基于 DeepSeek Harness 一切皆插�
             nasId, userId: user, paths: String(path).split(','), op,
             ...(flag('override') ? { override: true } : {}),
           })
-          out(data, null, `判定：${data.decision === 'allow' ? 'ALLOW' : 'DENY'}（角色 ${data.role ?? '—'}${data.cTag ? ' +C' : ''}，作用域 ${(data.scope ?? []).join(' ')}）`)
+          out(data, null, `判定：${data.decision === 'allow' ? '放行' : '拒绝'}（角色 ${data.role ?? '—'}${data.cTag ? ' +C' : ''}，作用域 ${(data.scope ?? []).join(' ')}）`)
           return
         }
         if (sub === 'scope') {
@@ -669,7 +711,7 @@ dshctl —— 企业 AI 资源平台 CLI（基于 DeepSeek Harness 一切皆插�
             dataClass: 'internal',
           },
         })
-        ok(`NAS 资产已创建：${data.name}（${data.id}，${data.status}）`)
+        ok(`NAS 资产已创建：${data.name}（${data.id}，${zhEnum(data.status)}）`)
         return
       }
       if (action === 'import') {
@@ -683,12 +725,12 @@ dshctl —— 企业 AI 资源平台 CLI（基于 DeepSeek Harness 一切皆插�
         return
       }
       if (action === 'health') { out(await call('POST', `/api/nas/${id}/health`)); return }
-      if (action === 'online') { const data = await call('POST', `/api/nas/${id}/transition`, { action: 'online' }); ok(`已上线：${data.name}（${data.status}）`); return }
+      if (action === 'online') { const data = await call('POST', `/api/nas/${id}/transition`, { action: 'online' }); ok(`已上线：${data.name}（${zhEnum(data.status)}）`); return }
       if (action === 'offline') {
         const reason = flag('reason')
         if (!reason) fail('offline 必须提供 --reason（护栏要求）')
         const data = await call('POST', `/api/nas/${id}/transition`, { action: 'offline', note: String(reason) })
-        ok(`已下线：${data.name}（${data.status}）`)
+        ok(`已下线：${data.name}（${zhEnum(data.status)}）`)
         return
       }
       if (action === 'shares') { out(await call('GET', `/api/nas/${id}/fs`)); return }
@@ -1149,7 +1191,7 @@ dshctl —— 企业 AI 资源平台 CLI（基于 DeepSeek Harness 一切皆插�
         const decision = flag('decision')
         if (!['approve', 'reject'].includes(decision)) fail('--decision 必须是 approve|reject')
         const data = await call('POST', `/api/approvals/${argv[1]}/decide`, { decision, opinion: flag('opinion', 'CLI 审批') })
-        ok(`审批完成：${data.status}`)
+        ok(`审批完成：${zhEnum(data.status)}`)
         return
       }
       fail('用法：approval list [--pending] | decide <id> --decision= --opinion=')

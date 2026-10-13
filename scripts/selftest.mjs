@@ -1259,7 +1259,29 @@ try {
     const REQUIRED = ['nas-authz-deny', 'breaker-open', 'quota-exhausted', 'pdp-unreachable', 'degraded', 'binding-invalid', 'invoke-error']
     const missing = REQUIRED.filter((code) => !errors.ERROR_CODES.includes(code))
     check('文案：定版六条原因码 + 会话侧兜底码全部在册', missing.length === 0, `缺失：${missing.join(', ')}`)
-    const blank = REQUIRED.filter((code) => {
+    // 全集比对（REFACTOR-2026-10-13 阶段 2）：实时扫描后端对外原因码——
+    // exchange.fail(NNN,'XXX') 大写码 + 内联 error:{code:'XXX'} 载荷，
+    // 断言 后端原因码全集 ⊆ ERROR_CODES ∪ BINDING_REASONS（新增码未同步 errors.js 即红）。
+    const backendCodes = new Set()
+    const walkSrc = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? walkSrc(join(dir, entry.name)) : [join(dir, entry.name)])
+    for (const pkg of readdirSync(join(process.cwd(), 'packages'), { withFileTypes: true })) {
+      if (!pkg.isDirectory()) continue
+      const srcDir = join(process.cwd(), 'packages', pkg.name, 'src')
+      if (!existsSync(srcDir)) continue
+      for (const file of walkSrc(srcDir)) {
+        if (!/\.(ts|m?js)$/.test(file) || /\.test\.(ts|mjs)$/.test(file)) continue
+        const text = readFileSync(file, 'utf8')
+        for (const match of text.matchAll(/fail\(\s*\d{3}\s*,\s*['"]([A-Z][A-Z0-9_]+)['"]/g)) backendCodes.add(match[1])
+        for (const match of text.matchAll(/error:\s*\{\s*code:\s*['"]([A-Z][A-Z0-9_]+)['"]/g)) backendCodes.add(match[1])
+      }
+    }
+    const covered = new Set([...errors.ERROR_CODES, ...errors.BINDING_REASONS])
+    const unmapped = [...backendCodes].filter((code) => !covered.has(code))
+    check(`文案：后端对外原因码全集 ⊆ ERROR_CODES ∪ BINDING_REASONS（扫描到 ${backendCodes.size} 条，漏配即红）`,
+      backendCodes.size >= 30 && unmapped.length === 0,
+      unmapped.length ? `未配文案：${unmapped.join(', ')}` : `全集 ${backendCodes.size} 条在册`)
+    const blank = errors.ERROR_CODES.filter((code) => {
       const copy = errors.errorCopy(code)
       return !copy.title || !copy.message || (copy.action ? !copy.action.label || !copy.action.href : false)
     })
@@ -2028,7 +2050,6 @@ try {
   check('切回降级模式（显式标注 mock）', mockBack.ok && mockBack.data.mode === 'mock')
 
   // 事务存储落位（计量/资金类数据库文件创建）
-  const { existsSync } = await import('node:fs')
   check('SQLite 事务存储已就位（txnstore.db）', existsSync(join(DATA_DIR, 'txnstore.db')))
 
   // -- 多主体接入（同 provider 多实例连接器） --------------------------------

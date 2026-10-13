@@ -337,7 +337,7 @@ function renderExceptions() {
   } else {
     table.appendChild(renderTable({
       columns: [
-        { title: '效果', width: 84, render: (item) => item.effect === 'allow' ? '<span class="badge no-dot badge-ok">allow</span>' : '<span class="badge no-dot badge-danger">deny</span>' },
+        { title: '效果', width: 84, render: (item) => item.effect === 'allow' ? '<span class="badge no-dot badge-ok">放行</span>' : '<span class="badge no-dot badge-danger">拒绝</span>' },
         { title: 'NAS / 路径', render: (item) => `<div class="az-cell-main">${esc(nasName(item.nasId))}</div><div class="az-path" title="${esc(item.path)}">${esc(item.path)}</div>` },
         { title: '操作', render: (item) => `<span class="az-ops">${item.ops.map((op) => `<span class="az-op">${OP_LABEL[op] ?? op}</span>`).join('')}</span>` },
         { title: '限定用户', render: (item) => `<span class="fs-12">${item.userIds?.length ? `<span class="az-users">${item.userIds.map((id) => `<code class="az-uid">${esc(id)}</code>`).join('')}</span>` : '<span class="text-4">全部用户</span>'}</span>` },
@@ -503,10 +503,10 @@ function renderAnchors() {
   list.appendChild(renderTable({
     columns: [
       { title: '资产', render: (item) => `<div class="az-cell-main">${esc(item.name)}</div><div class="az-path" title="${esc(item.id)}">${esc(item.id)}</div>` },
-      { title: 'orgRoot', render: (item) => item.attrs?.orgRoot
+      { title: 'orgRoot 组织锚点', render: (item) => item.attrs?.orgRoot
         ? `<code class="az-uid">${esc(item.attrs.orgRoot)}</code>`
         : '<span class="badge no-dot badge-danger">未配置 · 全 deny</span>' },
-      { title: 'orgPathOverrides', render: (item) => {
+      { title: 'orgPathOverrides 目录映射', render: (item) => {
         const raw = item.attrs?.orgPathOverrides
         const text = typeof raw === 'string' && raw.trim() ? raw : (raw && typeof raw === 'object' ? JSON.stringify(raw) : '')
         return text
@@ -587,7 +587,7 @@ async function renderDecisions() {
   wrap.appendChild(renderTable({
     columns: [
       { title: '时间', width: 96, render: (item) => `<span class="fs-12 text-4">${timeAgo(item.createdAt)}</span>` },
-      { title: '判定', width: 84, render: (item) => item.decision === 'allow' ? '<span class="badge no-dot badge-ok">allow</span>' : '<span class="badge no-dot badge-danger">deny</span>' },
+      { title: '判定', width: 84, render: (item) => item.decision === 'allow' ? '<span class="badge no-dot badge-ok">放行</span>' : '<span class="badge no-dot badge-danger">拒绝</span>' },
       { title: '用户 / 角色', width: 150, render: (item) => `<span class="az-cell-main">${esc(item.userName ?? item.userId)}</span><span class="fs-11 text-3">${item.role ? `${item.role}${item.override ? '（破窗）' : ''}` : '无主角色'}</span>` },
       { title: 'NAS / 路径', render: (item) => `<div class="az-cell-main">${esc(nasName(item.nasId))}</div><div class="az-path" title="${esc((item.paths ?? []).join('、'))}">${esc((item.paths ?? []).join('、'))}</div>` },
       { title: '操作', width: 92, render: (item) => `<span class="fs-12">${OP_LABEL[item.op] ?? item.op}${item.highRisk ? ' <span class="badge no-dot badge-warn">高危</span>' : ''}</span>` },
@@ -631,7 +631,7 @@ function openSimulate() {
         ...(modal.body.querySelector('#az-sim-override')?.checked ? { override: true } : {}),
       })
       result.innerHTML = `
-        <div class="fs-13" style="font-weight:700">${data.decision === 'allow' ? '<span style="color:var(--ok,#16a34a)">ALLOW</span>' : '<span style="color:var(--danger,#dc2626)">DENY</span>'}
+        <div class="fs-13" style="font-weight:700">${data.decision === 'allow' ? '<span style="color:var(--ok,#16a34a)">放行（ALLOW）</span>' : '<span style="color:var(--danger,#dc2626)">拒绝（DENY）</span>'}
           <span class="fs-12 text-3">${data.role ? `角色 ${ROLE_LABEL[data.role] ?? data.role}` : '无主角色'}${data.cTag ? ' · C 叠加' : ''}${data.observeOnly ? ' · 观察模式' : ''}</span></div>
         <div class="fs-11 text-4" style="margin:4px 0">作用域：${data.scope?.length ? data.scope.map((item) => esc(item)).join('、') : '（无）'}</div>
         ${(data.reasons ?? []).map((reason) => `<div class="fs-11 text-3">· ${esc(reason)}</div>`).join('')}

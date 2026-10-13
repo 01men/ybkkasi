@@ -686,7 +686,7 @@ function mountFsBrowser(host, nas, ctx) {
           failed = result.failed.length
           upd.textContent = String(done)
           upf.textContent = String(failed)
-          if (result.failed.length > 0) console.warn('upload-many failures', result.failed)
+          if (result.failed.length > 0) console.warn('upload-many 失败明细', result.failed)
         } else {
           for (const item of items) {
             try {
@@ -696,7 +696,7 @@ function mountFsBrowser(host, nas, ctx) {
               done++
             } catch (error) {
               failed++
-              console.warn(`upload ${item.relativePath} failed`, error)
+              console.warn(`上传 ${item.relativePath} 失败`, error)
             }
             upd.textContent = String(done + failed)
             upf.textContent = String(failed)

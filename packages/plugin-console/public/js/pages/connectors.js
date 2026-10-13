@@ -16,6 +16,8 @@ import {
 
 const RISK_BADGE = { read: 'success', write: 'warning', admin: 'danger' }
 const AUTH_LABEL = { oauth: 'OAuth', api_key: 'API Key', custom_credential: '自定义凭证', no_auth: '免凭证' }
+/** 连接状态枚举（协议值 ASCII）→ 展示中文标签 */
+const CONN_STATUS_LABEL = { active: '已启用', pending: '待授权' }
 
 /** 本页局部 hyperscript：h(tag, props, ...children)。与 ui.js 的模板字符串 h(html) 区分。 */
 function h(tag, props, ...children) {
@@ -120,13 +122,13 @@ export async function renderConnectors(content, params, ctx) {
             <div class="kv"><span class="k">状态</span><span class="v" id="gw-status-val">
               <span class="badge ${available ? 'badge-ok' : 'badge-danger'} no-dot">${available ? `可用 · 探活 ${status.latencyMs ?? 0}ms` : esc(status.reason ?? '不可用')}</span>
             </span></div>
-            <div class="kv"><span class="k">baseUrl</span><span class="v mono">${esc(status.baseUrl ?? '未配置')}</span></div>
+            <div class="kv"><span class="k">网关地址（baseUrl）</span><span class="v mono">${esc(status.baseUrl ?? '未配置')}</span></div>
             <div class="kv"><span class="k">上次探活</span><span class="v">${status.lastProbeAt ? `${fmtTime(status.lastProbeAt)}${status.latencyMs !== undefined ? `（${status.latencyMs}ms）` : ''}` : '—'}</span></div>
             <div class="kv"><span class="k">OOMOL_CONNECT_ENCRYPTION_KEY</span><span class="v">${envKey ? '✅ 已设置（AES-256-GCM 生效）' : '❌ 缺失 → 网关 fail-closed，拒绝写入凭证'}</span></div>
             <div class="kv"><span class="k">OOMOL_CONNECT_ADMIN_TOKEN</span><span class="v">${envToken ? '✅ 已设置' : '⚠️ 未设置（需以字面量配置 adminToken）'}</span></div>
           </div>
           <div class="section-title" style="margin:18px 0 10px">接入配置</div>
-          ${field('baseUrl', inputField('baseUrl', { placeholder: 'http://open-connector:3000', value: status.baseUrl ?? '' }), { required: true, hint: 'open-connector sidecar 服务地址（内网可达即可）' })}
+          ${field('网关地址（baseUrl）', inputField('baseUrl', { placeholder: 'http://open-connector:3000', value: status.baseUrl ?? '' }), { required: true, hint: 'open-connector sidecar 服务地址（内网可达即可）' })}
           ${field('管理口令 adminToken', inputField('adminToken', { placeholder: 'env:OOMOL_CONNECT_ADMIN_TOKEN' }), { hint: '推荐用 env: 前缀间接引用环境变量，避免明文落盘；留空表示沿用现有口令' })}
           <div class="muted-box" style="margin-top:6px">💡 首次接入：在 open-connector 侧设置好两个环境变量 → 此处填写 baseUrl → 保存并探活 → 回到目录页点「同步目录」。</div>`,
         foot: `<button class="btn btn-default" id="gw-probe">${icon('refresh', 14)}立即探活</button>
@@ -303,7 +305,7 @@ export async function renderConnectors(content, params, ctx) {
         return
       }
       const sectionTitle = (text) => h('div', { class: 'section-title', style: 'margin:14px 0 8px;font-weight:600' }, text)
-      holder.appendChild(sectionTitle(`Providers（${catalog.providers.length}）`))
+      holder.appendChild(sectionTitle(`服务商（${catalog.providers.length}）`))
       const grid = h('div', { class: 'grid grid-4', style: 'gap:10px' })
       for (const provider of catalog.providers.slice(0, 60)) {
         const card = h('div', { class: 'card card-hover', style: 'padding:12px;cursor:pointer' },
@@ -313,7 +315,7 @@ export async function renderConnectors(content, params, ctx) {
         grid.appendChild(card)
       }
       holder.appendChild(grid)
-      holder.appendChild(sectionTitle(`Actions（${catalog.actions.length}${catalog.actions.length >= 60 ? '+，输入关键词过滤' : ''}）`))
+      holder.appendChild(sectionTitle(`动作（${catalog.actions.length}${catalog.actions.length >= 60 ? '+，输入关键词过滤' : ''}）`))
       const rows = catalog.actions.slice(0, 60).map((action) => ({
         id: action.id,
         service: action.service,
@@ -323,8 +325,8 @@ export async function renderConnectors(content, params, ctx) {
       }))
       holder.appendChild(renderTable({
         columns: [
-          { key: 'id', title: 'Action ID' },
-          { key: 'service', title: 'Provider' },
+          { key: 'id', title: '动作 ID' },
+          { key: 'service', title: '服务商' },
           { key: 'riskLevel', title: '风险级', render: (row) => `<span class="badge badge-${RISK_BADGE[row.__raw.riskLevel] ?? 'default'}">${row.__raw.riskLevel}</span>` },
           { key: 'description', title: '说明' },
         ],
@@ -344,7 +346,7 @@ export async function renderConnectors(content, params, ctx) {
       title: `${provider.name ?? provider.service}`,
       body: `
         <div class="muted-box" style="margin-bottom:12px">${esc(String(provider.description ?? ''))}</div>
-        <div class="section-title" style="margin-bottom:6px">Actions（${actions.length}）</div>
+        <div class="section-title" style="margin-bottom:6px">动作（${actions.length}）</div>
         ${actions.slice(0, 50).map((action) => `
           <div class="list-row" data-action="${esc(action.id)}" style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
             <span class="mono" style="font-size:12px">${esc(action.id)}</span>
@@ -423,7 +425,7 @@ export async function renderConnectors(content, params, ctx) {
       card.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center">
           <strong>${esc(ref.provider)}</strong>
-          <span class="badge badge-${ref.status === 'active' ? 'ok' : ref.status === 'pending' ? 'warn' : 'danger'}">${esc(ref.status)}</span>
+          <span class="badge badge-${ref.status === 'active' ? 'ok' : ref.status === 'pending' ? 'warn' : 'danger'}">${esc(CONN_STATUS_LABEL[ref.status] ?? ref.status)}</span>
         </div>
         <div class="mono muted" style="font-size:12px">${esc(ref.alias)}</div>
         <div style="font-size:12px">${AUTH_LABEL[ref.authType] ?? esc(ref.authType)}${ref.bridge ? ' · <span class="badge">桥接过渡</span>' : ''}</div>
@@ -500,7 +502,7 @@ export async function renderConnectors(content, params, ctx) {
       if (type === 'api_key') {
         dynamic.innerHTML = field('凭证字段（JSON）', textareaField('valuesJson', { placeholder: '{"apiKey": "…"} 或 {"token": "…"}', rows: 4 }), { hint: '原样送入网关保险库后即刻丢弃，平台不落盘' })
       } else if (type === 'oauth') {
-        dynamic.innerHTML = field('requestedScopes', inputField('requestedScopes', { placeholder: '留空使用 Provider 默认 scopes，多个用英文逗号分隔' }))
+        dynamic.innerHTML = field('授权范围（requestedScopes）', inputField('requestedScopes', { placeholder: '留空使用 Provider 默认 scopes，多个用英文逗号分隔' }))
       } else {
         dynamic.innerHTML = '<div class="muted-box">免凭证连接直接登记引用，无需任何密钥材料。</div>'
       }
@@ -733,7 +735,7 @@ export async function renderConnectors(content, params, ctx) {
       } catch (error) {
         return toast(`对账失败：${errText(error)}`, 'error')
       }
-      toast(`checked=${outcome.checkedRuns} matched=${outcome.matchedMeters} bypass=${outcome.bypassRuns.length}`, outcome.bypassRuns.length === 0 ? 'success' : 'error')
+      toast(`已核对 ${outcome.checkedRuns} 条 · 匹配 ${outcome.matchedMeters} 条 · 旁路 ${outcome.bypassRuns.length} 条`, outcome.bypassRuns.length === 0 ? 'success' : 'error')
       await renderTab()
     })
     bar.append(ledgerBtn, reconcileBtn)
@@ -755,14 +757,14 @@ export async function renderConnectors(content, params, ctx) {
     }
     holder.appendChild(renderTable({
       columns: [
-        { key: 'id', title: 'runId (= executionId)' },
-        { key: 'service', title: 'Provider' },
-        { key: 'actionId', title: 'Action' },
+        { key: 'id', title: '运行 ID（runId = executionId）' },
+        { key: 'service', title: '服务商' },
+        { key: 'actionId', title: '动作' },
         { key: 'ok', title: '结果', render: (row) => row.ok },
-        { key: 'runtimeTokenId', title: 'runtimeTokenId' },
+        { key: 'runtimeTokenId', title: '运行令牌 ID（runtimeTokenId）' },
         { key: 'startedAt', title: '时间' },
       ],
-      rows: result.items.map((run) => ({ ...run, ok: run.ok ? '<span class="badge badge-ok">ok</span>' : '<span class="badge badge-danger">fail</span>', startedAt: fmtTime(run.startedAt ?? '') })),
+      rows: result.items.map((run) => ({ ...run, ok: run.ok ? '<span class="badge badge-ok">成功</span>' : '<span class="badge badge-danger">失败</span>', startedAt: fmtTime(run.startedAt ?? '') })),
     }))
   }
 }

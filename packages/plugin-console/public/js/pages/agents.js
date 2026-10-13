@@ -703,7 +703,7 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
         <div class="card-title">${icon('key', 14)} 已签发客户端 ${statusBadge(active ? 'active' : 'frozen', active ? '使用中' : '已禁用')}</div>
         <div class="flex" style="gap:8px;align-items:center">
           ${modeBadge}
-          <span class="badge ${sso.clientType === 'public' ? 'badge-purple' : 'badge-info'} no-dot">${sso.clientType === 'public' ? 'public（免 secret · 强制 PKCE）' : 'confidential'}</span>
+          <span class="badge ${sso.clientType === 'public' ? 'badge-purple' : 'badge-info'} no-dot">${sso.clientType === 'public' ? 'public（免 secret · 强制 PKCE）' : 'confidential（带密钥）'}</span>
         </div>
       </div>
       <div class="desc-grid mb-14">
@@ -735,10 +735,10 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
     <div class="card card-pad mb-14">
       <div class="card-title mb-8">${icon('plug', 14)} 接入端点（discovery）</div>
       <div class="desc-grid">
-        <div class="desc-item"><span class="k">issuer</span><span class="v mono">${esc(sso.discovery.issuer)}</span></div>
-        <div class="desc-item"><span class="k">authorize</span><span class="v mono">${esc(sso.discovery.authorization_endpoint)}</span></div>
-        <div class="desc-item"><span class="k">token</span><span class="v mono">${esc(sso.discovery.token_endpoint)}</span></div>
-        <div class="desc-item"><span class="k">userinfo</span><span class="v mono">${esc(sso.discovery.userinfo_endpoint)}</span></div>
+        <div class="desc-item"><span class="k">issuer（签发方）</span><span class="v mono">${esc(sso.discovery.issuer)}</span></div>
+        <div class="desc-item"><span class="k">authorize（授权端点）</span><span class="v mono">${esc(sso.discovery.authorization_endpoint)}</span></div>
+        <div class="desc-item"><span class="k">token（令牌端点）</span><span class="v mono">${esc(sso.discovery.token_endpoint)}</span></div>
+        <div class="desc-item"><span class="k">userinfo（用户信息端点）</span><span class="v mono">${esc(sso.discovery.userinfo_endpoint)}</span></div>
       </div>
       <div class="flex mt-8" style="gap:8px">
         <button class="btn btn-default btn-sm" id="ag-sso-copy-discovery">复制 discovery 地址</button>

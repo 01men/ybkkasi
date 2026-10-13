@@ -38,6 +38,8 @@ const TAG_CLS = { 提质: 'tg-tz', 降本: 'tg-jb', 增效: 'tg-zx', 节能: 'tg
 const LANE_LABELS = { todo: '待办', doing: '进行中', review: '待审', done: '完成' }
 const LANE_ORDER = ['todo', 'doing', 'review', 'done']
 const ART_KINDS = { report: '报告', order: '工单', quote: '报价', diagnosis: '诊断', other: '沉淀' }
+// Agent 资产状态枚举（协议层 ASCII）→ 中文展示标签（对齐控制台口径：online 在线 / trial 试运行 / draft 开发中）
+const AGENT_STATUS_LABELS = { online: '在线', trial: '试运行', draft: '开发中', offline: '离线' }
 
 // ---------------------------------------------------------------------------
 // 状态
@@ -356,7 +358,7 @@ function renderTopRight() {
     : `<span class="pill" id="ddPill">⇄ 钉钉桥接不可用</span>`
   const user = session.user
   host.innerHTML = `${pill}
-    <span class="pill" data-live id="livePill"><span class="dot"></span>LIVE</span>
+    <span class="pill" data-live id="livePill"><span class="dot"></span>实时</span>
     <div class="avatar" title="${esc(user?.displayName ?? '')}">${esc((user?.displayName ?? '?').slice(0, 1))}</div>`
   document.getElementById('ddPill').onclick = () => showBind()
   renderLiveBadge()
@@ -384,7 +386,7 @@ function renderLiveBadge(kind) {
   pill.onclick = null
   const health = state.stream?.health?.()
   if (!health || health.transport === 'sse') {
-    pill.innerHTML = '<span class="dot"></span>LIVE'
+    pill.innerHTML = '<span class="dot"></span>实时'
   } else if (health.consecutivePollFailures > 0) {
     down()
   } else {
@@ -499,7 +501,7 @@ function renderColLeft() {
     ${dept.agents.map((agent) => {
       const statusColor = agent.asset ? (agent.asset.status === 'online' ? '#22c55e' : '#94a3b8') : ''
       const statusTitle = agent.asset
-        ? `Agent 资产：${agent.asset.name}（${agent.asset.status === 'online' ? '在线' : agent.asset.status}${agent.asset.model ? ` · ${agent.asset.model}` : ''}）`
+        ? `Agent 资产：${agent.asset.name}（${AGENT_STATUS_LABELS[agent.asset.status] ?? agent.asset.status}${agent.asset.model ? ` · ${agent.asset.model}` : ''}）`
         : '未绑定 Agent 资产（面板配置中绑定后可真实调用）'
       return `
       <div class="agent-card" data-agent="${esc(agent.name)}" title="${esc(statusTitle)}">
@@ -546,7 +548,7 @@ function renderColRight() {
 
 function renderWidget(widget) {
   const srcCls = widget.source.startsWith('连接器') ? 'connector' : widget.source.startsWith('手工') ? 'manual' : ''
-  const head = `<div class="wt">${esc(widget.title)} ${widget.live ? '<span class="live">● LIVE</span>' : ''}<span class="src-badge ${srcCls}" title="数据来源徽标（治理 DoD）">${esc(widget.source)}</span></div>`
+  const head = `<div class="wt">${esc(widget.title)} ${widget.live ? '<span class="live">● 实时</span>' : ''}<span class="src-badge ${srcCls}" title="数据来源徽标（治理 DoD）">${esc(widget.source)}</span></div>`
   if (widget.degraded) {
     return `<div class="widget">${head}<div class="degraded-note">该数据源暂不可用——等待业务连接器接入。<br>面板绝不以演示数据冒充真实业务面。</div></div>`
   }
@@ -1046,7 +1048,7 @@ async function showConfig() {
       <div class="col-title"><span>AGENT 阵容（@唤起键 · 绑定 Agent 资产后可真实调用）</span></div>
       ${dept.agents.map((agent, index) => `
         <div class="lic-row"><span class="lr-ic">${esc(agent.icon)}</span>
-          <span style="flex:1">${esc(agent.name)}${agent.asset ? `<span style="font-size:10px;color:${agent.asset.status === 'online' ? '#16a34a' : 'var(--txt2)'}"> · 资产 ${esc(agent.asset.name)}（${esc(agent.asset.status)}）</span>` : ''}<span style="display:block;font-size:10px;color:var(--txt2)">${esc(agent.desc)}</span></span>
+          <span style="flex:1">${esc(agent.name)}${agent.asset ? `<span style="font-size:10px;color:${agent.asset.status === 'online' ? '#16a34a' : 'var(--txt2)'}"> · 资产 ${esc(agent.asset.name)}（${esc(AGENT_STATUS_LABELS[agent.asset.status] ?? agent.asset.status)}）</span>` : ''}<span style="display:block;font-size:10px;color:var(--txt2)">${esc(agent.desc)}</span></span>
           <input id="agentRef${index}" value="${esc(agent.agentRef ?? '')}" placeholder="agent:资产id/slug（可空）"
             style="border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:11px;width:180px">
         </div>`).join('')}
@@ -1166,7 +1168,7 @@ function showModelForm(existing) {
       <label>显示名<input id="mfName" value="${esc(existing?.displayName ?? '')}" placeholder="缺省同 slug"></label>
       <label>厂商<input id="mfProvider" value="${esc(existing?.provider ?? '')}" placeholder="如 deepseek / aliyun / openai"></label>
       <label>Endpoint（OpenAI 兼容基址）*<input id="mfEndpoint" value="${esc(existing?.endpoint ?? '')}" placeholder="如 https://api.deepseek.com/v1"></label>
-      <label>API Key${existing ? '（留空保持不变）' : ''}<input id="mfKey" type="password" autocomplete="new-password" placeholder="${existing ? '留空保持既有密钥' : '直填或环境变量引用（如 env:DEEPSEEK_API_KEY）'}"></label>
+      <label>API 密钥${existing ? '（留空保持不变）' : ''}<input id="mfKey" type="password" autocomplete="new-password" placeholder="${existing ? '留空保持既有密钥' : '直填或环境变量引用（如 env:DEEPSEEK_API_KEY）'}"></label>
       <div class="mform-grid">
         <label>挂牌价（分/千 tokens）*<input id="mfList" type="number" min="0" step="0.1" value="${existing?.listCentsPerKTokens ?? 0}"></label>
         <label>成本价（分/千 tokens）<input id="mfCost" type="number" min="0" step="0.1" value="${existing?.costCentsPerKTokens ?? ''}" placeholder="缺省为挂牌价一半"></label>
