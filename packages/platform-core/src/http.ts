@@ -400,7 +400,23 @@ export class HttpServerService extends Service {
   }
 
   private async serveFromDir(exchange: HttpExchange, entry: { dir: string; fallback?: string }, relative: string): Promise<void> {
-    let target = join(entry.dir, normalize(relative).replace(/^([/\\])+/, ''))
+    // 百分号解码按段进行（中文等非 ASCII 文件名：浏览器发出的 /docs/<中文>.md 是
+    // percent-encoded 形态，不解码 stat 恒 miss → 中文文档 404，QA-20261014 G3-08-D1）。
+    // 解码后段内不得出现路径分隔符或 .. ——防 %2F 借解码越过目录（保持与原样路径同级的防穿越强度）。
+    let rel = relative
+    try {
+      rel = relative
+        .split('/')
+        .map((segment) => {
+          const decoded = decodeURIComponent(segment)
+          if (decoded.includes('/') || decoded.includes('\\') || decoded === '..') throw new Error('unsafe segment')
+          return decoded
+        })
+        .join('/')
+    } catch {
+      // 畸形编码（含非法 % 序列或越界段）：按原样路径尝试，由下方 stat 兜底
+    }
+    let target = join(entry.dir, normalize(rel).replace(/^([/\\])+/, ''))
     if (relative === '' || relative === '/') target = join(entry.dir, 'index.html')
     try {
       const info = await stat(target)

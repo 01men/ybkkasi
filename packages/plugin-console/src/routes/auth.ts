@@ -164,7 +164,7 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
       exchange.res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       exchange.res.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f6f8;color:#1f2329}
-.card{background:#fff;border-radius:16px;padding:40px 48px;box-shadow:0 8px 30px rgba(0,0,0,.06);text-align:center;max-width:420px}
+.card{background:#fff;border-radius:16px;padding:clamp(24px,7vw,40px) clamp(20px,7vw,48px);box-shadow:0 8px 30px rgba(0,0,0,.06);text-align:center;max-width:min(420px,calc(100vw - 24px))}
 .card h2{margin:0 0 12px;font-size:20px}.card p{margin:6px 0;color:#646a73;font-size:14px;line-height:1.7}
 .card a{color:#3370ff;text-decoration:none}.ok{color:#34a853;font-size:44px}.bad{color:#f54a45;font-size:44px}</style>
 </head><body><div class="card">${bodyHtml}</div>${script}</body></html>`)

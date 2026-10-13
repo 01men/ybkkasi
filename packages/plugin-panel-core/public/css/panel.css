@@ -337,3 +337,34 @@ button { font-family:inherit; }
 .login-guide { margin:auto; text-align:center; max-width:420px; padding:32px; }
 .login-guide h1 { font-size: var(--fs-18); margin-bottom:10px; }
 .login-guide p { font-size: var(--fs-13); color:var(--txt2); line-height:1.8; margin-bottom:18px; }
+
+/* ===== 手机档（≤700px：钉钉 webview / 竖屏手机） =====
+   置于文件末尾：与既有同名基础规则同优先级，靠源顺序取胜。 */
+@media (max-width:700px) {
+  .topbar { padding:0 12px; gap:8px; }
+  .logo { font-size: var(--fs-13); }
+  .logo .badge { display:none; }
+  .ind-btn { max-width:130px; }
+  .ind-btn span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .top-right { gap:6px; }
+  /* 钉钉桥接长文案胶囊在手机上撑破顶栏（桥接状态在输入区 dd-toggle 仍可见），隐藏；实时胶囊保留 */
+  .pill.dd-on, .pill.dd-off, #ddPill { display:none; }
+  .rail { width:60px; padding:10px 0; }
+  .rail-item, .rail-console { width:46px; }
+  body.left-open .col-left { left:60px; }
+  .dept-head { padding:10px 12px; gap:8px; }
+  .dept-title { font-size: var(--fs-16); }
+  .msgs { padding:14px 12px; }
+  .msg { max-width:96%; }
+  /* 看板四泳道由横排改纵排，消除窄屏横向溢出 */
+  .kanban { padding:12px; flex-direction:column; }
+  .lane { min-width:0; width:100%; }
+  .artifacts, .scene-wrap { padding:12px; }
+  /* 场景卡片 minmax(330px) 在手机宽度下会撑破容器，落单列 */
+  .scene-grid { grid-template-columns:1fr; }
+  .composer { padding:8px 10px 10px; }
+  /* flex 子项默认 min-width:auto 不许缩，input 的长 placeholder 会把输入行撑破 */
+  .input-row input { min-width:0; }
+  .model-sel { max-width:118px; }
+  .send { padding:0 14px; }
+}

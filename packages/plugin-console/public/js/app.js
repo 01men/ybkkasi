@@ -157,8 +157,10 @@ function renderShell(page, params, builder) {
         <nav class="sidebar-nav" id="nav"></nav>
         <div class="sidebar-footer" id="sidebar-footer"></div>
       </aside>
+      <div class="sidebar-mask" id="sidebar-mask"></div>
       <div class="main">
         <header class="topbar">
+          <button class="icon-btn nav-toggle" id="nav-toggle" title="导航菜单" aria-label="打开导航菜单">${icon('menu')}</button>
           <div class="topbar-search" id="cmdk-trigger">
             ${icon('search', 15)}
             <span>搜索资源、执行操作…</span>
@@ -186,6 +188,8 @@ function renderShell(page, params, builder) {
       const active = item.path && currentHash().split('?')[0] === item.path
       const el = h(`<div class="nav-item ${active ? 'active' : ''}">${icon(item.icon)}<span>${esc(item.label)}</span><span class="nav-badge hidden"></span></div>`)
       el.onclick = () => {
+        // 移动端抽屉导航（≤1024px）：选中即收起，避免遮挡落点内容
+        document.body.classList.remove('nav-open')
         // ext 外链项（部门面板独立 SPA）：整页跳转，不进 hash 路由；显式跨工作台切换记录落地偏好
         if (item.ext) {
           if (item.landing) { try { localStorage.setItem(LANDING_PREF_KEY, item.landing) } catch { /* 忽略 */ } }
@@ -221,6 +225,10 @@ function renderShell(page, params, builder) {
   $('#conn-indicator')?.addEventListener('click', () => { location.hash = '#/connections' })
   $('#cmdk-trigger').onclick = () => openCmdk()
   $('#avatar').onclick = () => openCmdk()
+
+  // 移动端抽屉导航（≤1024px）：汉堡开合 + 遮罩点击收起；导航项点击已在上方收起
+  $('#nav-toggle').onclick = () => document.body.classList.toggle('nav-open')
+  $('#sidebar-mask').onclick = () => document.body.classList.remove('nav-open')
 
   // 徽标（待审批/未读告警）与平台更新提示
   void refreshBadges()
@@ -289,10 +297,11 @@ async function boot() {
 
 boot()
 
-// ⌘K 快捷键
+// ⌘K 快捷键；Esc 收起移动端抽屉导航
 window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault()
     if (session.token) openCmdk()
   }
+  if (e.key === 'Escape') document.body.classList.remove('nav-open')
 })

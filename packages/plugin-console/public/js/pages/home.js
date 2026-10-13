@@ -61,6 +61,7 @@ export function renderHome(app) {
         <a class="home-btn home-btn-ghost" href="${BASE}/panel/" style="height:38px;padding:0 16px;font-size:13.5px">部门面板</a>
         <a class="home-btn home-btn-primary" href="#/login" id="home-login-btn" style="height:38px;padding:0 18px;font-size:13.5px">${loginLabel}</a>
       </div>
+      <button class="home-nav-toggle" id="home-nav-toggle" aria-label="打开菜单" aria-expanded="false">${icon('menu', 20)}</button>
     </nav>
 
     <header class="home-hero">
@@ -253,13 +254,22 @@ export function renderHome(app) {
   mountReveal(app)
 }
 
-/* ---------- 顶部导航：滚动态玻璃效果 ---------- */
+/* ---------- 顶部导航：滚动态玻璃效果 + 移动端汉堡下拉（≤880px） ---------- */
 function mountNav() {
   const nav = $('#home-nav')
   if (!nav) return
   const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8)
   onScroll()
   window.addEventListener('scroll', onScroll, { passive: true })
+  // 移动端：汉堡开合锚点菜单；点选锚点后收起
+  $('#home-nav-toggle')?.addEventListener('click', () => {
+    const open = nav.classList.toggle('open')
+    const toggle = $('#home-nav-toggle')
+    if (toggle) toggle.setAttribute('aria-expanded', String(open))
+  })
+  nav.querySelectorAll('.home-nav-links a').forEach((a) => {
+    a.addEventListener('click', () => nav.classList.remove('open'))
+  })
 }
 
 /* ---------- 粒子星尘（hero 背景）：零依赖 canvas ---------- */
