@@ -190,8 +190,11 @@ export const DEFAULT_GROUP_DRIFT_THRESHOLD = 5
 
 /** 连接器自动同步巡检 tick：到期判定按各配置自身 intervalMinutes，不在此处定周期。 */
 const AUTO_SYNC_TICK_MS = 60_000
-/** 启动后首跑延迟：错开平台装载窗口，超期/从未同步的连接器启动即补同步。 */
-const AUTO_SYNC_BOOT_DELAY_MS = 15_000
+/** 启动后首跑延迟：错开平台装载窗口，超期/从未同步的连接器启动即补同步。
+ * 90s 口径（2026-10-13 R4 复盘）：原 15s 在 boot 较慢的环境会抢先于 SSO 兑换断言把演示名册
+ * （dd_u003 等）自动同步建身份链接，「未命中签发待绑定票据」判定被污染为 hit——
+ * 演示环境本就带 intervalMinutes=60 的演示连接器，boot 即触发属合理，拉长延迟让交互窗口先行。 */
+const AUTO_SYNC_BOOT_DELAY_MS = 90_000
 /** 单连接器最小生效间隔（防误配高频拖垮钉钉 OpenAPI 配额；0=该连接器关闭自动同步）。 */
 const AUTO_SYNC_MIN_INTERVAL_MINUTES = 5
 
