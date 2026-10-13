@@ -51,7 +51,7 @@ export type RqCardKey = keyof typeof zh
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** 榕器执行卡与反馈条的文案。 */
+    /** 元冰可执行卡与反馈条的文案。 */
     'rq-card': RqCardKey
   }
 }

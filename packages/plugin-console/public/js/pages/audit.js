@@ -220,7 +220,7 @@ export async function renderAudit(content, params, ctx) {
       const data = await api.get('/api/audit/cost' + api.qs({ groupBy: dim }))
       const total = data.rows.reduce((s, r) => s + r.costYuan, 0)
       const tokens = data.rows.reduce((s, r) => s + r.llmTokens, 0)
-      const palette = ['#4f6ef7', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#14b8a6', '#a78bfa']
+      const palette = ['#0052D9', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6', '#ef4444', '#14b8a6', '#a78bfa']
       $('#cost-body').innerHTML = `
         <div class="grid-2 mb-14" style="grid-template-columns:2fr 1fr;align-items:stretch">
           <div class="card card-pad">

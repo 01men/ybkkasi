@@ -41,7 +41,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
       'platform-core', 'resource-core', 'iam', 'authn', 'usage', 'audit', 'market', 'modelgw', 'mcp', 'nas', 'skillhub', 'agent', 'app', 'connect', 'update', 'console', 'panel-core', 'dingtalk-bridge',
     ]
     return {
-      name: '榕器|企业AI资源管理平台',
+      name: '元冰可|企业AI资源管理平台',
       version: versionInfo.version,
       installMode: versionInfo.installMode,
       runtime: 'standalone-cordis（dsh 插件兼容）',
@@ -168,8 +168,8 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
           {
             protocolVersion: '2025-03-26',
             capabilities: { tools: {} },
-            serverInfo: { name: 'dsh-ops-platform', title: '榕器|企业AI资源管理平台 · MCP 网关', version: platformVersionInfo().version },
-            instructions: '榕器|企业AI资源管理平台（IAM/MCP/Skill/Agent/应用/NAS/用量计量/审计）。工具权限与控制台账号一致：先用 nas_list / mcp_service_list / skill_search 等盘点资产，再按需调用写类工具。',
+            serverInfo: { name: 'dsh-ops-platform', title: '元冰可|企业AI资源管理平台 · MCP 网关', version: platformVersionInfo().version },
+            instructions: '元冰可|企业AI资源管理平台（IAM/MCP/Skill/Agent/应用/NAS/用量计量/审计）。工具权限与控制台账号一致：先用 nas_list / mcp_service_list / skill_search 等盘点资产，再按需调用写类工具。',
           },
           { 'mcp-session-id': `dshmcp-${Date.now().toString(36)}` },
         )

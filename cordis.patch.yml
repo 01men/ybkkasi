@@ -13,7 +13,7 @@
 # 行为与 cordis.yml 一致：
 #   - provideToolRuntime=false：复用 dsh 原生 ToolRuntime（服务键 tools），
 #     平台插件注册的全部运维工具将直接进入 dsh 工具注册表、对模型可见、可被调用
-#   - startHttp=false + plugin-dsh-bridge：榕器数据面（REST/控制台 SPA/docs/mcp）
+#   - startHttp=false + plugin-dsh-bridge：元冰可数据面（REST/控制台 SPA/docs/mcp）
 #     以 /rq 前缀挂进 dsh webServer——单进程单入口，无需另起独立进程
 - insert:
     - id: ops-platform-core
@@ -79,7 +79,7 @@
     # 钉钉桥接（群桥/出向投递/审批推送/告警通道）：订阅 panel.message.created / audit.alert.fired
     - id: ops-dingtalk-bridge
       name: dsh-enterprise-ops/packages/plugin-dingtalk-bridge/src/index.ts
-    # 单进程单入口：把榕器数据面挂进 dsh webServer（/rq 前缀），必须在 console 之后装配
+    # 单进程单入口：把元冰可数据面挂进 dsh webServer（/rq 前缀），必须在 console 之后装配
     - id: ops-dsh-bridge
       name: dsh-enterprise-ops/packages/plugin-dsh-bridge/src/index.ts
       config:

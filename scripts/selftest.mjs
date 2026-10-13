@@ -4692,7 +4692,7 @@ try {
   const docTraverseEncoded = await rawReq('GET', '/docs/%2e%2e/package.json')
   check('/docs 编码 %2e%2e 穿越 → SPA 兜底页（不泄露文件）', docTraverseEncoded.status === 200 && String(docTraverseEncoded.headers['content-type']).startsWith('text/html') && !docTraverseEncoded.body.includes('"name": "dsh-enterprise-ops"'))
   const spaStillOk = await rawReq('GET', '/')
-  check('SPA 静态兜底不受影响（/ 仍返回控制台首页）', spaStillOk.status === 200 && String(spaStillOk.headers['content-type']).startsWith('text/html') && spaStillOk.body.includes('榕器'))
+  check('SPA 静态兜底不受影响（/ 仍返回控制台首页）', spaStillOk.status === 200 && String(spaStillOk.headers['content-type']).startsWith('text/html') && spaStillOk.body.includes('元冰可'))
 
   // ================================================================ 门户数据通道（plugin-portal：外部拉取端点）
   section('统一入口：/panel 无尾斜杠 302 归一（相对资源解析防御）')
@@ -5518,7 +5518,7 @@ try {
     const apiMissBody = await apiMiss.json().catch(() => null)
     check('未匹配 API 404 JSON 不落静态（DEF-01）', apiMiss.status === 404 && apiMissBody?.error?.code === 'NOT_FOUND')
     const simMiss = await fetch(`http://127.0.0.1:${sim.address().port}/outside`)
-    check('前缀外请求不进榕器数据面（dsh 侧自有路由域不受影响）', simMiss.status === 404 && (await simMiss.text()) === 'sim-miss')
+    check('前缀外请求不进平台数据面（dsh 侧自有路由域不受影响）', simMiss.status === 404 && (await simMiss.text()) === 'sim-miss')
 
     // -- 身份半：票据兑换 → Cookie 绑定 → 状态 → 会话归因 → 实时失效（M4/M5） ----
     check('免登引导脚本经 tapIndex 注入', taps.length === 1 && taps[0]('<html><head></head></html>').includes('entry_ticket'))

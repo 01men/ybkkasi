@@ -6,12 +6,12 @@
  * 运行时身份（对齐 dsh tsdown.client.ts 的 INLINE_SAFE 判据）。
  *
  * 【数据回流选型（spike §4.3 二选一）】走同源 REST：浏览器直接 fetch 到
- * plugin-dsh-bridge 已挂在 /rq 前缀的榕器数据面，复用榕器自身鉴权（rq_sid
+ * plugin-dsh-bridge 已挂在 /rq 前缀的元冰可数据面，复用元冰可自身鉴权（rq_sid
  * Cookie）与审计；不新增宿主 RPC 通道（connection.rpc 的 loopback 判定在
  * 反代/远端访问场景有不确定性，spike 风险 R6）。
  */
 
-/** 榕器数据面对外前缀（plugin-dsh-bridge mountPath，单进程单入口）。 */
+/** 元冰可数据面对外前缀（plugin-dsh-bridge mountPath，单进程单入口）。 */
 export const CONSOLE_BASE = '/rq'
 
 /** 👍/👎 反馈薄端点（同源 REST 相对路径）。端点本体由 WP-07 实现

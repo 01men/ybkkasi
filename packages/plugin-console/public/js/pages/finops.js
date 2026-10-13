@@ -109,7 +109,7 @@ export async function renderFinops(content, params, { rerender }) {
                   <span style="margin-left:auto;font-weight:600">${fmtCost(row.cost_cents / 100)}</span>
                 </div>
                 <div style="height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden">
-                  <div style="height:100%;width:${Math.max((row.cost_cents / max) * 100, 2)}%;border-radius:3px;background:linear-gradient(90deg,#4f6ef7,#7c5cf5)"></div>
+                  <div style="height:100%;width:${Math.max((row.cost_cents / max) * 100, 2)}%;border-radius:3px;background:linear-gradient(90deg,#0052D9,#00A3FF)"></div>
                 </div>
               </div>`
           }).join('') : `<div class="tbl-empty">${icon('bot', 28)}<span>${penetration.month} 暂无模型调用计量</span></div>`}

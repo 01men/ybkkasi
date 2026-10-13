@@ -18,7 +18,7 @@
  * 源码文件路径会被负判为「非 client 包」且永久缓存，spike §4.2）。
  *
  * 【markdown 兜底契约（spike §5 降级预案第 5 条，宿主工具侧义务）】
- * 榕器工具的 tool/result 文本内容必须始终携带纯 markdown 摘要 + /rq 控制台链接：
+ * 元冰可工具的 tool/result 文本内容必须始终携带纯 markdown 摘要 + /rq 控制台链接：
  * 客户端富卡片只是把同一信息「升级」呈现；上游升级导致注入面失效时，用户
  * 体验自动回落为该文本，无需发版。summarizeForToolResult() 是该契约的参考
  * 实现，供工具侧（platform-core / plugin-mcp 等）在组织工具结果时复用——
@@ -49,7 +49,7 @@ export interface ToolResultSummaryInput {
  *   **mcp_invoke** ⚠ 执行受阻 —— 无访问权限
  *   - 服务：inventory（online）
  *   - 原因：nas-authz deny
- *   👉 [到榕器控制台处理](/rq#/nas-authz)
+ *   👉 [到元冰可控制台处理](/rq#/nas-authz)
  *
  * 返回值直接作为 tool/result 文本内容的一部分（不依赖任何客户端插件）。
  */
@@ -61,7 +61,7 @@ export function summarizeForToolResult(input: ToolResultSummaryInput): string {
     lines.push(`- ${key}：${String(value)}`)
   }
   if (input.consoleHash !== undefined) {
-    lines.push(`👉 [到榕器控制台处理](${CONSOLE_BASE}${input.consoleHash})`)
+    lines.push(`👉 [到元冰可控制台处理](${CONSOLE_BASE}${input.consoleHash})`)
   }
   return lines.join('\n')
 }

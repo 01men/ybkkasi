@@ -160,7 +160,7 @@ export async function renderAssets(content, params, { rerender }) {
                 <div style="padding:7px 0">
                   <div class="flex fs-12" style="margin-bottom:3px"><span class="ellipsis" style="max-width:60%">${esc(row.label)}</span><span style="margin-left:auto;font-weight:600">${fmtCents(row.cost_cents)}</span></div>
                   <div style="height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden">
-                    <div style="height:100%;width:${Math.max((row.cost_cents / max) * 100, 2)}%;border-radius:3px;background:linear-gradient(90deg,#4f6ef7,#7c5cf5)"></div>
+                    <div style="height:100%;width:${Math.max((row.cost_cents / max) * 100, 2)}%;border-radius:3px;background:linear-gradient(90deg,#0052D9,#00A3FF)"></div>
                   </div>
                 </div>`
             }).join('') || '<span class="text-4 fs-12">暂无计量数据</span>'}

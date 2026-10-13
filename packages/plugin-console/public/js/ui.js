@@ -245,15 +245,15 @@ function gradientIll(ic) {
     <svg viewBox="0 0 128 96" width="128" height="96">
       <defs>
         <linearGradient id="eg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#c7d2fe"/><stop offset="1" stop-color="#e0e7ff"/>
+          <stop offset="0" stop-color="#b6d7ff"/><stop offset="1" stop-color="#dcecff"/>
         </linearGradient>
       </defs>
       <rect x="14" y="18" width="100" height="62" rx="10" fill="url(#eg)"/>
       <rect x="24" y="30" width="44" height="7" rx="3.5" fill="#fff" opacity=".9"/>
       <rect x="24" y="43" width="64" height="7" rx="3.5" fill="#fff" opacity=".75"/>
       <rect x="24" y="56" width="52" height="7" rx="3.5" fill="#fff" opacity=".6"/>
-      <circle cx="97" cy="61" r="15" fill="#4f6ef7" opacity=".14"/>
-      <g transform="translate(89,53)" stroke="#4f6ef7" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="97" cy="61" r="15" fill="#0052D9" opacity=".14"/>
+      <g transform="translate(89,53)" stroke="#0052D9" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
         ${iconRaw(ic, 16)}
       </g>
     </svg>`
@@ -265,7 +265,7 @@ function iconRaw(name, size) {
 const PATH_CACHE = PATHS
 
 // ---------- SVG 图表 ----------
-export function sparkline(values, { width = 220, height = 48, color = '#4f6ef7', fill = true } = {}) {
+export function sparkline(values, { width = 220, height = 48, color = '#0052D9', fill = true } = {}) {
   if (!values?.length) return '<span class="text-4 fs-12">暂无数据</span>'
   const max = Math.max(...values, 1)
   const min = Math.min(...values, 0)
@@ -286,7 +286,7 @@ export function sparkline(values, { width = 220, height = 48, color = '#4f6ef7',
     </svg>`
 }
 
-export function barChart(items, { width = 560, height = 170, color = '#4f6ef7', format = (v) => v } = {}) {
+export function barChart(items, { width = 560, height = 170, color = '#0052D9', format = (v) => v } = {}) {
   if (!items?.length) return '<div class="text-4 fs-12" style="padding:20px">暂无数据</div>'
   const max = Math.max(...items.map((i) => i.value), 1)
   const gap = 6
@@ -305,7 +305,7 @@ export function barChart(items, { width = 560, height = 170, color = '#4f6ef7', 
   return `<svg width="100%" viewBox="0 0 ${width} ${height}" style="display:block">${bars}</svg>`
 }
 
-export function lineChart(series, { width = 560, height = 170, colors = ['#4f6ef7', '#10b981', '#f59e0b'], labels = [] } = {}) {
+export function lineChart(series, { width = 560, height = 170, colors = ['#0052D9', '#10b981', '#f59e0b'], labels = [] } = {}) {
   const all = series.flat()
   if (!all.length) return '<div class="text-4 fs-12" style="padding:20px">暂无数据</div>'
   const max = Math.max(...all, 1)

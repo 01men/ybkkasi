@@ -8,7 +8,7 @@ import {
   multiSelectField, mountSearchableSelects,
 } from '../ui.js'
 
-const ICON_COLORS = { kb: ['#eef2ff', '#4f6ef7'], chart: ['#ecfdf5', '#10b981'], ticket: ['#fff7ed', '#f97316'], hr: ['#f5f3ff', '#8b5cf6'], fx: ['#fef2f2', '#ef4444'], mcp: ['#eff6ff', '#3b82f6'] }
+const ICON_COLORS = { kb: ['#eef6ff', '#0052D9'], chart: ['#ecfdf5', '#10b981'], ticket: ['#fff7ed', '#f97316'], hr: ['#f5f3ff', '#8b5cf6'], fx: ['#fef2f2', '#ef4444'], mcp: ['#eff6ff', '#3b82f6'] }
 
 export async function renderMcp(content, params, ctx) {
   const data = await api.get('/api/mcp/services')

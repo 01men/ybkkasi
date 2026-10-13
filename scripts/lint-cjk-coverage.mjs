@@ -48,6 +48,7 @@ const TOKEN_WHITELIST = new Set([
   'MCP', 'NAS', 'dsh', 'DSH', 'RQ', 'ACL', 'OK', 'OKTA', 'Keycloak', 'DingTalk',
   'WeChat', 'GitHub', 'GitLab', 'Google', 'Microsoft', 'Apple', 'Linux', 'Windows',
   'macOS', 'Node', 'npm', 'pnpm', 'Ed25519', 'SQLite', 'Cordis', 'cordis',
+  'YUANBINGKE', 'Ybk',
   // 领域名词（产品口径保留英文的品牌化称呼；阶段 2 复核）
   'Agent', 'Agents', 'Skill', 'Skills', 'Tool', 'Tools', 'Model', 'Models',
   'Connector', 'Connectors', 'Webhook', 'Webhooks', 'Dashboard', 'Marketplace',

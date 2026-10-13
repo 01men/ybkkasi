@@ -8,7 +8,7 @@ import {
   searchableSelectField, mountSearchableSelects,
 } from '../ui.js'
 
-const COVERS = ['linear-gradient(135deg,#4f6ef7,#7c5cf5)', 'linear-gradient(135deg,#10b981,#34d399)', 'linear-gradient(135deg,#f59e0b,#fbbf24)', 'linear-gradient(135deg,#8b5cf6,#a78bfa)', 'linear-gradient(135deg,#3b82f6,#60a5fa)', 'linear-gradient(135deg,#ef4444,#f87171)']
+const COVERS = ['linear-gradient(135deg,#0052D9,#00A3FF)', 'linear-gradient(135deg,#10b981,#34d399)', 'linear-gradient(135deg,#f59e0b,#fbbf24)', 'linear-gradient(135deg,#8b5cf6,#a78bfa)', 'linear-gradient(135deg,#3b82f6,#60a5fa)', 'linear-gradient(135deg,#ef4444,#f87171)']
 const COVER_ICONS = { '办公提效': 'file', '研发效能': 'terminal', '客户服务': 'ticket', '数据分析': 'chart', '人事行政': 'users', '市场情报': 'globe', '法务合规': 'shield', '通用': 'sparkles' }
 /** Agent 状态枚举（协议值 ASCII）→ 选择器选项中文伴随（option 纯文本不能用 statusBadge） */
 const AGENT_STATUS_LABEL = { online: '已上线', offline: '已下线', draft: '开发中', archived: '已归档' }
@@ -648,7 +648,7 @@ function heatCard({ days, skills, maxCell }) {
   const height = rows.length * (cell + gap) + 16
   const cells = rows.map((skill, r) => skill.cells.map((value, c) => {
     const opacity = value > 0 ? 0.1 + 0.9 * (value / maxCell) : 0.04
-    return `<rect x="${labelW + c * (cell + gap)}" y="${r * (cell + gap)}" width="${cell}" height="${cell}" rx="3" fill="#4f6ef7" fill-opacity="${opacity.toFixed(2)}"><title>${esc(skill.name)} · ${esc(days[c])} · ${value} 次</title></rect>`
+    return `<rect x="${labelW + c * (cell + gap)}" y="${r * (cell + gap)}" width="${cell}" height="${cell}" rx="3" fill="#0052D9" fill-opacity="${opacity.toFixed(2)}"><title>${esc(skill.name)} · ${esc(days[c])} · ${value} 次</title></rect>`
   }).join('')).join('')
   const rowLabels = rows.map((skill, r) =>
     `<text x="0" y="${r * (cell + gap) + 11}" font-size="11" fill="#6b7280">${esc(skill.name.length > 13 ? skill.name.slice(0, 12) + '…' : skill.name)}</text>`).join('')

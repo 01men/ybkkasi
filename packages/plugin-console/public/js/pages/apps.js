@@ -20,9 +20,9 @@ const isIconUrl = (value) => /^https?:\/\//i.test(String(value ?? '').trim())
 /** 头像 / 图标渲染：http(s) 图片地址渲染为 <img> 头像，其余按 emoji 文本展示（.res-icon 同尺寸）。 */
 function appIconHtml(value) {
   if (isIconUrl(value)) {
-    return `<img class="res-icon" src="${esc(String(value).trim())}" alt="" referrerpolicy="no-referrer" style="object-fit:cover;background:linear-gradient(135deg,#eef2ff,#e0e7ff)">`
+    return `<img class="res-icon" src="${esc(String(value).trim())}" alt="" referrerpolicy="no-referrer" style="object-fit:cover;background:linear-gradient(135deg,#eef6ff,#dcecff)">`
   }
-  return `<div class="res-icon" style="background:linear-gradient(135deg,#eef2ff,#e0e7ff);font-size:21px">${esc(String(value ?? '').trim() || '✨')}</div>`
+  return `<div class="res-icon" style="background:linear-gradient(135deg,#eef6ff,#dcecff);font-size:21px">${esc(String(value ?? '').trim() || '✨')}</div>`
 }
 
 /** 平台授权直达：签发一次性入场票据后带 #entry_ticket 打开应用（裸跳转已下线，与应用自有 OIDC 接入互不影响）。 */
@@ -177,7 +177,7 @@ async function openAppDetail(id, ctx) {
       tabBody.innerHTML = `
         <div class="card card-pad mb-14">
           <div class="card-title mb-8">近 14 天 UV / DAU（日去重口径）</div>
-          ${lineChart([app.metrics.series.map((s) => s.uv ?? 0), app.metrics.series.map((s) => s.dau)], { width: 640, height: 150, colors: ['#10b981', '#4f6ef7'], labels: ['UV', 'DAU'] })}
+          ${lineChart([app.metrics.series.map((s) => s.uv ?? 0), app.metrics.series.map((s) => s.dau)], { width: 640, height: 150, colors: ['#10b981', '#0052D9'], labels: ['UV', 'DAU'] })}
         </div>
         <div class="card card-pad mb-14">
           <div class="card-title mb-8">近 14 天 PV（页面浏览量）</div>
@@ -497,7 +497,7 @@ function topologySvg(root) {
   })
   const colorOf = (node) => {
     if (node.status === 'unhealthy') return { border: '#ef4444', bg: '#fef2f2', text: '#b91c1c' }
-    if (node.type === 'app') return { border: '#4f6ef7', bg: '#eef2ff', text: '#2f49c1' }
+    if (node.type === 'app') return { border: '#0052D9', bg: '#eef6ff', text: '#003a9e' }
     if (node.type === 'agent') return { border: '#8b5cf6', bg: '#f5f3ff', text: '#6d28d9' }
     if (node.type === 'skill') return { border: '#10b981', bg: '#ecfdf5', text: '#047857' }
     return { border: '#d4d6dd', bg: '#f8f9fb', text: '#4b5059' }

@@ -2,7 +2,7 @@
  * 浏览器半：slot 注册 + 降级探测（WP-06 交付物 1/3，spike §4.3 伪代码落地）。
  *
  * 【注入面】两条 slot：
- *   ① 四态执行卡：为榕器工具名（RQ_TOOL_NAMES）逐一注册 `tool.call.toolview`
+ *   ① 四态执行卡：为元冰可工具名（RQ_TOOL_NAMES）逐一注册 `tool.call.toolview`
  *      键位条目——加法式，未列名的工具回落 dsh 的 GenericToolCard；
  *   ② 👍/👎 反馈条：`conversation.chat.assistant-actions` list 条目
  *      （id 'rq-feedback'，与 dsh 自带 'feedback' 并存，order 20 排其后）。
@@ -51,7 +51,7 @@ const NS = 'rq-card'
 const PLUGIN_ID = '@dsh-ops/plugin-rq-card'
 
 /**
- * 榕器工具名名录（各插件包 tools.ts 的登记清单，截至 WP-06）。
+ * 元冰可工具名名录（各插件包 tools.ts 的登记清单，截至 WP-06）。
  * 四态执行卡为这些工具注册键位；新增工具不自动获得卡片（回落 GenericToolCard），
  * 在此追加一行即可覆盖。核心主角是 mcp_invoke（资产调运四态主战场）。
  */
@@ -193,7 +193,7 @@ export function apply(ctx: ClientContext): void {
         }, function RqCardDegradedBadge() {
           // 无 props 依赖：任何 slot 契约变化都只会让角标空白，不会抛错。
           // 本文件是 .ts（非 tsx），故用 createElement 而非 JSX 字面量。
-          return createElement('span', { className: 'rq-badge' }, '榕器卡片未生效（纯文本模式）')
+          return createElement('span', { className: 'rq-badge' }, '元冰可卡片未生效（纯文本模式）')
         }))
       })
     }

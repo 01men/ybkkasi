@@ -107,7 +107,7 @@ function renderLoginGuide() {
   const here = encodeURIComponent(location.pathname + location.search + location.hash)
   document.getElementById('app').innerHTML = `
     <div class="login-guide">
-      <h1>🌳 榕器 · 部门 Agent 工作台</h1>
+      <h1><img src="./ybk-mark.png" alt="元冰可" style="width:30px;height:30px;border-radius:8px;vertical-align:-7px"> 元冰可 · 部门 Agent 工作台</h1>
       <p>当前浏览器没有有效的平台会话。<br>
       请从控制台登录后进入，或从钉钉/门户的「打开即工作台」入口点入（自动票据免登）。</p>
       <a href="${basePath() || '/'}?next=${here}#/login"><button class="btn primary">去控制台登录</button></a>
@@ -258,7 +258,7 @@ function renderShell() {
   const activeIndustry = state.industry
   document.getElementById('app').innerHTML = `
     <div class="topbar">
-      <div class="logo">🌳 榕器 <span class="badge">部门工作台</span></div>
+      <div class="logo"><img src="./ybk-mark.png" alt="元冰可" style="width:22px;height:22px;border-radius:6px;vertical-align:-5px"> 元冰可 <span class="badge">部门工作台</span></div>
       <div class="ind-sel">
         <div class="ind-btn" id="indBtn">
           <span>${esc(activeIndustry?.icon ?? '🏢')}</span><span>${esc(activeIndustry?.name ?? '未激活行业')}</span>
@@ -406,7 +406,7 @@ function renderRail() {
     <div class="rail-spacer"></div>
     ${state.hostBridge ? `<a class="rail-console" href="/" title="打开 Agent 对话（dsh 宿主）" style="text-decoration:none">
       <div class="ico">💬</div><div>Agent<br>对话</div></a>` : ''}
-    <a class="rail-console" href="${basePath() || '/'}" title="打开榕器管理控制台" style="text-decoration:none"
+    <a class="rail-console" href="${basePath() || '/'}" title="打开元冰可管理控制台" style="text-decoration:none"
       data-landing="console">
       <div class="ico">🧩</div><div>管理<br>控制台</div></a>`
   rail.querySelectorAll('.rail-item').forEach((el) => {
