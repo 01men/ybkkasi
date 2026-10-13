@@ -145,7 +145,8 @@ function navigate() {
 
 function renderShell(page, params, builder) {
   app.innerHTML = `
-    <div class="layout">
+    <div class="layout" id="layout">
+      <div class="sidebar-mask" id="sidebar-mask"></div>
       <aside class="sidebar">
         <div class="sidebar-brand">
           <img class="brand-mark brand-logo" src="ybk-mark.png" alt="元冰可">
@@ -159,13 +160,14 @@ function renderShell(page, params, builder) {
       </aside>
       <div class="main">
         <header class="topbar">
+          <button class="icon-btn btn-menu" id="btn-menu" title="导航菜单">${icon('menu')}</button>
           <div class="topbar-search" id="cmdk-trigger">
             ${icon('search', 15)}
             <span>搜索资源、执行操作…</span>
             <kbd>⌘K</kbd>
           </div>
           <div class="topbar-right">
-            ${IS_LOCAL_HOST ? '' : `<button class="badge badge-warn no-dot" id="conn-indicator" title="当前连接远程宿主服务，点击管理连接" style="cursor:pointer;border:0">${icon('server', 13)} ${esc(CONNECTION_NAME)}</button>`}
+            ${IS_LOCAL_HOST ? '' : `<button class="badge badge-warn no-dot conn-indicator" id="conn-indicator" title="当前连接远程宿主服务，点击管理连接" style="cursor:pointer;border:0">${icon('server', 13)} ${esc(CONNECTION_NAME)}</button>`}
             <button class="icon-btn" id="btn-refresh" title="刷新数据">${icon('refresh')}</button>
             <div style="position:relative" id="update-host"></div>
             <div style="position:relative" id="alert-host"></div>
@@ -175,6 +177,12 @@ function renderShell(page, params, builder) {
         <main class="content" id="page-content"></main>
       </div>
     </div>`
+
+  // 移动端侧边栏抽屉：汉堡开、遮罩/导航点击收（导航跳转会整壳重渲，天然复位）
+  const layoutEl = $('#layout')
+  const closeSidebar = () => layoutEl.classList.remove('sidebar-open')
+  $('#btn-menu').onclick = () => layoutEl.classList.toggle('sidebar-open')
+  $('#sidebar-mask').onclick = closeSidebar
 
   // 侧边导航
   const nav = $('#nav')
@@ -193,6 +201,7 @@ function renderShell(page, params, builder) {
           return
         }
         location.hash = item.path
+        closeSidebar()
       }
       item._badgeEl = el.querySelector('.nav-badge')
       sec.appendChild(el)

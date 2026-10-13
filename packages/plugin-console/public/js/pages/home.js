@@ -61,7 +61,15 @@ export function renderHome(app) {
         <a class="home-btn home-btn-ghost" href="${BASE}/panel/" style="height:38px;padding:0 16px;font-size:13.5px">部门面板</a>
         <a class="home-btn home-btn-primary" href="#/login" id="home-login-btn" style="height:38px;padding:0 18px;font-size:13.5px">${loginLabel}</a>
       </div>
+      <button class="home-menu-btn" id="home-menu-btn" title="打开菜单" aria-label="打开菜单">${icon('menu')}</button>
     </nav>
+    <div class="home-mobile-menu" id="home-mobile-menu">
+      <a href="#sec-features">产品能力</a>
+      <a href="#sec-arch">架构理念</a>
+      <a href="#sec-start">快速开始</a>
+      <a href="${BASE}/panel/">部门面板</a>
+      <a href="#/login">${loginLabel}</a>
+    </div>
 
     <header class="home-hero">
       <div class="home-hero-bg"><canvas id="home-stars"></canvas></div>
@@ -253,13 +261,38 @@ export function renderHome(app) {
   mountReveal(app)
 }
 
-/* ---------- 顶部导航：滚动态玻璃效果 ---------- */
+/* ---------- 顶部导航：滚动态玻璃效果 + 移动端汉堡菜单 ---------- */
 function mountNav() {
   const nav = $('#home-nav')
   if (!nav) return
   const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8)
   onScroll()
   window.addEventListener('scroll', onScroll, { passive: true })
+  // 移动端（≤880px）汉堡菜单：开/关互切，点链接即收；桌面态按钮本身不显示
+  const menuBtn = $('#home-menu-btn')
+  const menu = $('#home-mobile-menu')
+  if (menuBtn && menu) {
+    menuBtn.onclick = () => menu.classList.toggle('open')
+    menu.querySelectorAll('a').forEach((a) => { a.onclick = () => menu.classList.remove('open') })
+  }
+  // 页内锚点不进 hash 路由：#sec-* 若真写入 hash 会触发 app.js 的 hashchange → navigate()，
+  // 把首页整页替换成登录页/控制台（桌面导航、页脚、移动菜单同源问题）。
+  // 改为显式滚动（预留固定导航 64px+12px 偏移）+ replaceState 维持 #/home，路由器完全无感。
+  // 平滑滚动在 rAF 被节流的环境（部分内嵌 webview）会近乎停滞，800ms 未到位就瞬时补齐。
+  document.querySelectorAll('a[href^="#sec-"]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      const target = document.getElementById(String(a.getAttribute('href') ?? '').slice(1))
+      if (!target) return
+      e.preventDefault()
+      menu?.classList.remove('open')
+      const top = Math.max(0, target.getBoundingClientRect().top + window.scrollY - 76)
+      window.scrollTo({ top, behavior: 'smooth' })
+      setTimeout(() => {
+        if (Math.abs(window.scrollY - top) > 40) window.scrollTo(0, top)
+      }, 800)
+      history.replaceState(null, '', '#/home')
+    })
+  })
 }
 
 /* ---------- 粒子星尘（hero 背景）：零依赖 canvas ---------- */

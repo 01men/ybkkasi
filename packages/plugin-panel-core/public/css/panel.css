@@ -337,3 +337,78 @@ button { font-family:inherit; }
 .login-guide { margin:auto; text-align:center; max-width:420px; padding:32px; }
 .login-guide h1 { font-size: var(--fs-18); margin-bottom:10px; }
 .login-guide p { font-size: var(--fs-13); color:var(--txt2); line-height:1.8; margin-bottom:18px; }
+
+/* ============================================================
+   ===== 移动端响应式补强（追加段，只追加不改上方既有规则） =====
+   已有断点：1360 / 1180（右列改抽屉）/ 980（左列改抽屉+隐藏搜索）/ 1800。
+   本段补三档：≤1024 小桌面与平板横屏 → ≤768 平板竖屏与手机横屏 → ≤420 手机竖屏
+   （覆盖 375 常见机型与 320 iPhone SE 逻辑宽）。仅窄屏降级，不影响桌面表现。
+
+   布局容器盘点（本段针对的破版点）：
+   - .topbar flex 行：logo+行业按钮+搜索(≤980 已隐)+右侧双胶囊，固定高 56 不换行，
+     320px 下右侧内容被 body overflow:hidden 裁掉 → ≤420 收缩/隐藏装饰项；
+     .ind-menu 定宽 300px 在 320px 视口超出右缘不可达 → 改近全宽固定面板。
+   - .input-row flex 行：model-sel 定宽 172 + send 定宽，input 默认 min-width:auto
+     会在 <450px 左右顶破容器 → 放开最小宽度、≤420 改两行排布。
+   - .scene-grid：minmax(330px,1fr) 在容器 <330px 时把卡片撑出视口 → min(330px,100%)。
+   - .kanban 泳道（横向"表格"）：容器本身 overflow:auto 可横滚，父链已有
+     min-width:0（.dept/.col-main），此处补 min-width:0 兜底；≤420 略收泳道宽度。
+   - .mform-grid 双列表单 / .lic-row 行在 260px 内容区过挤 → 换行堆叠。
+   ============================================================ */
+
+/* ----- ≤1024：压缩各滚动区内边距；场景卡网格列宽允许收缩到容器 ----- */
+@media (max-width:1024px) {
+  .dept-head { padding:12px 16px; }
+  .msgs { padding:14px 16px; min-width:0; }
+  .kanban { padding:14px 16px; min-width:0; }
+  .artifacts { padding:14px 16px; min-width:0; }
+  .scene-wrap { padding:14px 16px; min-width:0; }
+  /* min(330px,100%)：容器 ≥330px 时与原 minmax(330px,1fr) 表现完全一致；
+     容器 <330px（窄屏）时列最小值取容器本身，卡片不再横向撑破 */
+  .scene-grid { grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr)); }
+}
+
+/* ----- ≤768：顶栏与中列进一步收紧；输入行允许 flex 收缩不溢出 ----- */
+@media (max-width:768px) {
+  .topbar { padding:0 12px; gap:8px; }
+  .msgs { padding:12px; }
+  .kanban { padding:12px; }
+  .artifacts { padding:12px; }
+  .scene-wrap { padding:12px; }
+  .tabs { padding:8px 8px 0; }
+  .tab { padding:8px 10px; }
+  .composer { padding:8px 10px 10px; }
+  .input-row { gap:8px; }
+  /* input 的默认 min-width:auto 会被 model-sel(172px)+send 定宽挤出容器外；
+     放开最小宽度后由 flex 均衡收缩，空间充裕时表现与原先一致 */
+  .input-row input { min-width:0; }
+  .modal-b { padding:12px 14px; }
+}
+
+/* ----- ≤420：手机竖屏（含 320px iPhone SE） ----- */
+@media (max-width:420px) {
+  /* 顶栏三处定宽来源收缩：装饰徽标隐藏、行业按钮缩小；
+     钉钉状态长胶囊隐藏（绑定入口在 composer 的"绑定钉钉"chip 与行业菜单仍可达）；
+     其余胶囊限宽省略号，防止 56px 定高顶栏右端被 body overflow:hidden 裁掉 */
+  .topbar { padding:0 10px; }
+  .logo .badge { display:none; }
+  .ind-btn { gap:4px; padding:5px 7px; font-size:11px; }
+  .top-right { gap:6px; }
+  .top-right .pill { max-width:26vw; overflow:hidden; text-overflow:ellipsis; }
+  .top-right .pill#ddPill { display:none; }
+  .avatar { display:none; }
+  /* 行业下拉 300px 定宽 + absolute left:0 在 320px 视口右半不可点，
+     改为视口近全宽固定面板（topbar 无 transform，fixed 相对视口成立） */
+  .ind-menu { position:fixed; left:8px; right:8px; top:60px; width:auto;
+              max-height:calc(100vh - 72px); overflow-y:auto; }
+  /* 输入行两行排布：输入框独占一行（16px 字号同时防 iOS 聚焦自动放大），
+     模型选择与发送键落到第二行 */
+  .input-row { flex-wrap:wrap; }
+  .input-row input { flex:1 1 100%; font-size:16px; }
+  .model-sel { max-width:none; flex:1; }
+  /* 弹窗内两列表单与模型目录行在 ~260px 内容区过挤，允许换行堆叠 */
+  .mform-grid { flex-direction:column; }
+  .lic-row { flex-wrap:wrap; }
+  /* 任务看板保持容器内横向滚动（.kanban 自带 overflow:auto），泳道略收窄 */
+  .lane { min-width:184px; }
+}
