@@ -12,7 +12,8 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { existsSync, readdirSync, createReadStream } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
-import type { HttpExchange, Collection, RecordBase } from '../../platform-core/src/index.ts'
+import type { HttpExchange, Collection, RecordBase, CallerInfo } from '../../platform-core/src/index.ts'
+import { createRestGate } from '../../platform-core/src/index.ts'
 import { createPluginContext, newId, platformVersionInfo, PlatformEvents } from '../../platform-core/src/index.ts'
 import { nonbillableUsage } from '../../plugin-usage/src/index.ts'
 import { PermissionCatalog, type UserManageActor } from '../../plugin-iam/src/index.ts'
@@ -33,18 +34,6 @@ export const inject = [
   'mcpRegistry', 'nasRegistry', 'nasAuthz', 'nasShareLinks', 'skillHub', 'resourceCore', 'agentRegistry', 'appRegistry', 'update',
   'connectorHub',
 ]
-
-interface CallerInfo {
-  kind: 'human' | 'machine'
-  principalId: string
-  userId?: string
-  /** machine 专属：凭证关联资源（refType=agent 时 modelgw 等调用以 agent:<refId> 为计量主体）。 */
-  refType?: string
-  refId?: string
-  name: string
-  permissions: string[]
-  actChain: Array<{ name: string; type: string }>
-}
 
 // 公开路径白名单（免鉴权）：导出供 selftest「rbac endpoint matrix」比对——清单变动即红
 export const PUBLIC_PATHS = new Set([
@@ -202,57 +191,13 @@ export function apply(ctx: Context) {
     }
   })
 
-  const caller = (exchange: HttpExchange): CallerInfo => exchange.principal as CallerInfo
+  // R5 收敛：caller/requirePermission/guarded/body/changeLog 统一引 platform-core 共享实现（单点修复、单点审计）
+  const { caller, requirePermission, guarded, body, changeLog } = createRestGate(ctx)
 
   /** 账号管理操作者上下文（QA A-03）：传给 iam 服务层做组织归属校验（非平台管理员限本组织子树）。 */
   const manageActor = (exchange: HttpExchange): UserManageActor => {
     const info = caller(exchange)
     return { userId: info.userId, permissions: info.permissions }
-  }
-
-  const requirePermission = (exchange: HttpExchange, point: string): boolean => {
-    const info = caller(exchange)
-    if (info.permissions.includes('*') || info.permissions.includes(point)) return true
-    ctx.platformBus.emit('audit.authz.denied', {
-      actorId: info.userId ?? info.principalId,
-      actorName: info.name,
-      point,
-      path: exchange.path,
-    })
-    exchange.fail(403, 'FORBIDDEN', `缺少权限点 ${point}，请联系管理员调整角色`, { permission: point })
-    return false
-  }
-
-  /** 注册一条受权限保护的路由（H5：声明经 register 自动汇入路由×权限矩阵，含共享登记处去重）。 */
-  const guarded = (method: string, path: string, permission: string, handler: (exchange: HttpExchange) => unknown | Promise<unknown>): void => {
-    http.register(method, path, async (exchange) => {
-      if (!requirePermission(exchange, permission)) return
-      try {
-        const result = await handler(exchange)
-        if (!exchange.res.writableEnded) exchange.ok(result)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        exchange.fail(400, 'BAD_REQUEST', message)
-      }
-    }, { access: 'guarded', permission })
-  }
-
-  const body = <T extends Record<string, any>>(exchange: HttpExchange): T => (exchange.body ?? {}) as T
-  const changeLog = (exchange: HttpExchange, action: string, resourceType: string, resourceId: string, resourceName: string, detail = ''): void => {
-    const info = caller(exchange)
-    ctx.audit.record({
-      type: 'change',
-      actorType: info.kind === 'human' ? 'human' : 'machine',
-      actorId: info.userId ?? info.principalId,
-      actorName: info.name,
-      action,
-      resourceType,
-      resourceId,
-      resourceName,
-      result: 'ok',
-      detail,
-      ...(info.actChain.length > 0 ? { actChain: info.actChain } : {}),
-    })
   }
 
   // -- 健康 ---------------------------------------------------------------

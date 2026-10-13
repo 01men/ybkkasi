@@ -19,6 +19,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../platform-core/src/index.ts'
+import { createRestGate, type CallerInfo } from '../../platform-core/src/index.ts'
 import { PlatformEvents } from '../../platform-core/src/bus.ts'
 import { newId } from '../../platform-core/src/ids.ts'
 import { PanelService, TASK_LANES, type TaskLane, type DeptWidget, type DeptKpi, type DeptAgent } from './service.ts'
@@ -34,15 +35,6 @@ export const inject = [
 // 注意：panel 服务不可自 inject（cordis 的 inject 是加载前硬依赖，自依赖=永久挂起）——
 // 本插件内部直接 new PanelService(ctx) 使用；类经 ctx.plugin 注册供 dingtalk-bridge 注入。
 
-interface CallerInfo {
-  kind: 'human' | 'machine'
-  principalId: string
-  userId?: string
-  name: string
-  permissions: string[]
-  actChain: Array<{ name: string; type: string }>
-}
-
 const DEPT_RE = /^[a-z]{2,12}$/
 
 export function apply(ctx: Context) {
@@ -50,53 +42,8 @@ export function apply(ctx: Context) {
   ctx.plugin(PanelService)
   const panel = new PanelService(ctx)
 
-  const caller = (exchange: HttpExchange): CallerInfo => exchange.principal as CallerInfo
-
-  // 与 console 同款 requirePermission：缺权限 403 + audit.authz.denied 留痕（RBAC 探针的判定面）
-  const requirePermission = (exchange: HttpExchange, point: string): boolean => {
-    const info = caller(exchange)
-    if (info.permissions.includes('*') || info.permissions.includes(point)) return true
-    ctx.platformBus.emit('audit.authz.denied', {
-      actorId: info.userId ?? info.principalId,
-      actorName: info.name,
-      point,
-      path: exchange.path,
-    })
-    exchange.fail(403, 'FORBIDDEN', `缺少权限点 ${point}，请联系管理员调整角色`, { permission: point })
-    return false
-  }
-
-  const guarded = (method: string, path: string, permission: string, handler: (exchange: HttpExchange) => unknown | Promise<unknown>): void => {
-    // H5：声明经 http.register 自动汇入 routeMatrix 共享登记处（注册期缺声明即抛错）
-    http.register(method, path, async (exchange) => {
-      if (!requirePermission(exchange, permission)) return
-      try {
-        const result = await handler(exchange)
-        if (!exchange.res.writableEnded) exchange.ok(result)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        exchange.fail(400, 'BAD_REQUEST', message)
-      }
-    }, { access: 'guarded', permission })
-  }
-
-  const body = <T extends Record<string, any>>(exchange: HttpExchange): T => (exchange.body ?? {}) as T
-  const changeLog = (exchange: HttpExchange, action: string, resourceType: string, resourceId: string, resourceName: string, detail = ''): void => {
-    const info = caller(exchange)
-    ctx.audit.record({
-      type: 'change',
-      actorType: info.kind === 'human' ? 'human' : 'machine',
-      actorId: info.userId ?? info.principalId,
-      actorName: info.name,
-      action,
-      resourceType,
-      resourceId,
-      resourceName,
-      result: 'ok',
-      detail,
-      ...(info.actChain.length > 0 ? { actChain: info.actChain } : {}),
-    })
-  }
+  // R5 收敛：caller/requirePermission/guarded/body/changeLog 统一引 platform-core 共享实现（单点修复、单点审计）
+  const { caller, requirePermission, guarded, body, changeLog } = createRestGate(ctx)
 
   /** 部门参数解析 + 归属校验（部门范围权限：绑定组织后仅组织子树/管理员/机器凭证可访问）。 */
   const deptOf = (exchange: HttpExchange) => {

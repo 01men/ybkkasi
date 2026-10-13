@@ -6,6 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../platform-core/src/index.ts'
+import { createRestGate } from '../../platform-core/src/index.ts'
 import { newId } from '../../platform-core/src/ids.ts'
 import { DingtalkBridgeService } from './service.ts'
 
@@ -13,64 +14,12 @@ export const name = 'dingtalk-bridge'
 // panel 为 panel-core 注册的服务（加载序保证先于本插件）；dingtalkBridge 自供服务不可自 inject
 export const inject = ['httpServer', 'opsStorage', 'platformBus', 'iam', 'audit', 'panel']
 
-interface CallerInfo {
-  kind: 'human' | 'machine'
-  principalId: string
-  userId?: string
-  name: string
-  permissions: string[]
-}
-
 export function apply(ctx: Context) {
   const http = ctx.httpServer
   const bridge = new DingtalkBridgeService(ctx)
 
-  const caller = (exchange: HttpExchange): CallerInfo => exchange.principal as CallerInfo
-
-  const requirePermission = (exchange: HttpExchange, point: string): boolean => {
-    const info = caller(exchange)
-    if (info.permissions.includes('*') || info.permissions.includes(point)) return true
-    ctx.platformBus.emit('audit.authz.denied', {
-      actorId: info.userId ?? info.principalId,
-      actorName: info.name,
-      point,
-      path: exchange.path,
-    })
-    exchange.fail(403, 'FORBIDDEN', `缺少权限点 ${point}，请联系管理员调整角色`, { permission: point })
-    return false
-  }
-
-  const guarded = (method: string, path: string, permission: string, handler: (exchange: HttpExchange) => unknown | Promise<unknown>): void => {
-    // H5：声明经 http.register 自动汇入 routeMatrix 共享登记处（注册期缺声明即抛错）
-    http.register(method, path, async (exchange) => {
-      if (!requirePermission(exchange, permission)) return
-      try {
-        const result = await handler(exchange)
-        if (!exchange.res.writableEnded) exchange.ok(result)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        exchange.fail(400, 'BAD_REQUEST', message)
-      }
-    }, { access: 'guarded', permission })
-  }
-
-  const body = <T extends Record<string, any>>(exchange: HttpExchange): T => (exchange.body ?? {}) as T
-  const changeLog = (exchange: HttpExchange, action: string, resourceType: string, resourceId: string, resourceName: string, detail = ''): void => {
-    const info = caller(exchange)
-    ctx.audit.record({
-      type: 'change',
-      actorType: info.kind === 'human' ? 'human' : 'machine',
-      actorId: info.userId ?? info.principalId,
-      actorName: info.name,
-      action,
-      resourceType,
-      resourceId,
-      resourceName,
-      result: 'ok',
-      detail,
-      ...(info.actChain?.length ? { actChain: info.actChain } : {}),
-    })
-  }
+  // R5 收敛：caller/requirePermission/guarded/body/changeLog 统一引 platform-core 共享实现（单点修复、单点审计）
+  const { caller, requirePermission, guarded, body, changeLog } = createRestGate(ctx)
 
   // -- 状态胶囊（顶栏）：连接器形态 / 个人扫码绑定 / 入向能力声明 ----------------------
 

@@ -17,6 +17,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../platform-core/src/index.ts'
+import { createRestGate } from '../../platform-core/src/index.ts'
 import { PlatformEvents, newId, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
 import type { AuditLogRecord } from '../../plugin-audit/src/index.ts'
 
@@ -359,45 +360,13 @@ export interface FlowView {
 // REST（/api/flow/*：guarded 自注册汇入 routeMatrix，鉴权依赖 console 中间件先行）
 // ---------------------------------------------------------------------------
 
-interface CallerInfo {
-  kind: 'human' | 'machine'
-  principalId: string
-  userId?: string
-  name: string
-  permissions: string[]
-  actChain: Array<{ name: string; type: string }>
-}
-
 export function apply(ctx: Context) {
   ctx.plugin(FlowService)
   const flow = new FlowService(ctx)
   const http = ctx.httpServer
 
-  const caller = (exchange: HttpExchange): CallerInfo => exchange.principal as CallerInfo
-  const requirePermission = (exchange: HttpExchange, point: string): boolean => {
-    const info = caller(exchange)
-    if (info.permissions.includes('*') || info.permissions.includes(point)) return true
-    ctx.platformBus.emit('audit.authz.denied', { actorId: info.userId ?? info.principalId, actorName: info.name, point, path: exchange.path })
-    exchange.fail(403, 'FORBIDDEN', `缺少权限点 ${point}，请联系管理员调整角色`, { permission: point })
-    return false
-  }
-  const guarded = (method: string, path: string, permission: string, handler: (exchange: HttpExchange) => unknown | Promise<unknown>): void => {
-    http.register(method, path, async (exchange) => {
-      if (!requirePermission(exchange, permission)) return
-      try {
-        const result = await handler(exchange)
-        if (!exchange.res.writableEnded) exchange.ok(result)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        exchange.fail(400, 'BAD_REQUEST', message)
-      }
-    }, { access: 'guarded', permission })
-  }
-  const body = <T extends Record<string, any>>(exchange: HttpExchange): T => (exchange.body ?? {}) as T
-  const actorOf = (exchange: HttpExchange): string => {
-    const info = caller(exchange)
-    return info.userId ?? info.principalId
-  }
+  // R5 收敛：caller/requirePermission/guarded/body/actorOf 统一引 platform-core 共享实现（单点修复、单点审计）
+  const { caller, requirePermission, guarded, body, actorOf } = createRestGate(ctx)
   /**
    * 场景级授权执行点（QA A-01）：checkScene 此前全平台唯一调用方是自查端点——
    * 自查判 deny 实际动作仍 200。场景已配置策略时（判定非 default）本守卫强制裁决：
