@@ -15,7 +15,7 @@ import {
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
 } from './helpers.js'
 
-export async function renderGroups() {
+export async function renderGroups(ctx) {
   $('#iam-actions').innerHTML = `<button class="btn btn-primary" id="group-add">${icon('plus', 14)}新建用户组</button>`
   const [data, treeData] = await Promise.all([api.get('/api/iam/groups'), api.get('/api/iam/orgs/tree')])
   const body = $('#iam-body')

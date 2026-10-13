@@ -15,7 +15,7 @@ import {
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
 } from './helpers.js'
 
-export async function renderConflicts() {
+export async function renderConflicts(ctx) {
   const [data, orgs] = await Promise.all([
     api.get('/api/iam/conflicts'),
     api.get('/api/iam/orgs'),

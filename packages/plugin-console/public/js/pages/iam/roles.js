@@ -15,7 +15,7 @@ import {
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
 } from './helpers.js'
 
-export async function renderRoles() {
+export async function renderRoles(ctx) {
   $('#iam-actions').innerHTML = `<button class="btn btn-primary" id="role-add">${icon('plus', 14)}新建角色</button>`
   const data = await api.get('/api/iam/roles')
   const groups = new Map()

@@ -13,9 +13,10 @@ import {
 import {
   providerName, nameStatusMismatch, strategyName, fieldName, syncStatCard,
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
+  showUserCredentials,
 } from './helpers.js'
 
-export async function renderMembers() {
+export async function renderMembers(ctx) {
   let [treeData, usersData] = await Promise.all([
     api.get('/api/iam/orgs/tree'),
     api.get('/api/iam/users'),
