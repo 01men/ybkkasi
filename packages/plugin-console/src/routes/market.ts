@@ -7,16 +7,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { createPluginContext } from '../../../platform-core/src/index.ts'
-
-type CallerInfo = { kind: 'human' | 'machine'; principalId: string; userId?: string; refType?: string; refId?: string; name: string; permissions: string[]; actChain?: Array<{ name: string; type: string }> }
-
-export interface ConsoleRouteDeps {
-  http: { register: (method: string, path: string, handler: (exchange: HttpExchange) => unknown | Promise<unknown>, options?: Record<string, unknown>) => void }
-  guarded: (method: string, path: string, permission: string, handler: (exchange: HttpExchange) => unknown | Promise<unknown>) => void
-  body: <T>(exchange: HttpExchange) => T
-  changeLog: (exchange: HttpExchange, action: string, resourceType: string, resourceId: string, resourceName: string, detail?: string) => void
-  caller: (exchange: HttpExchange) => CallerInfo
-}
+import type { ConsoleRouteDeps } from './deps.ts'
 
 export function registerMarketRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { http, guarded, body, changeLog, caller } = deps
