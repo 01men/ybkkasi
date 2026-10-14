@@ -239,7 +239,17 @@ function renderShell(page, params, builder) {
   window.__updatePoll = setInterval(() => { if (session.token) void mountUpdateBadge() }, 30 * 60 * 1000)
 
   const content = $('#page-content')
-  builder(content, params, { rerender: navigate })
+  // 页面级统一兜底：任一页 builder 抛错（首请求 403/网络失败等）不再留白，渲染可重试错误卡
+  builder(content, params, { rerender: navigate }).catch((error) => {
+    content.innerHTML = `
+      <div class="card card-pad" style="text-align:center;padding:44px 24px">
+        <div style="font-size:30px;margin-bottom:10px">🚫</div>
+        <div style="font-weight:600;margin-bottom:6px">页面加载失败</div>
+        <div class="fs-12 text-3" style="margin-bottom:18px">${esc(error?.message ?? '未知错误')}</div>
+        <button class="btn btn-default" id="page-retry">重试</button>
+      </div>`
+    $('#page-retry')?.addEventListener('click', () => navigate())
+  })
 }
 
 async function refreshBadges() {

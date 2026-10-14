@@ -2412,6 +2412,15 @@ try {
   check('缺治理属性不可上线（校验）', !onlineTooEarly.ok)
 
   await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'] } } })
+  // QA-04 回归（外部 QA-20261014）：update 校验合并后的完整 attrs，required 与 create 同等强制
+  const clearRequiredDesc = await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { description: '' } } })
+  check('QA-04 回归：PATCH 清空必填描述被 400 拒绝（update 不得绕过 required）',
+    !clearRequiredDesc.ok && (JSON.stringify(clearRequiredDesc.error).includes('必填') || JSON.stringify(clearRequiredDesc.error).includes('description')),
+    JSON.stringify(clearRequiredDesc.error))
+  const descSurvived = await api('GET', `/api/agents/${selfAgent.id}`, { token: ops })
+  check('QA-04 回归：被拒后原描述原样保留（空值未落库）',
+    descSurvived.ok && descSurvived.data.attrs.description !== '' && descSurvived.data.attrs.description !== undefined,
+    JSON.stringify(descSurvived.data?.attrs?.description))
   const trial = await api('POST', `/api/agents/${selfAgent.id}/transition`, { token: admin, body: { action: 'submit_trial' } })
   check('进入试运行', trial.ok && trial.data.status === 'trial')
 
@@ -4811,6 +4820,29 @@ try {
         preciseAuth.headers.get('access-control-allow-origin') === connOrigin, String(preciseAuth.headers.get('access-control-allow-origin')))
       const preciseEvil = await fetch(`${pBase}/api/auth/login`, { method: 'POST', headers: { origin: 'http://evil.example.com' }, body: '{}' })
       check('CORS 精确来源：未命中白名单的来源对 /api/auth/* 仍不发放', preciseEvil.headers.get('access-control-allow-origin') === null)
+      // QA-01 回归（外部 QA-20261014 / 内部 G1-F1）：边缘明文口兜底下跳 + HSTS 仅安全链路下发
+      const hopReq = (path, headers = {}) => new Promise((resolve, reject) => {
+        const r = httpRequest({ host: '127.0.0.1', port: preciseCtx.httpServer.port, method: 'GET', path, headers }, (res) => {
+          const chunks = []
+          res.on('data', (c) => chunks.push(c))
+          res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }))
+        })
+        r.on('error', reject)
+        r.end()
+      })
+      const plainHop = await hopReq('/api/health', { 'x-forwarded-proto': 'http' })
+      check('QA-01 回归：明文入口（x-forwarded-proto: http）308 下跳 HTTPS 且带 Location',
+        plainHop.status === 308 && String(plainHop.headers.location ?? '').startsWith('https://'),
+        `${plainHop.status} ${plainHop.headers.location ?? ''}`)
+      const secureHop = await hopReq('/api/health', { 'x-forwarded-proto': 'https' })
+      // 该最小装配仅 platformCore（无 console 路由），404 也走 dispatch 安全头预挂——断言只看头
+      check('QA-01 回归：HTTPS 反代链路下发 HSTS（max-age 一年 + 含子域）',
+        String(secureHop.headers['strict-transport-security'] ?? '').includes('max-age=31536000')
+        && String(secureHop.headers['strict-transport-security'] ?? '').includes('includeSubDomains'),
+        `${secureHop.status} ${secureHop.headers['strict-transport-security'] ?? ''}`)
+      const directHop = await hopReq('/api/health')
+      check('QA-01 回归：未带转发协议头的本机直连不跳转、不下发 HSTS',
+        directHop.status !== 308 && directHop.headers['strict-transport-security'] === undefined, `${directHop.status}`)
     } finally {
       await preciseCtx.httpServer.stop()
     }
@@ -4827,6 +4859,13 @@ try {
     appConnSrc.includes("page === 'connections'") && appConnSrc.includes('connections: renderConnections') && appConnSrc.includes('conn-indicator'))
   check('app.js 显式 import BASE（缺失时 NAV「部门面板」ext 点击 ReferenceError → 无响应，c0fca1a 回归守卫）',
     /import\s*\{[^}]*\bBASE\b[^}]*\}\s*from\s*'\.\/api\.js'/.test(appConnSrc))
+  // QA-02 回归（外部 QA-20261014）：工作台 CTA 按权限渲染 + 页面级错误兜底（拒绝留白）
+  const dashSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'pages', 'dashboard.js'), 'utf8')
+  check('QA-02 回归：工作台 CTA 按权限渲染（处理审批/查看 Agent/用量明细不再对无权角色裸露）',
+    dashSrc.includes("session.can('approval.read')") && dashSrc.includes("session.can('agent.read')")
+    && /\$\{isManager \? `<a href="#\/assets"/.test(dashSrc))
+  check('QA-02 回归：页面 builder 全局错误兜底（首请求 403/网络失败渲染可重试错误卡而非留白）',
+    appConnSrc.includes('.catch((error) => {') && appConnSrc.includes('page-retry'))
 
   // ================================================================ 门户数据通道（plugin-portal：外部拉取端点）
 
@@ -5841,6 +5880,11 @@ try {
     const dsList = await api('GET', '/api/resource/datasets?scene=QB01-G-4-1', { token: admin })
     const dsRow = (dsList.data?.datasets ?? []).find((item) => item.code === 'ds_selftest_a')
     check('2-1：按场景过滤 + upsert 幂等（sceneCount=1）', dsList.ok && Boolean(dsRow) && dsRow.sceneCount === 1 && dsRow.classification === 'internal', JSON.stringify(dsRow))
+    // QA-03 回归（外部 QA-20261014）：资源管理员补治理读面（panel.read/flow.read 迁移补点）——能写也能读
+    const dsOpsRead = await api('GET', '/api/resource/datasets?scene=QB01-G-4-1', { token: ops })
+    check('QA-03 回归：资源管理员可读数据集清单（补 panel.read）', dsOpsRead.ok && Array.isArray(dsOpsRead.data?.datasets), JSON.stringify(dsOpsRead.error))
+    const flowOpsRead = await api('GET', '/api/flow/templates', { token: ops })
+    check('QA-03 回归：资源管理员可读事务流模板（补 flow.read）', flowOpsRead.ok, JSON.stringify(flowOpsRead.error))
     const dsQuality = await api('PUT', '/api/resource/datasets/ds_selftest_a/quality', { token: admin, body: { completeness: 90, accuracy: 80, timeliness: 100, consistency: 70 } })
     check('2-2：质量分四维登记（等权 overall=85）', dsQuality.ok && dsQuality.data.quality.overall === 85, JSON.stringify(dsQuality.error))
     const dsBadQuality = await api('PUT', '/api/resource/datasets/ds_selftest_a/quality', { token: admin, body: { completeness: 120, accuracy: 80, timeliness: 100, consistency: 70 } })

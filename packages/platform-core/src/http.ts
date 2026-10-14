@@ -249,12 +249,27 @@ export class HttpServerService extends Service {
     const pathSegments = url.pathname.split('/').filter(Boolean).map((s) => s)
     const method = (req.method ?? 'GET').toUpperCase()
 
+    // 边缘明文口兜底下跳（外部 QA-20261014 QA-01 / 内部 G1-F1）：平台自身仅 HTTP（TLS 由
+    // Cloudflare Tunnel/反代承接），x-forwarded-proto: http 即代表用户走了明文入口，308 保方法
+    // 跳转 HTTPS；未带该头的本机/内网直连与 dsh 挂载形态不受影响。根治仍需边缘层
+    // 「Always Use HTTPS」，此处为源站兜底。HSTS 仅在确认安全传输时下发（明文链路无意义）。
+    const forwardedProto = (req.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim() ?? ''
+    if (forwardedProto === 'http') {
+      res.statusCode = 308
+      res.setHeader('location', `https://${req.headers.host ?? url.host}${url.pathname}${url.search}`)
+      res.end()
+      return
+    }
+
     // 安全响应头（默认开，SECURITY_HEADERS=off 关闭）：经 setHeader 预挂，与后续
     // ok/fail/file 的 writeHead 自然合并（与下方 CORS 放行头同一合并机制）。
     if (this.securityHeaders) {
       res.setHeader('x-content-type-options', 'nosniff')
       res.setHeader('x-frame-options', 'SAMEORIGIN')
       res.setHeader('referrer-policy', 'strict-origin-when-cross-origin')
+      if (forwardedProto === 'https' || (req.socket as { encrypted?: boolean }).encrypted) {
+        res.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains')
+      }
     }
 
     // 跨域放行（宿主连接切换，docs/frontend-host-switching.md）：只覆盖平台 REST 数据面 /api/*，

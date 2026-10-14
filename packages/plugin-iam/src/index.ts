@@ -294,7 +294,7 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
 export const BuiltinRoles: Array<Omit<RoleRecord, 'id' | 'createdAt' | 'updatedAt'>> = [
   { code: 'super_admin', name: '平台超级管理员', builtin: true, description: '拥有全部权限点', permissions: ['*'] },
   { code: 'org_admin', name: '组织管理员', builtin: true, description: '管理本组织账号与用户组', permissions: ['console.login', 'iam.*', 'approval.read'] },
-  { code: 'resource_admin', name: '资源管理员', builtin: true, description: '管理 MCP/Skill/Agent/应用/NAS/连接器资源与数据要素', permissions: ['console.login', 'mcp.*', 'skill.*', 'agent.*', 'app.*', 'nas.*', 'authn.oidc.*', 'connector.*', 'resource.dataset.write', 'approval.read'] },
+  { code: 'resource_admin', name: '资源管理员', builtin: true, description: '管理 MCP/Skill/Agent/应用/NAS/连接器资源与数据要素', permissions: ['console.login', 'mcp.*', 'skill.*', 'agent.*', 'app.*', 'nas.*', 'authn.oidc.*', 'connector.*', 'resource.dataset.write', 'panel.read', 'flow.read', 'approval.read'] },
   { code: 'developer', name: '开发者', builtin: true, description: '提交与调试资源（应用限自身 owner 范围，服务端校验）', permissions: ['console.login', 'iam.user.read', 'iam.org.read', 'mcp.service.read', 'mcp.invoke', 'skill.read', 'skill.submit', 'skill.install', 'agent.read', 'agent.write', 'app.read', 'app.write', 'nas.read', 'connector.catalog.read', 'connector.connection.read', 'connector.invoke'] },
   { code: 'member', name: '普通用户', builtin: true, description: '浏览市场与可用资源', permissions: ['console.login', 'skill.read', 'agent.read', 'app.read', 'panel.read', 'panel.write', 'panel.task.write', 'scenegraph.read', 'flow.read', 'flow.write'] },
   { code: 'auditor', name: '审计员（只读）', builtin: true, description: '全平台只读审计', permissions: ['console.login', 'iam.org.read', 'iam.user.read', 'authn.principal.read', 'authn.oidc.read', 'mcp.service.read', 'skill.read', 'agent.read', 'app.read', 'nas.read', 'audit.read', 'approval.read', 'connector.runs.read', 'connector.connection.read'] },
@@ -306,7 +306,9 @@ export const BuiltinRoles: Array<Omit<RoleRecord, 'id' | 'createdAt' | 'updatedA
  * 重新比对（幂等），历史标记（connector-permissions-v1）仅作观测。
  */
 export const BUILTIN_ROLE_MIGRATION: Record<string, string[]> = {
-  resource_admin: ['connector.gateway.write', 'connector.catalog.read', 'connector.connection.read', 'connector.connection.write', 'connector.invoke', 'connector.permgroup.write', 'connector.runs.read', 'resource.dataset.write', 'flow.admin'],
+  // resource_admin 补治理读面（外部 QA-20261014 QA-03）：数据集/指标/血缘等读路由挂 panel.read、
+  // 事务流模板与实例列表挂 flow.read——此前资源管理员"能写（resource.dataset.write/flow.admin）不能读"
+  resource_admin: ['connector.gateway.write', 'connector.catalog.read', 'connector.connection.read', 'connector.connection.write', 'connector.invoke', 'connector.permgroup.write', 'connector.runs.read', 'resource.dataset.write', 'flow.admin', 'panel.read', 'flow.read'],
   // developer 补 agent.write：与 app.write 对称——开发者应能注册/提报更新 Agent（2026-08 修复"总是报没有 agent.write 权限"）
   developer: ['connector.catalog.read', 'connector.connection.read', 'connector.invoke', 'agent.write', 'panel.read', 'scenegraph.read', 'flow.read'],
   // auditor 补 nas.authz.read：审计员可查看 NAS 数据权限规则与判定留痕（dev-plan-nas-authz §2.3）

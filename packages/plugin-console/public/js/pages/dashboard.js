@@ -27,9 +27,9 @@ export async function renderDashboard(content) {
         <div class="page-desc">今天有 <b style="color:var(--warn)">${d.approvals.pending}</b> 个审批待处理、<b style="color:var(--danger)">${d.alerts.unread}</b> 条未读告警，${d.conflicts > 0 ? `以及 <b style="color:var(--brand-600)">${d.conflicts}</b> 条三方同步冲突待确认。` : '平台整体运行平稳。'}</div>
       </div>
       <div class="page-actions">
-        ${d.conflicts > 0 ? `<button class="btn btn-default" id="dash-goto-conflicts" style="color:var(--brand-600)">${icon('link', 14)}处理同步冲突（${d.conflicts}）</button>` : ''}
-        <button class="btn btn-default" id="dash-goto-agents">${icon('bot', 14)}查看 Agent</button>
-        <button class="btn btn-primary" id="dash-goto-approve">${icon('checkSquare', 14)}处理审批</button>
+        ${d.conflicts > 0 && session.can('iam.user.read') ? `<button class="btn btn-default" id="dash-goto-conflicts" style="color:var(--brand-600)">${icon('link', 14)}处理同步冲突（${d.conflicts}）</button>` : ''}
+        ${session.can('agent.read') ? `<button class="btn btn-default" id="dash-goto-agents">${icon('bot', 14)}查看 Agent</button>` : ''}
+        ${session.can('approval.read') ? `<button class="btn btn-primary" id="dash-goto-approve">${icon('checkSquare', 14)}处理审批</button>` : ''}
       </div>
     </div>
 
@@ -39,7 +39,7 @@ export async function renderDashboard(content) {
       <div class="card">
         <div class="card-head">
           <span class="card-title">${icon('clock', 15)} 最近调用</span>
-          <div class="card-head-actions"><a href="#/assets" class="fs-12">用量明细 ›</a></div>
+          <div class="card-head-actions">${isManager ? `<a href="#/assets" class="fs-12">用量明细 ›</a>` : ''}</div>
         </div>
         <div class="card-body" id="dash-recent"></div>
       </div>

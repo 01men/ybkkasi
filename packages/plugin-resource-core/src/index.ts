@@ -215,7 +215,9 @@ export class ResourceCoreService extends Service {
     for (const field of spec.schema.fields) {
       const value = attrs[field.key]
       const present = value !== undefined && value !== null && value !== ''
-      if (mode === 'create' && field.required && !present) {
+      // update 校验的是合并后的完整 attrs，required 与 create 同等强制——否则 PATCH 空值可绕过
+      // 创建期必填（外部 QA-20261014 QA-04：PATCH description:'' 曾返回 200 清空描述）
+      if ((mode === 'create' || mode === 'update') && field.required && !present) {
         errors.push(`缺少必填字段「${field.label}」(${field.key})`)
       }
       if (mode === 'online' && field.requiredForOnline && !present) {
