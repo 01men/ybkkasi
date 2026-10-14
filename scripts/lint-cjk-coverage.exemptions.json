@@ -1394,6 +1394,11 @@
       "kind": "literal",
       "key": "cli/dshctl.mjs::?q=&kind=providers",
       "reason": "CLI/URL 语法料；销账条件：该字面量改为中文文案或协议键变更时复核（REFACTOR-2026-10-13 阶段 2 机制料底册）"
+    },
+    {
+      "kind": "literal",
+      "key": "packages/plugin-console/public/js/pages/home.js::smooth",
+      "reason": "ScrollBehavior API 枚举值（behavior:smooth，协议层保留 ASCII，QA-20261013 移动端适配 D-1 锚点滚动引入）；销账条件：API 用法变更或该行删除时复核"
     }
   ]
 }

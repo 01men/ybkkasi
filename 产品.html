@@ -478,6 +478,13 @@ footer{margin-top:88px;padding:52px 0 40px;border-top:1px solid var(--rule);back
 .alab-note{font-size:12px;color:var(--text-dim);text-align:center;margin-top:22px;line-height:1.8;max-width:860px;margin-left:auto;margin-right:auto}
 @media (max-width:960px){.alab-grid{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:620px){.alab-grid{grid-template-columns:1fr}}
+/* ---------- 移动端补强：场景 tab 胶囊条 ----------
+   ≤820 档已把 .stabbar 设为横向滚动，但 375/320 手机档四枚 tab（实测末枚右缘 462px）
+   仍要滚动才能看全，且胶囊无滚动提示；≤620 起改为允许折行——
+   放得下时与原样式一致，放不下时自动折成两行并居中，四枚 tab 全程可见。 */
+@media (max-width:620px){
+  .stabbar{flex-wrap:wrap;justify-content:center;overflow-x:visible;border-radius:22px}
+}
 </style>
 </head>
 <body>

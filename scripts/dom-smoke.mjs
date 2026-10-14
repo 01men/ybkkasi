@@ -229,8 +229,8 @@ await test('T9 MCP 权限组弹窗（mcp.js:519 回归）', async () => {
   $('.drawer-close').click()
 })
 
-await test('T10 IAM 创建账号全流程 + 口令展示弹窗（iam.js:212/229/232 回归）', async () => {
-  const { renderIam } = await P('pages/iam.js')
+await test('T10 IAM 创建账号全流程 + 口令展示弹窗（iam/members.js 回归）', async () => {
+  const { renderIam } = await P('pages/iam/index.js')
   await renderIam(freshContent(), new URLSearchParams('tab=members'), ctxOf())
   $('#user-add').click()
   assert($('.modal [data-ok]'), '创建账号弹窗应打开')
@@ -252,8 +252,8 @@ await test('T10 IAM 创建账号全流程 + 口令展示弹窗（iam.js:212/229/
   assert(users.some((u) => u.username === 'smoke' + RUN_ID), '服务端应真实创建该账号')
 })
 
-await test('T11 IAM 新建组织 / 批量导入弹窗（iam.js:248/267 回归）', async () => {
-  const { renderIam } = await P('pages/iam.js')
+await test('T11 IAM 新建组织 / 批量导入弹窗（iam/groups.js 回归）', async () => {
+  const { renderIam } = await P('pages/iam/index.js')
   await renderIam(freshContent(), new URLSearchParams('tab=members'), ctxOf())
   $('#org-add').click()
   assert(await waitFor(() => $('.modal [data-ok]')), '新建组织弹窗应打开')

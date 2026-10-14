@@ -33,9 +33,10 @@ export async function renderIam(content, params, ctx) {
     el.onclick = () => { location.hash = `#/iam?tab=${el.dataset.tab}` }
   })
 
-  if (tab === 'members') await renderMembers()
-  if (tab === 'roles') await renderRoles()
-  if (tab === 'groups') await renderGroups()
+  // ctx（{rerender}）须贯穿到每个 tab：各 tab 的增删改回调里都调 ctx.rerender() 刷新整页
+  if (tab === 'members') await renderMembers(ctx)
+  if (tab === 'roles') await renderRoles(ctx)
+  if (tab === 'groups') await renderGroups(ctx)
   if (tab === 'connectors') await renderConnectors(params, ctx)
-  if (tab === 'conflicts') await renderConflicts()
+  if (tab === 'conflicts') await renderConflicts(ctx)
 }
