@@ -124,6 +124,43 @@
 - 预算按组织隔离实测：QA 组织 0 元预算不影响其他组织。
 - **缺口（实证）**：`GET /api/agents` 等多数清单端点**不按组织/租户过滤**——dev01 一次调用可见全平台各组织 Agent 台账（orgId 分布实证）；approvals/orgs 清单同样全量。「一个部署跑多家公司、数据完全隔离」在清单读面尚未成立；亦无登录态租户切换器。
 
+### 7. 模型目录登记能力核查（专项确认：平台目前没有此交互功能）
+
+**结论：确认。模型目录登记当前无任何交互界面（UI），属于设计上的「管理员通道，非自助登记」，但连管理端界面也没有——登记的唯一途径是 super_admin 直接调 API。**
+
+证据链（源码 + 线上实证双重确认）：
+
+1. **前端零交互**：全前端 `public/js/` 检索 `/api/modelgw/*`，0 处页面调用（仅文案提及）。资产登记页明确写死（`pages/register.js:16`）：「模型接入：模型由管理员经 modelgw 统一接入（**非自助登记**），这里仅查看已接入模型」，badge=管理员通道，查看入口跳 `#/assets`（资产运营页）。
+2. **权限归属**：权限目录定义了 `modelgw.read`（查看目录）/`modelgw.invoke`（调用）/`modelgw.admin`（管理目录）三点，但 **内置 6 角色与幂等迁移表均未授予任何非超管角色**——只有 super_admin（`*`）持有。四大测试账号（dev/ops/audit/hr）连查看目录都不可达，这正是外部报告「模型目录受阻」的机理。
+3. **线上实证**：dev01/ops01/hr01 `POST /api/modelgw/models` → 403（缺 modelgw.admin）；dev01 `GET /api/modelgw/models` → 403（缺 modelgw.read）；`GET /api/modelgw/channel-groups` → 200 但 `groups:[]`（渠道组同样为空）；ops01 `GET /api/assets/inventory` → 403（缺 usage.read，台账查看面也不可达）。
+4. **模型网关整体未初始化**：线上模型目录 0 条 + 渠道组 0 组 + 预算 0 条。
+
+**现行登记通道（admin API runbook，立即可用）**：
+
+```bash
+# 以 admin（super_admin）登录后：
+curl -X POST https://ybkkasi.com/api/modelgw/models \
+  -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{
+    "slug": "deepseek-chat",
+    "displayName": "DeepSeek Chat",
+    "provider": "deepseek",
+    "endpoint": "https://api.deepseek.com/v1/chat/completions",
+    "apiKey": "env:DEEPSEEK_API_KEY",
+    "costCentsPerKTokens": 0.1,
+    "status": "online",
+    "dataClassLimit": "secret"
+  }'
+# apiKey 支持 "env:变量名" 引用服务器环境变量（读取响应中 env: 前缀不做掩码，其余一律 ***）；
+# 删除：DELETE /api/modelgw/models/:id（modelgw.admin）。
+# 登记后：/api/usage/summary 进度、#/assets 模型台账、预算熔断、市场关联全链自动生效。
+```
+
+**修订路线图 R2**（替代原「模型目录登记」条目，两轨并行）：
+- **R2-A（立即）**：由 super_admin 按上述 runbook 登记生产模型（deepseek-chat/reasoner/coder 三个 schema 枚举值），解除预算熔断/FinOps/市场闭环的端到端验收阻塞；登记后复跑本报告 S7b 熔断实测。
+- **R2-B（短期，约 1 天前端量）**：补管理交互——在 `#/assets`（或 finops）页增加「模型目录」管理卡：列表（`modelgw.read`）+ 登记/下线表单（`modelgw.admin` 门控渲染），同步把 `modelgw.read` 补入 resource_admin 迁移（资源管理员可查看目录）、`modelgw.admin` 保持 admin 专属或按需授予；渠道组/预算编辑同卡承载（`panel.config.write` 已有 hr01 持有）。
+- **R2-C（配套）**：模型目录登记后的复验清单——summary.budget 进度、assets 台账 model 行、invoke 熔断、（可选）真实调用冒烟。
+
 ## 四、优化路线图
 
 ### 已完成（本次交付）
@@ -134,7 +171,7 @@
 ### 短期（运维/制度，1 周内）
 
 - R1 Cloudflare 控制台：Always Use HTTPS + HSTS 灰度（源站 308 已兜底，此项为纵深）。（负责：运维）
-- R2 模型目录登记：线上 `modelgw:models` 为空——预算熔断/FinOps/市场闭环的端到端验收被此阻塞；登记 deepseek 系列并配置 endpoint/key 后复跑 S7b 熔断实测。（负责：ops01 经 admin 授权）
+- R2 模型目录登记：见第三章第 7 节 R2-A/B/C（确认平台无登记交互功能，admin API runbook + 管理界面补齐两轨）。（负责：admin / 前端）
 - R3 `modelSlug:'*'` 通配语义：显式支持或文档纠偏（当前为字面量）。（改 modelgw enforceBudget 过滤器，1 行 + 断言）
 - R4 预算/角色/租户删除面补齐：budgets、roles、users 无 DELETE 路由（本轮 QA 角色/预算只能停用+收敛，留存量）；至少给「无引用对象」补删除或归档口。（P3）
 - R5 向外部团队交付「专用测试身份」标准流程：hr01 建角色（usage.read/modelgw.read/market.read/approval.read/panel.read）+ 账号 → 验收 → 权限收敛 + 账号停用（本轮已全链演练，剧本即第二轮 harness）。
