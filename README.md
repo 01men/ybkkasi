@@ -155,7 +155,7 @@ pnpm dsh web --patch <本项目绝对路径>/cordis.yml
 「包名 + 子路径」声明（Node 从 profile 目录沿 node_modules 解析，无需感知安装位置）：
 
 ```bash
-dsh plugin --profile web add github:01men/ybkk-AIOS
+dsh plugin --profile web add github:01men/ybkkasi
 # 验证：dsh --profile web --dump-config 应列出全部 ops-* entry；
 # 会话中问「列出所有 MCP 服务和健康状态」，模型应调用 mcp_service_list 而非静态作答。
 ```
