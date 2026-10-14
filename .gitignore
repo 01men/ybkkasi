@@ -8,3 +8,6 @@ boot.log
 service.log
 .zcode/
 .workbuddy/
+
+# launchd 运行日志（service.out/err.log）
+logs/
