@@ -300,24 +300,41 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   }))
 
   guarded('PUT', '/api/modelgw/budgets', 'panel.config.write', (exchange) => {
-    const input = body<{ orgId?: string; modelSlug?: string; dailyLimitCents?: number; monthlyLimitCents?: number; warnRatio?: number; action?: 'warn' | 'block'; enabled?: boolean }>(exchange)
+    const input = body<{
+      orgId?: string; modelSlug?: string; subject?: string; freezeAgent?: boolean
+      dailyLimitCents?: number; monthlyLimitCents?: number
+      warnRatio?: number; action?: 'warn' | 'block'; enabled?: boolean
+    }>(exchange)
     for (const [key, value] of [['dailyLimitCents', input.dailyLimitCents], ['monthlyLimitCents', input.monthlyLimitCents]] as const) {
       if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
         exchange.fail(400, 'BAD_REQUEST', `${key} 应为非负数（分）`)
         return
       }
     }
-    const budget = ctx.modelGateway.upsertBudget({
-      ...(input.orgId ? { orgId: input.orgId } : {}),
-      ...(input.modelSlug ? { modelSlug: input.modelSlug } : {}),
-      ...(input.dailyLimitCents !== undefined ? { dailyLimitCents: input.dailyLimitCents } : {}),
-      ...(input.monthlyLimitCents !== undefined ? { monthlyLimitCents: input.monthlyLimitCents } : {}),
-      warnRatio: input.warnRatio ?? 0.8,
-      action: input.action ?? 'warn',
-      enabled: input.enabled ?? true,
-    })
-    changeLog(exchange, 'modelgw.budget.upsert', 'modelgw_budget', budget.id, budget.orgId ?? '（平台级）')
-    return budget
+    try {
+      const budget = ctx.modelGateway.upsertBudget({
+        ...(input.orgId ? { orgId: input.orgId } : {}),
+        ...(input.modelSlug ? { modelSlug: input.modelSlug } : {}),
+        ...(input.subject ? { subject: input.subject } : {}),
+        ...(input.freezeAgent !== undefined ? { freezeAgent: input.freezeAgent } : {}),
+        ...(input.dailyLimitCents !== undefined ? { dailyLimitCents: input.dailyLimitCents } : {}),
+        ...(input.monthlyLimitCents !== undefined ? { monthlyLimitCents: input.monthlyLimitCents } : {}),
+        warnRatio: input.warnRatio ?? 0.8,
+        action: input.action ?? 'warn',
+        enabled: input.enabled ?? true,
+      })
+      changeLog(exchange, 'modelgw.budget.upsert', 'modelgw_budget', budget.id, `${budget.orgId ?? '（平台级）'}${budget.subject ? `/${budget.subject}` : ''}${budget.modelSlug ? `/${budget.modelSlug}` : ''}`)
+      return budget
+    } catch (error) {
+      exchange.fail(400, 'BAD_REQUEST', error instanceof Error ? error.message : String(error))
+    }
+  })
+
+  // R4 删除面：配错/废弃预算的删除口（此前只能 enabled:false 滞留）
+  guarded('DELETE', '/api/modelgw/budgets/:id', 'panel.config.write', (exchange) => {
+    ctx.modelGateway.removeBudget(exchange.params['id']!)
+    changeLog(exchange, 'modelgw.budget.delete', 'modelgw_budget', exchange.params['id'] ?? '', '')
+    return { deleted: true }
   })
 
 }

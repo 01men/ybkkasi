@@ -52,7 +52,7 @@ export function apply(ctx: Context) {
 
   t.register(defineTool({
     name: 'approval_decide',
-    description: '审批中心决策（approve/reject）。发起人与审批人不得为同一人。',
+    description: '审批中心决策（approve/reject）。agent.online 类（雇佣语义）审批提交人与审批人不得为同一人（R12 职责分离），其余类型已放开同人审批。',
     permission: 'approval.decide',
     parameters: {
       approvalId: { type: 'string', required: true, description: '审批单 ID' },

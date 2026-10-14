@@ -4,6 +4,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConsoleRouteDeps } from './deps.ts'
+import { scopedOrgFilterOf } from './iam.ts'
 
 export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { http, guarded, body, changeLog, caller } = deps
@@ -89,9 +90,15 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
     })
   })
 
-  guarded('GET', '/api/approvals', 'approval.read', () => ({
-    approvals: ctx.audit.approvals().all().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-  }))
+  // R11 多公司收口：审批清单按组织子树收敛（`*` 豁免；无归属存量单对非 `*` 不可见）
+  guarded('GET', '/api/approvals', 'approval.read', (exchange) => {
+    const orgFilter = scopedOrgFilterOf(ctx, caller, exchange)
+    return {
+      approvals: ctx.audit.approvals().all()
+        .filter((item) => (orgFilter ? orgFilter(item.orgId) : true))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    }
+  })
 
   guarded('POST', '/api/approvals/:id/decide', 'approval.decide', async (exchange) => {
     const { decision, opinion, confirmed, finalReview } = body<{ decision: 'approve' | 'reject'; opinion?: string; confirmed?: boolean; finalReview?: boolean }>(exchange)

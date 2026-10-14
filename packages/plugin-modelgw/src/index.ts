@@ -112,7 +112,18 @@ export interface TelemetryRecord extends RecordBase {
 /** 预算（1-4）：org 级（缺省=平台级）日/月预算，warn 阈值 + block 熔断。 */
 export interface BudgetRecord extends RecordBase {
   orgId?: string
+  /**
+   * 模型范围（R3，2026-10-14）：缺省=不限模型；'*'=命中任意模型（通配语义，
+   * 花费取窗口总额不做 byResource 过滤）；其余字面量=仅该模型。
+   */
   modelSlug?: string
+  /**
+   * 预算主体（R10 前置，2026-10-14）：形如 'agent:<id>' / 'app:<id>'，缺省=组织级预算。
+   * 与 invoke 计量口径一致（usage.subject），主体预算的花费按 usage.summary(subject=) 聚合。
+   */
+  subject?: string
+  /** 超额联动冻结（R10 前置）：超额熔断时联动冻结对应 Agent 并生成解冻审批（执行中枢消费）。 */
+  freezeAgent?: boolean
   dailyLimitCents?: number
   monthlyLimitCents?: number
   /** 告警阈值比例（used/limit ≥ warnRatio 发 modelgw.budget.warning）；缺省 0.8。 */
@@ -351,18 +362,29 @@ export class ModelGatewayService extends Service {
     if (input.dailyLimitCents === undefined && input.monthlyLimitCents === undefined) {
       throw new Error('预算至少配置 dailyLimitCents / monthlyLimitCents 之一')
     }
+    // 主体格式校验（R10 前置）：subject 必须是 'agent:'/'app:' 前缀的计量主体，
+    // 防止随手填自由文本造成「配了预算但永远匹配不到 usage」的静默失效
+    if (input.subject !== undefined && !/^(agent|app):.+/.test(input.subject)) {
+      throw new Error(`预算主体格式非法：${input.subject}（须形如 agent:<id> 或 app:<id>，与 invoke 计量主体同口径）`)
+    }
+    // 复合键（org × 模型 × 主体）：三者共同唯一——同一组织可同时挂组织级、按模型、按主体预算
     const existing = this.budgets().findOne((item) =>
-      (item.orgId ?? '') === (input.orgId ?? '') && (item.modelSlug ?? '') === (input.modelSlug ?? ''))
+      (item.orgId ?? '') === (input.orgId ?? '')
+      && (item.modelSlug ?? '') === (input.modelSlug ?? '')
+      && (item.subject ?? '') === (input.subject ?? ''))
     if (existing) return this.budgets().update(existing.id, { ...input })
     return this.budgets().insert({ id: newId('mbgt'), ...input })
   }
 
-  /** 预算命中的花费口径：org×模型过滤的 usage 成本聚合（内部成本参考口径 cost_cents）。 */
+  /** 预算命中的花费口径：org×模型×主体过滤的 usage 成本聚合（内部成本参考口径 cost_cents）。 */
   private budgetUsedCents(budget: BudgetRecord, from: string, to: string): number {
     const summary = this.ctx.usage.summary({
       from, to,
       ...(budget.orgId ? { org: budget.orgId } : {}),
+      ...(budget.subject ? { subject: budget.subject } : {}),
     })
+    // '*' 通配（R3）：命中任意模型——取窗口总额，不做 byResource 过滤
+    if (budget.modelSlug === '*') return summary.cost_cents
     if (budget.modelSlug) {
       const row = summary.byResource.find((item) => item.resource === `model:${budget.modelSlug}`)
       return row?.cost_cents ?? 0
@@ -385,20 +407,50 @@ export class ModelGatewayService extends Service {
     }
   }
 
-  /** org 维度预算进度（面板 cost chip / usage summary 的 budget 字段数据源）；无预算=null。 */
+  /**
+   * org 维度预算进度（面板 cost chip / usage summary 的 budget 字段数据源）；无预算=null。
+   * 只取「无模型范围（!modelSlug）且无主体范围（!subject）」的 org 级预算：
+   * modelSlug='*' 是全模型通配预算而非 org 进度口径，subject 预算是主体维度——
+   * 两者都不进 org 级进度（R3/R10 口径注释）。
+   */
   budgetStatusFor(orgId: string): { orgId: string; daily: BudgetWindowStatus | null; monthly: BudgetWindowStatus | null } | null {
     const budget = this.budgets().all()
-      .filter((item) => item.enabled && !item.modelSlug && (item.orgId ?? '') === (orgId || ''))
+      .filter((item) => item.enabled && !item.modelSlug && !item.subject && (item.orgId ?? '') === (orgId || ''))
       .sort((a, b) => (a.orgId ? 0 : 1) - (b.orgId ? 0 : 1))[0] // org 专属优先于平台级
     if (!budget) return null
     return { orgId: budget.orgId ?? '（平台级）', ...this.budgetStatus(budget) }
+  }
+
+  /**
+   * 主体（Agent/应用）维度预算清单（R10 前置，执行中枢预算前置检查的契约方法）：
+   * 过滤 enabled 且 subject 全等、预算无 orgId（平台级兜底）或 org 匹配的全部预算，
+   * 逐条返回两窗状态（daily UTC 今日 / monthly 本月，与 budgetStatus 同一窗口口径）。
+   */
+  budgetStatusForSubject(subject: string, orgId?: string): Array<{ budget: BudgetRecord; daily: BudgetWindowStatus | null; monthly: BudgetWindowStatus | null }> {
+    return this.budgets().all()
+      .filter((item) => item.enabled
+        && (item.subject ?? '') === subject
+        && (!item.orgId || (orgId ?? '') === '' ? !item.orgId || (orgId ?? '') === '' : item.orgId === orgId))
+      .map((budget) => ({ budget, ...this.budgetStatus(budget) }))
+  }
+
+  /** 删除预算（2026-10-14 删除面 R4）：预算治理此前只增不删，配错的预算只能停用滞留。 */
+  removeBudget(id: string): void {
+    const budget = this.budgets().get(id)
+    if (!budget) throw new Error(`预算不存在：${id}`)
+    this.budgets().remove(id)
+    // 进程内告警去重状态一并清理，防止同 id 复用后当日告警被旧状态吞掉
+    this.budgetWarnDay.delete(id)
   }
 
   /** 调用前熔断 + 阈值告警（每预算每自然日最多一条 warning 事件）。 */
   private enforceBudget(input: ModelInvokeInput): void {
     const candidates = this.budgets().all().filter((item) => {
       if (!item.enabled) return false
-      if (item.modelSlug && item.modelSlug !== input.model) return false
+      // R3 通配：modelSlug='*' 命中任意模型；其余字面量精确匹配
+      if (item.modelSlug && item.modelSlug !== '*' && item.modelSlug !== input.model) return false
+      // R10 主体：subject 预算只对同主体（agent:<id>/app:<id>，与 usage 计量主体同口径）生效
+      if (item.subject && item.subject !== (input.subject ?? '')) return false
       if (item.orgId && item.orgId !== input.orgId) return false
       return true
     })

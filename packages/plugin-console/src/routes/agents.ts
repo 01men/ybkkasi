@@ -7,6 +7,7 @@ import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { newId } from '../../../platform-core/src/index.ts'
 import { AgentRegistryService } from '../../../plugin-agent/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
+import { scopedOrgFilterOf } from './iam.ts'
 
 export interface AgentRouteDeps extends ConsoleRouteDeps {
   requestOrigin: (exchange: HttpExchange) => string | undefined
@@ -57,13 +58,26 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
 
   guarded('GET', '/api/agents', 'agent.read', (exchange) => {
     machineAudit(exchange, '-', 'Agent 台账')
+    // R11 多公司收口：非 `*` 管理员按本组织子树过滤（跨组织台账此前全平台可见）；
+    // 显式 ?org= 且越界子树 → 403（不静默收窄，防误以为拿到了全量）
+    const orgFilter = scopedOrgFilterOf(ctx, caller, exchange)
+    const explicitOrg = exchange.query.get('org') ?? ''
+    if (explicitOrg) {
+      const scope = orgFilter
+      if (scope && !scope(explicitOrg)) {
+        exchange.fail(403, 'FORBIDDEN', 'org 超出你的组织子树范围（R11 多公司收口）')
+        return
+      }
+    }
     return {
-      agents: ctx.resourceCore.list('agent').map((agent) => ({
-        ...agent,
-        metrics: ctx.agentRegistry.metrics(agent.id),
-        boundUserCount: ctx.agentRegistry.bindings().find((item) => item.agentId === agent.id).length,
-        availableTransitions: ctx.resourceCore.availableTransitions('agent', agent.id),
-      })),
+      agents: ctx.resourceCore.list('agent')
+        .filter((agent) => (explicitOrg ? agent.orgId === explicitOrg : orgFilter ? orgFilter(agent.orgId) : true))
+        .map((agent) => ({
+          ...agent,
+          metrics: ctx.agentRegistry.metrics(agent.id),
+          boundUserCount: ctx.agentRegistry.bindings().find((item) => item.agentId === agent.id).length,
+          availableTransitions: ctx.resourceCore.availableTransitions('agent', agent.id),
+        })),
       schema: ctx.resourceCore.typeSpec('agent')?.schema,
       lifecycle: ctx.resourceCore.typeSpec('agent')?.lifecycle,
     }

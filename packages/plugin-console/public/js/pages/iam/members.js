@@ -57,7 +57,8 @@ export async function renderMembers(ctx) {
         <div id="member-batchbar"></div>
         <div id="member-table"></div>
       </div>
-    </div>`
+    </div>
+    <div class="card" id="agent-org-card" style="margin-top:14px"></div>`
 
   let selectedOrgId = null
   const treeEl = $('#org-tree')
@@ -501,6 +502,8 @@ export async function renderMembers(ctx) {
 
   renderTree()
   await refreshMembers()
+  // R7 人 + Agent 双层视图：组织树（人）之下的 Agent 名册卡；Agent 列表不可用时整卡降级隐藏
+  void mountAgentOrgView(treeData)
 
   function openUserCreate(tree, users) {
     const modal = openModal({
@@ -800,5 +803,73 @@ export async function renderMembers(ctx) {
       toast('账号已激活'); drawer.close(); ctx.rerender()
     }
   }
+}
+
+/**
+ * Agent 组织视图（R7「人 + Agent」双层）：按组织分组的 Agent 名册。
+ * orgRole 中文映射、attrs.managerId 跨表解析汇报上级、attrs.frozenAt 冻结徽章（title 带 frozenReason）。
+ * 独立成卡不触碰上方交互组织树；GET /api/agents 失败时降级移除整卡。
+ */
+async function mountAgentOrgView(treeData) {
+  const host = $('#agent-org-card')
+  if (!host) return
+  let agents = []
+  try {
+    const data = await api.get('/api/agents')
+    agents = data.agents ?? []
+  } catch {
+    host.remove()
+    return
+  }
+  const ORG_ROLE_LABEL = { ceo: 'CEO', cto: 'CTO', manager: '经理', engineer: '工程师', analyst: '分析师' }
+
+  // 组织名解析：优先本页组织树（已是全量），树里没有的（如跨组织 Agent）原样显示 ID
+  const orgNames = new Map()
+  const walkTree = (nodes) => { for (const node of nodes ?? []) { orgNames.set(node.id, node.name); walkTree(node.children) } }
+  walkTree(treeData)
+  const agentById = new Map(agents.map((a) => [a.id, a]))
+
+  const groups = new Map()
+  for (const agent of agents) {
+    const key = agent.orgId || ''
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(agent)
+  }
+
+  const agentRow = (agent) => {
+    const attrs = agent.attrs ?? {}
+    const manager = attrs.managerId ? agentById.get(attrs.managerId) : null
+    const frozen = Boolean(attrs.frozenAt)
+    return `
+      <tr>
+        <td><div class="col-strong">${esc(agent.name)}</div><div class="col-sub mono fs-11">${esc(agent.slug ?? agent.id)}</div></td>
+        <td class="fs-12">${esc(ORG_ROLE_LABEL[attrs.orgRole] ?? attrs.orgRole ?? '—')}</td>
+        <td class="fs-12">${esc(attrs.rank ?? '—')}</td>
+        <td class="fs-12">${manager ? esc(manager.name) : attrs.managerId ? `<span class="mono fs-11 text-4">${esc(attrs.managerId)}</span>` : '—'}</td>
+        <td>${frozen ? `<span class="badge badge-purple no-dot" title="${esc(attrs.frozenReason ?? '已冻结')}">已冻结</span>` : '<span class="text-4 fs-12">—</span>'}</td>
+        <td>${statusBadge(agent.status)}</td>
+      </tr>`
+  }
+
+  const orgBlocks = [...groups.entries()].map(([orgId, list]) => `
+    <div class="fs-13" style="font-weight:600;margin:14px 0 2px;display:flex;gap:6px;align-items:center">
+      ${icon('building', 13)} ${esc(orgNames.get(orgId) ?? (orgId || '（未挂组织）'))}
+      <span class="badge badge-muted no-dot">${list.length}</span>
+    </div>
+    <div class="table-wrap">
+      <table class="tbl">
+        <thead><tr><th>Agent</th><th>组织角色</th><th>职级</th><th>汇报上级</th><th>冻结</th><th>状态</th></tr></thead>
+        <tbody>${list.map(agentRow).join('')}</tbody>
+      </table>
+    </div>`).join('')
+
+  host.innerHTML = `
+    <div class="card-head">
+      <span class="card-title">${icon('bot', 15)} Agent 组织视图</span>
+      <span class="card-sub">${agents.length} 个 Agent 按组织归队 · 人与 Agent 同一张组织架构（R7 双层视图）</span>
+    </div>
+    <div class="card-body" style="padding-top:0;padding-bottom:14px">
+      ${agents.length ? orgBlocks : `<div class="tbl-empty">${icon('bot', 28)}<span>暂无 Agent——注册 Agent 并挂到组织后在此显示名册</span></div>`}
+    </div>`
 }
 

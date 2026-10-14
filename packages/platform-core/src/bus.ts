@@ -109,6 +109,17 @@ export const PlatformEvents = {
   FlowTemplateChanged: 'flow.template.changed',
   // Agent 域（IAW 交接 7-1）：A2A 跨运行时调用
   AgentA2aInvoked: 'agent.a2a.invoked',
+  // Agent 冻结联动（R10，2026-10-14）：预算超限冻结（plugin-agent 落 attrs 软态 + 解冻审批）
+  AgentFrozen: 'agent.frozen',
+  AgentUnfrozen: 'agent.unfrozen',
+  // 执行中枢（ybkk-MATRIX 目标四，2026-10-14）：目标血缘 / 唤醒队列 / run 收尾 / 锁回收 / 心跳 / 例行
+  ExecGoalChanged: 'exec.goal.changed',
+  ExecIssueChanged: 'exec.issue.changed',
+  ExecWakeEnqueued: 'exec.wake.enqueued',
+  ExecRunCompleted: 'exec.run.completed',
+  ExecLockReclaimed: 'exec.lock.reclaimed',
+  ExecHeartbeatRecorded: 'exec.heartbeat.recorded',
+  ExecRoutineChanged: 'exec.routine.changed',
   // 总线自观察（OPT-P1-04）：监听器异常与死信——丢事件=丢证据，异常必须显式可查
   BusListenerError: 'bus.listener_error',
   BusDeadLetter: 'bus.dead_letter',
@@ -123,6 +134,8 @@ const PLATFORM_RESERVED_PREFIXES = [
   'panel.', 'scenegraph.', 'dingtalk-bridge.',
   // 模型网关治理 / 事务流引擎 / 数据要素（IAW 交接批次 2026-09-11）
   'modelgw.', 'flow.', 'resource.',
+  // 执行中枢（2026-10-14）
+  'exec.',
 ]
 
 // -- 总线管道参数（OPT-P1-04：对齐 usage 管道水准——持久化/重试/死信/异常落审计） --------

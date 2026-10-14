@@ -25,6 +25,7 @@ import * as portal from '@dsh-ops/plugin-portal'
 import * as consolePlugin from '@dsh-ops/plugin-console'
 import * as panelCore from '@dsh-ops/plugin-panel-core'
 import * as flowCore from '@dsh-ops/plugin-flow-core'
+import * as execHub from '@dsh-ops/plugin-exec-hub'
 import * as dingtalkBridge from '@dsh-ops/plugin-dingtalk-bridge'
 
 export interface BootOptions {
@@ -66,6 +67,9 @@ export async function bootAll(ctx: Context, options: BootOptions): Promise<void>
   await ctx.plugin(panelCore)
   // 事务流引擎（IAW 交接 3-1..3-4，宿主新域）：/api/flow/* 自注册 guarded 路由，同样依赖 console 中间件先行
   await ctx.plugin(flowCore)
+  // 执行中枢（ybkk-MATRIX 目标四「干活中枢」）：目标血缘/任务执行锁/心跳唤醒/例行调度，
+  // /api/exec/* 自注册 guarded 路由——依赖 console 中间件、resourceCore/agentRegistry/modelgw/flow 先行
+  await ctx.plugin(execHub)
   // 钉钉桥接（群桥/出向投递/审批推送/告警通道）：订阅 panel.message.created 与 audit.alert.fired
   await ctx.plugin(dingtalkBridge)
 }

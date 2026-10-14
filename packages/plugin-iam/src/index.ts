@@ -289,15 +289,24 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'flow.read', label: '查看事务流（编排/模板/SLA）', group: '事务流' },
   { point: 'flow.write', label: '事务流流转（创建实例/步骤推进/取消）', group: '事务流' },
   { point: 'flow.admin', label: '管理事务流模板库', group: '事务流' },
+  // 执行中枢（2026-10-14 路线图 R5/R10 前置，plugin-exec-hub 域）：权限点此前只在
+  // plugin-exec-hub/plugin.yaml 声明、目录未收录（自定义角色无法勾选，同 nas.ownership.write
+  // 孤儿点先例）——收录后内置角色与自定义角色才能按粒度授权
+  { point: 'exec.read', label: '查看执行中枢（目标/任务/唤醒/心跳）', group: '执行中枢' },
+  { point: 'exec.write', label: '操作执行中枢任务', group: '执行中枢' },
+  { point: 'exec.admin', label: '执行中枢运维（手动 tick 等）', group: '执行中枢' },
 ]
 
 export const BuiltinRoles: Array<Omit<RoleRecord, 'id' | 'createdAt' | 'updatedAt'>> = [
   { code: 'super_admin', name: '平台超级管理员', builtin: true, description: '拥有全部权限点', permissions: ['*'] },
-  { code: 'org_admin', name: '组织管理员', builtin: true, description: '管理本组织账号与用户组', permissions: ['console.login', 'iam.*', 'approval.read'] },
-  { code: 'resource_admin', name: '资源管理员', builtin: true, description: '管理 MCP/Skill/Agent/应用/NAS/连接器资源与数据要素', permissions: ['console.login', 'mcp.*', 'skill.*', 'agent.*', 'app.*', 'nas.*', 'authn.oidc.*', 'connector.*', 'resource.dataset.write', 'panel.read', 'flow.read', 'approval.read'] },
-  { code: 'developer', name: '开发者', builtin: true, description: '提交与调试资源（应用限自身 owner 范围，服务端校验）', permissions: ['console.login', 'iam.user.read', 'iam.org.read', 'mcp.service.read', 'mcp.invoke', 'skill.read', 'skill.submit', 'skill.install', 'agent.read', 'agent.write', 'app.read', 'app.write', 'nas.read', 'connector.catalog.read', 'connector.connection.read', 'connector.invoke'] },
-  { code: 'member', name: '普通用户', builtin: true, description: '浏览市场与可用资源', permissions: ['console.login', 'skill.read', 'agent.read', 'app.read', 'panel.read', 'panel.write', 'panel.task.write', 'scenegraph.read', 'flow.read', 'flow.write'] },
-  { code: 'auditor', name: '审计员（只读）', builtin: true, description: '全平台只读审计', permissions: ['console.login', 'iam.org.read', 'iam.user.read', 'authn.principal.read', 'authn.oidc.read', 'mcp.service.read', 'skill.read', 'agent.read', 'app.read', 'nas.read', 'audit.read', 'approval.read', 'connector.runs.read', 'connector.connection.read'] },
+  // org_admin 补 exec.*（2026-10-14 执行中枢纳管）：组织管理员对本组织执行中枢全权（与 iam.* 同口径）
+  { code: 'org_admin', name: '组织管理员', builtin: true, description: '管理本组织账号与用户组', permissions: ['console.login', 'iam.*', 'approval.read', 'exec.*'] },
+  // resource_admin 补 exec.read + modelgw.read（2026-10-14）：资源管理员可查看执行中枢（操作 Agent 的运行面）
+  // 与模型目录（R2-B：渠道分级/预算治理需要看到模型清单，写面仍归 modelgw.admin）
+  { code: 'resource_admin', name: '资源管理员', builtin: true, description: '管理 MCP/Skill/Agent/应用/NAS/连接器资源与数据要素', permissions: ['console.login', 'mcp.*', 'skill.*', 'agent.*', 'app.*', 'nas.*', 'authn.oidc.*', 'connector.*', 'resource.dataset.write', 'panel.read', 'flow.read', 'approval.read', 'modelgw.read', 'exec.read'] },
+  { code: 'developer', name: '开发者', builtin: true, description: '提交与调试资源（应用限自身 owner 范围，服务端校验）', permissions: ['console.login', 'iam.user.read', 'iam.org.read', 'mcp.service.read', 'mcp.invoke', 'skill.read', 'skill.submit', 'skill.install', 'agent.read', 'agent.write', 'app.read', 'app.write', 'nas.read', 'connector.catalog.read', 'connector.connection.read', 'connector.invoke', 'exec.read', 'exec.write'] },
+  { code: 'member', name: '普通用户', builtin: true, description: '浏览市场与可用资源', permissions: ['console.login', 'skill.read', 'agent.read', 'app.read', 'panel.read', 'panel.write', 'panel.task.write', 'scenegraph.read', 'flow.read', 'flow.write', 'exec.read', 'exec.write'] },
+  { code: 'auditor', name: '审计员（只读）', builtin: true, description: '全平台只读审计', permissions: ['console.login', 'iam.org.read', 'iam.user.read', 'authn.principal.read', 'authn.oidc.read', 'mcp.service.read', 'skill.read', 'agent.read', 'app.read', 'nas.read', 'audit.read', 'approval.read', 'connector.runs.read', 'connector.connection.read', 'exec.read'] },
 ]
 
 /**
@@ -308,15 +317,20 @@ export const BuiltinRoles: Array<Omit<RoleRecord, 'id' | 'createdAt' | 'updatedA
 export const BUILTIN_ROLE_MIGRATION: Record<string, string[]> = {
   // resource_admin 补治理读面（外部 QA-20261014 QA-03）：数据集/指标/血缘等读路由挂 panel.read、
   // 事务流模板与实例列表挂 flow.read——此前资源管理员"能写（resource.dataset.write/flow.admin）不能读"
-  resource_admin: ['connector.gateway.write', 'connector.catalog.read', 'connector.connection.read', 'connector.connection.write', 'connector.invoke', 'connector.permgroup.write', 'connector.runs.read', 'resource.dataset.write', 'flow.admin', 'panel.read', 'flow.read'],
+  // + exec.read/modelgw.read（2026-10-14 执行中枢与模型目录读面，与 BuiltinRoles 两处必须同步）
+  resource_admin: ['connector.gateway.write', 'connector.catalog.read', 'connector.connection.read', 'connector.connection.write', 'connector.invoke', 'connector.permgroup.write', 'connector.runs.read', 'resource.dataset.write', 'flow.admin', 'panel.read', 'flow.read', 'modelgw.read', 'exec.read'],
   // developer 补 agent.write：与 app.write 对称——开发者应能注册/提报更新 Agent（2026-08 修复"总是报没有 agent.write 权限"）
-  developer: ['connector.catalog.read', 'connector.connection.read', 'connector.invoke', 'agent.write', 'panel.read', 'scenegraph.read', 'flow.read'],
+  // + exec.read/exec.write（2026-10-14）：开发者可在执行中枢查看与操作自己发起的任务
+  developer: ['connector.catalog.read', 'connector.connection.read', 'connector.invoke', 'agent.write', 'panel.read', 'scenegraph.read', 'flow.read', 'exec.read', 'exec.write'],
   // auditor 补 nas.authz.read：审计员可查看 NAS 数据权限规则与判定留痕（dev-plan-nas-authz §2.3）
-  auditor: ['connector.runs.read', 'connector.connection.read', 'nas.authz.read', 'panel.read', 'scenegraph.read', 'flow.read'],
+  // + exec.read（2026-10-14）：执行中枢任务/唤醒留痕纳入只读审计面
+  auditor: ['connector.runs.read', 'connector.connection.read', 'nas.authz.read', 'panel.read', 'scenegraph.read', 'flow.read', 'exec.read'],
   // 部门面板（review-dsh-agent-panel-v2 Phase 0）：业务成员=member 直用面板；org_admin 增配置与行业激活；
   // 存量库经迁移补点，新装库直接来自 BuiltinRoles 定义（两处必须同步）
-  member: ['panel.read', 'panel.write', 'panel.task.write', 'scenegraph.read', 'flow.read', 'flow.write'],
-  org_admin: ['panel.read', 'panel.write', 'panel.task.write', 'panel.config.write', 'scenegraph.read', 'scenegraph.activate', 'flow.read', 'flow.write', 'flow.admin'],
+  // + exec.read/exec.write（2026-10-14）：普通用户可在执行中枢发起/查看自己的任务
+  member: ['panel.read', 'panel.write', 'panel.task.write', 'scenegraph.read', 'flow.read', 'flow.write', 'exec.read', 'exec.write'],
+  // org_admin 增 exec.*（2026-10-14）：本组织执行中枢全权（读/写/运维 tick，与 iam.* 通配同口径）
+  org_admin: ['panel.read', 'panel.write', 'panel.task.write', 'panel.config.write', 'scenegraph.read', 'scenegraph.activate', 'flow.read', 'flow.write', 'flow.admin', 'exec.*'],
 }
 
 /** 兼容别名：迁移通道创建时的历史命名（仅 connector 批次）。 */
@@ -1336,6 +1350,25 @@ export class IamService extends Service {
     const updated = this.roles().update(id, patch)
     this.ctx.platformBus.emit(PlatformEvents.PermissionChanged, { kind: 'role', roleId: id })
     return updated
+  }
+
+  /**
+   * 删除自定义角色（2026-10-14 路线图 R4 删除面补齐）：角色治理此前只增不改不删——
+   * 试错/演示产生的废角色永久滞留目录。三重护栏：
+   *   ① 内置角色不可删（平台基线，删掉会让新装库与存量库 RBAC 面分叉）；
+   *   ② 仍有账号挂载时不可删（删了会把挂载者权限整体蒸发，须先解绑）；
+   *   ③ 不存在即拒（与 updateRole 同口径，不静默成功）。
+   */
+  deleteRole(id: string): void {
+    const role = this.roles().get(id)
+    if (!role) throw new Error(`角色不存在：${id}`)
+    if (role.builtin) throw new Error(`内置角色「${role.name}」不可删除（平台基线；如需收敛权限请走角色编辑）`)
+    const holders = this.users().all().filter((user) => user.roleIds.includes(id))
+    if (holders.length > 0) {
+      throw new Error(`角色「${role.name}」仍被 ${holders.length} 个账号挂载（${holders.slice(0, 5).map((user) => user.displayName).join('、')}${holders.length > 5 ? ' 等' : ''}），请先在账号管理中解除后再删除`)
+    }
+    this.roles().remove(id)
+    this.ctx.platformBus.emit(PlatformEvents.PermissionChanged, { kind: 'role', roleId: id })
   }
 
   private assertPermissions(permissions: string[]): void {

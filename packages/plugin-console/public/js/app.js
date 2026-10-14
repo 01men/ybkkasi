@@ -36,6 +36,7 @@ import { renderAudit } from './pages/audit.js'
 import { renderApprovals } from './pages/approvals.js'
 import { renderAssets } from './pages/assets.js'
 import { renderFinops } from './pages/finops.js'
+import { renderExec } from './pages/exec.js'
 import { renderRegister } from './pages/register.js'
 import { renderPlatform } from './pages/platform.js'
 import { renderConnect } from './pages/connect.js'
@@ -48,6 +49,8 @@ const NAV = [
     { path: '#/dashboard', label: '工作台', icon: 'dashboard', perm: 'console.login' },
     // 部门面板（review-dsh-agent-panel-v2）：独立零构建 SPA，经 ext 外链进入（/panel，挂载形态 /rq/panel/）
     { ext: () => `${BASE}/panel/`, label: '部门面板', icon: 'users', perm: 'console.login', landing: 'panel' },
+    // 执行中枢（D 团队）：目标/项目/任务/调度四位一体（#/exec），与部门面板同属「总览」事务分组
+    { path: '#/exec', label: '执行中枢', icon: 'target', perm: 'exec.read' },
   ] },
   { section: 'AI 资源', items: [
     { path: '#/register', label: '资产登记', icon: 'zap', perm: 'console.login' },
@@ -133,6 +136,7 @@ function navigate() {
     apps: renderApps,
     assets: renderAssets,
     finops: renderFinops,
+    exec: renderExec,
     audit: renderAudit,
     approvals: renderApprovals,
     platform: renderPlatform,

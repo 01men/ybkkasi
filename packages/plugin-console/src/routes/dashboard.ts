@@ -113,6 +113,42 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
     } catch { /* 通知落库失败不阻塞事件链 */ }
   })
 
+  // 执行中枢（2026-10-14）：run 收尾通知负责人侧（任务面）、僵尸锁回收与 Agent 冻结走告警面。
+  // org 作用域经 entity:agent / exec:issues 集合稳定键跨插件只读（与 deptConfigs 同款惯例）。
+  ctx.platformBus.on(PlatformEvents.ExecRunCompleted, (payload) => {
+    const p = payload as { runId?: string; agentId?: string; issueIds?: string[]; status?: string }
+    try {
+      const agent = p.agentId ? ctx.opsStorage.collection<{ name?: string; orgId?: string }>('entity:agent').get(p.agentId) : undefined
+      pushNotification({
+        type: 'task',
+        title: `执行 run ${p.status === 'completed' ? '完成' : p.status === 'timeout' ? '超时回收' : '失败'}：${agent?.name ?? p.agentId ?? p.runId ?? ''}`,
+        body: p.issueIds?.length ? `关联任务 ${p.issueIds.length} 项（已释放执行锁）` : '例行唤醒收尾',
+        scope: agent?.orgId ? { kind: 'org', orgId: agent.orgId } : { kind: 'global' },
+      })
+    } catch { /* 通知落库失败不阻塞事件链 */ }
+  })
+  ctx.platformBus.on(PlatformEvents.ExecLockReclaimed, (payload) => {
+    const p = payload as { issueId?: string; runId?: string; reason?: string }
+    try {
+      pushNotification({
+        type: 'alert', title: `执行锁僵尸回收：${p.issueId ?? ''}`,
+        body: `run ${p.runId ?? ''} 已超时（${p.reason ?? 'force-release'}），锁已强制释放，请核查执行方是否仍在运行`,
+        scope: { kind: 'global' },
+      })
+    } catch { /* 通知落库失败不阻塞事件链 */ }
+  })
+  ctx.platformBus.on(PlatformEvents.AgentFrozen, (payload) => {
+    const p = payload as { agentId?: string; reason?: string }
+    try {
+      const agent = p.agentId ? ctx.opsStorage.collection<{ name?: string; orgId?: string }>('entity:agent').get(p.agentId) : undefined
+      pushNotification({
+        type: 'alert', title: `Agent 已冻结：${agent?.name ?? p.agentId ?? ''}`,
+        body: `${p.reason ?? '预算联动'}——已生成解冻审批单（L4），审批通过后自动解冻`,
+        scope: agent?.orgId ? { kind: 'org', orgId: agent.orgId } : { kind: 'global' },
+      })
+    } catch { /* 通知落库失败不阻塞事件链 */ }
+  })
+
   guarded('GET', '/api/notifications', 'console.login', (exchange) => {
     const info = caller(exchange)
     if (!info.userId) return { items: [], unread: 0, readCursor: null, note: '机器主体无个人通知面（v1 口径）' }

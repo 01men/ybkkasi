@@ -61,6 +61,9 @@ export const PATHS = {
   puzzle: '<path d="M4 7h3a2 2 0 0 0 2-2V4a2 2 0 1 1 4 0v1a2 2 0 0 0 2 2h3a1 1 0 0 1 1 1v3a2 2 0 0 0 2 2 2 2 0 1 1 0 4 2 2 0 0 0-2 2v3a1 1 0 0 1-1 1h-3a2 2 0 0 1-2-2 2 2 0 1 0-4 0 2 2 0 0 1-2 2H4a1 1 0 0 1-1-1v-3a2 2 0 0 1 2-2 2 2 0 1 0 0-4 2 2 0 0 1-2-2V8a1 1 0 0 1 1-1z"/>',
   flow: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M6.5 10v4a3 3 0 0 0 3 3H14"/>',
   menu: '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>',
+  // 执行中枢（D 团队）：目标环 + 执行锁（沿用 lucide 描边风格，stroke 由 icon() 统一）
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 }
 
 export function icon(name, size = 16) {

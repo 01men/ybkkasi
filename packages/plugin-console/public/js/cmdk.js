@@ -99,6 +99,7 @@ function closeCmdk() {
 function buildStaticItems(q) {
   const pages = [
     { title: '工作台', hash: '#/dashboard', icon: 'dashboard' },
+    { title: '执行中枢（目标/任务/调度）', hash: '#/exec', icon: 'target', perm: 'exec.read' },
     { title: 'Skill 市场', hash: '#/skills', icon: 'sparkles', perm: 'skill.read' },
     { title: 'Agent 本体', hash: '#/agents', icon: 'bot', perm: 'agent.read' },
     { title: 'AI 应用', hash: '#/apps', icon: 'app', perm: 'app.read' },
@@ -119,6 +120,15 @@ function buildStaticItems(q) {
   if (session.can('mcp.service.write')) actions.push({ title: '接入新 MCP 服务', hash: '#/mcp?action=deploy', icon: 'plus', group: '动作' })
   if (session.can('iam.connector.write')) actions.push({ title: '触发钉钉通讯录同步', hash: '#/iam?tab=connectors&action=sync', icon: 'refresh', group: '动作' })
   if (session.can('authn.principal.write')) actions.push({ title: '签发机器凭证', hash: '#/authn?action=credential', icon: 'key', group: '动作' })
+  // 执行中枢新建任务（R8）：跳 #/exec 后派发自定义事件打开抽屉；exec.js 首渲染以标记位兜底早到事件
+  if (session.can('exec.write')) actions.push({
+    title: '新建执行任务', icon: 'plus', group: '动作',
+    run: () => {
+      go('#/exec')
+      window.__execNewIssueRequested = true
+      setTimeout(() => window.dispatchEvent(new CustomEvent('exec:new-issue')), 350)
+    },
+  })
 
   const all = [
     ...pages.filter((p) => !p.perm || session.can(p.perm)).map((p) => ({ ...p, group: '页面', run: () => go(p.hash) })),

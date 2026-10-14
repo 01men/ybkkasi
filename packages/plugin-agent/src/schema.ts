@@ -53,6 +53,19 @@ export const AGENT_TYPE_SPEC: ResourceTypeSpec = {
         { value: 'external', label: '外部运行时' },
       ], hint: 'A2A 跨运行时互调的登记维度（IAW 交接 7-1）' },
       { key: 'trialGroups', label: '试运行用户组', type: 'tags', group: 'governance', hint: '试运行阶段限定可用的用户组' },
+      // R7 组织化（Agent 组织架构）：汇报线与心跳调度参数。全部选填、不设 requiredForOnline——
+      // 既有 Agent 不带这些字段照常流转；managerId 填另一 Agent 的 ID，环校验见
+      // AgentRegistryService.assertOrgChartAcyclic（create/update 涉及 managerId 时强制校验）。
+      { key: 'orgRole', label: '组织角色', type: 'enum', group: 'governance', options: [
+        { value: 'ceo', label: 'CEO' },
+        { value: 'cto', label: 'CTO' },
+        { value: 'manager', label: '经理' },
+        { value: 'engineer', label: '工程师' },
+        { value: 'analyst', label: '分析师' },
+      ], hint: 'Agent 在组织架构中的角色（CEO/CTO/经理/工程师/分析师）' },
+      { key: 'rank', label: '职级', type: 'string', group: 'governance', placeholder: '如 L4/P6', hint: '自由文本' },
+      { key: 'managerId', label: '汇报上级 Agent', type: 'string', group: 'governance', placeholder: '另一 Agent 的 ID（agt-…）', hint: '汇报线（组织下达与上浮通道），填另一 Agent 的 ID' },
+      { key: 'heartbeatIntervalMinutes', label: '心跳间隔（分钟）', type: 'number', group: 'governance', hint: '执行中枢按此间隔定时唤醒该 Agent 拉取待办（0 或留空=不参与心跳调度）' },
     ],
   },
   lifecycle: {

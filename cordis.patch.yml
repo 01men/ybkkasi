@@ -76,6 +76,10 @@
     # 事务流引擎（/api/flow/*：TF 编排/模板库/SLA/甘特）：guarded 路由依赖 console 中间件，须在其后装配
     - id: ops-flow-core
       name: dsh-enterprise-ops/packages/plugin-flow-core/src/index.ts
+    # 执行中枢（/api/exec/*：目标血缘/任务执行锁/心跳唤醒/例行调度）：依赖 console 中间件与
+    # resourceCore/agentRegistry/modelgw/flow 服务，须在 flow-core 之后装配
+    - id: ops-exec-hub
+      name: dsh-enterprise-ops/packages/plugin-exec-hub/src/index.ts
     # 钉钉桥接（群桥/出向投递/审批推送/告警通道）：订阅 panel.message.created / audit.alert.fired
     - id: ops-dingtalk-bridge
       name: dsh-enterprise-ops/packages/plugin-dingtalk-bridge/src/index.ts

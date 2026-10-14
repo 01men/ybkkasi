@@ -117,6 +117,9 @@ export interface ApprovalRecord extends RecordBase {
   riskLevel?: 'high' | 'medium' | 'low'
   /** 公司级终审标记（WP-10/L1，additive）：终审人与时间在审计可追溯（action=approval.final_review）。 */
   finalReview?: { approverId: string; approverName: string; at: string }
+  /** 组织归属（R11 多公司收口，2026-10-14）：审批单按组织子树过滤的数据源。
+   *  agent.* 类单由 createApproval 从 payload.agentId 自动推导；存量单无此字段对非 `*` 不可见。 */
+  orgId?: string
 }
 
 export type ApprovalExecutor = (payload: Record<string, unknown>, approverId: string) => Promise<unknown>
@@ -708,6 +711,7 @@ export class AuditService extends Service {
     requesterId: string
     requesterName: string
     riskLevel?: 'high' | 'medium' | 'low'
+    orgId?: string
   }): ApprovalRecord {
     // OPT-P2-02：入审批存储前的敏感面处置——reject 类 kind 直接拒绝开单；其余深度掩码后入库
     const rule = approvalKindRule(input.kind)
@@ -717,9 +721,18 @@ export class AuditService extends Service {
     }
     const { masked, maskedKeys } = maskSensitivePayload(input.payload)
     const riskLevel = input.riskLevel ?? (HIGH_RISK_APPROVAL_KINDS.has(input.kind) ? 'high' as const : undefined)
+    // R11：组织归属——显式传入优先；agent.* 类单未传时按平台稳定键读 Agent 的 orgId 兜底
+    //（调用方 plugin-agent 零改动即带上归属；entity:agent 跨插件只读与 dashboard 同款惯例）
+    let orgId = input.orgId
+    if (!orgId && input.kind.startsWith('agent.') && input.payload['agentId']) {
+      try {
+        orgId = this.ctx.opsStorage.collection<{ orgId?: string }>('entity:agent').get(String(input.payload['agentId']))?.orgId
+      } catch { /* 推导失败不阻塞开单（无归属单对非 `*` 不可见） */ }
+    }
     const record = this.approvals().insert({
       id: newId('apr'),
       ...input,
+      ...(orgId ? { orgId } : {}),
       ...(riskLevel !== undefined ? { riskLevel } : {}),
       ...(maskedKeys.length > 0 ? { payload: { ...(masked as Record<string, unknown>), maskedKeys } } : {}),
       status: 'pending',
@@ -754,7 +767,11 @@ export class AuditService extends Service {
     if (!approval) throw new Error(`审批单不存在：${id}`)
     if (approval.status !== 'pending') throw new Error(`审批单已处理（${approval.status}）`)
     // 同人审批放开（原 QA A-05「提交人与审批人不得为同一账号」自审自批拦截已按业务决策取消，
-    // 2026-09-15）：提交人可自行通过/驳回自己的审批单，权限点（approval.decide）校验不变
+    // 2026-09-15）——2026-10-14 R12 复议收窄：仅 agent.online（雇佣语义）恢复职责分离，
+    // 提交人不得自行通过/驳回自己的 Agent 上线单；其余类型维持放开，权限点校验不变。
+    if (approval.kind === 'agent.online' && approverId && approverId === approval.requesterId) {
+      throw new Error('职责分离（R12 复议恢复，2026-10-14）：Agent 上线（雇佣语义）审批的提交人与审批人不得为同一账号')
+    }
     const isHighRisk = approval.riskLevel === 'high'
     if (decision === 'approve' && isHighRisk && options.confirmed !== true) {
       throw new Error('高风险审批通过需二次确认（confirmed=true），请在前端确认弹窗中复核后提交')

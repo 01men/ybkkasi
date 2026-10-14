@@ -80,8 +80,9 @@ export const PUBLIC_PATHS = new Set([
   '/api/platform/bootstrap',
 ])
 
-/** 动态路径的公开前缀（OIDC 授权页查询：仅回显客户端名/scope，不泄露 redirect_uri）。 */
-const PUBLIC_PATH_PREFIXES = ['/api/authn/oidc/auth-requests/']
+/** 动态路径的公开前缀（OIDC 授权页查询：仅回显客户端名/scope，不泄露 redirect_uri）。
+ *  执行中枢 webhook 触发器：路径即凭证（未登记/停用路径一律 404，fail-closed，见 plugin-exec-hub）。 */
+const PUBLIC_PATH_PREFIXES = ['/api/authn/oidc/auth-requests/', '/api/exec/webhook/']
 
 /** 从请求头推导对外基址（钉钉等真实 IdP 的 redirect_uri 需绝对 URL；反代场景优先 x-forwarded-*）。 */
 function requestOrigin(exchange: HttpExchange): string | undefined {

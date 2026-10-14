@@ -63,6 +63,8 @@ export async function renderDashboard(content) {
       ${statCard('activity', '累计调用', d.mcp.totalCalls, `P95 ${d.mcp.p95Latency}ms · Token ${fmtNum(d.mcp.tokens)}`, 'var(--info)', 'var(--info-bg)', '#/audit?tab=logs')}
     </div>
 
+    <div id="dash-exec-slot"></div>
+
     <div class="grid-2 mb-20">
       <div class="card">
         <div class="card-head">
@@ -112,6 +114,35 @@ export async function renderDashboard(content) {
   void mountBindingBanner()
   void mountRecentCalls()
   if (isManager) { void mountManagerCards(d) }
+  // R8 目标视图入口：exec.read 用户的执行中枢简报卡（概览失败则整卡降级不显示）
+  if (isManager && session.can('exec.read')) void mountExecBrief()
+}
+
+/** 执行中枢简报（R8）：待唤醒 / 延迟队列 / 活跃 Run 三数 + 进入入口；失败静默隐藏。 */
+async function mountExecBrief() {
+  const slot = $('#dash-exec-slot')
+  if (!slot) return
+  let ov
+  try {
+    ov = await api.get('/api/exec/overview')
+  } catch {
+    slot.remove()
+    return
+  }
+  slot.innerHTML = `
+    <div class="card card-pad mb-20" style="display:flex;gap:26px;align-items:center;flex-wrap:wrap;cursor:pointer" id="dash-exec-card">
+      <div class="stat-icon" style="background:var(--brand-50);color:var(--brand-500);flex-shrink:0">${icon('target', 18)}</div>
+      <div>
+        <div style="font-weight:600">执行中枢</div>
+        <div class="fs-12 text-3" style="margin-top:2px">目标 → 项目 → 任务 → Agent 执行，最新调度态势</div>
+      </div>
+      <div style="flex:1"></div>
+      <div style="text-align:center"><div style="font-size:20px;font-weight:700;color:var(--warn)">${Number(ov.pendingWakes ?? 0)}</div><div class="fs-12 text-3">待唤醒</div></div>
+      <div style="text-align:center"><div style="font-size:20px;font-weight:700;color:var(--info)">${Number(ov.deferredWakes ?? 0)}</div><div class="fs-12 text-3">延迟队列</div></div>
+      <div style="text-align:center"><div style="font-size:20px;font-weight:700;color:var(--ok)">${Number(ov.activeRuns ?? 0)}</div><div class="fs-12 text-3">活跃 Run</div></div>
+      <a class="btn btn-primary btn-sm" href="#/exec" onclick="event.stopPropagation()">${icon('chevronRight', 13)} 进入执行中枢</a>
+    </div>`
+  $('#dash-exec-card').onclick = () => { location.hash = '#/exec' }
 }
 
 /** A2 绑定自检：dsh 宿主形态下探测绑定态，失效出横幅 + 一键重绑（OIDC 既有通道）；独立形态静默。 */

@@ -576,6 +576,11 @@ const proc = spawn(process.execPath, ['src/main.ts', '--port', String(PORT), '--
     DSH_UPDATE_AUTO_CHECK: 'off',
     // OIDC 授权请求 TTL 压到 2 秒：过期路径可在自测内确定性验证（正常流程毫秒级完成不受影响）
     OIDC_AUTHREQ_TTL_SECONDS: '2',
+    // 执行中枢（2026-10-14）：后台心跳循环压到 10 分钟不干扰断言（测试用 POST /api/exec/tick 手动驱动，
+    // 确定性）；执行锁僵尸阈值压到 2.5s（回收断言可秒级验证）
+    EXEC_HUB_TICK_MS: '600000',
+    EXEC_HUB_FIRST_TICK_MS: '600000',
+    EXEC_LOCK_TIMEOUT_MS: '2500',
     // 门户 downloadUrl 生成基址指向自测实例：门户技能包下载断言可直连验证
     PORTAL_PUBLIC_BASE: `http://127.0.0.1:${PORT}`,
   },
@@ -2467,13 +2472,16 @@ try {
   })
   check('直达票据：伪造票据被拒', redeemForged.status === 400)
 
-  // L4 上线（2026-09-15 同人审批放开）：提交人与审批人允许同一账号——发起人自审直接通过并自动执行
-  // （原 QA A-05 自审自批拦截已按业务决策取消；approver 账号保留，供其余双人流程断言使用）
+  // L4 上线（R12 复议收窄，2026-10-14）：agent.online（雇佣语义）恢复职责分离——提交人自审 400；
+  // 其余类型维持同人审批放开。上线单由第二审批人（approver02，super_admin）异人通过并自动执行。
+  // （2026-09-15 曾全面放开同人审批；R12 依据 Paperclip「雇佣/高危需独立审批」语义收窄。）
   const onlineRequest = await api('POST', `/api/agents/${selfAgent.id}/transition`, { token: admin, body: { action: 'online', note: '自测上线' } })
   check('上线生成 L4 审批单', onlineRequest.ok && onlineRequest.data.approval.status === 'pending')
 
-  const selfApprove = await api('POST', `/api/approvals/${onlineRequest.data.approval.id}/decide`, { token: admin, body: { decision: 'approve', opinion: '自审通过（同人审批放开）', confirmed: true } })
-  check('发起人自审通过并自动执行上线（同人审批放开）', selfApprove.ok && selfApprove.data.status === 'executed', JSON.stringify(selfApprove.error ?? {}).slice(0, 160))
+  const selfApprove = await api('POST', `/api/approvals/${onlineRequest.data.approval.id}/decide`, { token: admin, body: { decision: 'approve', opinion: '自审尝试（应被 R12 职责分离拦截）', confirmed: true } })
+  check('R12：发起人自审 agent.online 被拒（职责分离恢复）', !selfApprove.ok && selfApprove.status === 400 && String(selfApprove.error?.message ?? '').includes('职责分离'), JSON.stringify(selfApprove.error ?? {}).slice(0, 160))
+  const crossApprove = await api('POST', `/api/approvals/${onlineRequest.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '异人审批通过（R12 之后口径）', confirmed: true, finalReview: true } })
+  check('异人审批通过并自动执行上线（R12 新口径）', crossApprove.ok && crossApprove.data.status === 'executed', JSON.stringify(crossApprove.error ?? {}).slice(0, 160))
   const agentAfter = await api('GET', `/api/agents/${selfAgent.id}`, { token: admin })
   check('Agent 状态已上线', agentAfter.data.status === 'online')
 
@@ -5959,6 +5967,178 @@ try {
     check('3-1：TF 列表按场景+状态过滤（视图字段 progress/slaBreached 随行）',
       flowList.ok && flowList.data.flows.some((item) => item.id === flowId && Number.isFinite(item.progress) && item.slaBreached === false),
       JSON.stringify(flowList.data?.flows?.length))
+  }
+
+  // ================================================================ 执行中枢（R8/R9 + E1-E7）与治理收口（R3/R4/R10/R11）
+  section('执行中枢：目标血缘 / 任务执行锁 / 心跳唤醒 / 例行调度（R8/R9，E1-E7）')
+  {
+    // -- E4/R8 目标树与项目 ---------------------------------------------------
+    const exGoal = await api('POST', '/api/exec/goals', { token: admin, body: { title: '自测目标：质检人效', metric: '人均日质检量', metricBaseline: 1000, metricTarget: 1300, metricUnit: '件' } })
+    check('R8：创建目标（指标基线/目标/单位）', exGoal.ok && exGoal.data.metric === '人均日质检量', JSON.stringify(exGoal.error ?? {}))
+    const exChild = await api('POST', '/api/exec/goals', { token: admin, body: { title: '自测子目标：误检率', parentGoalId: exGoal.data.id, metric: '误检率', metricBaseline: 5, metricTarget: 2, metricUnit: '%' } })
+    check('R8：子目标挂父（目标树）', exChild.ok && exChild.data.parentGoalId === exGoal.data.id)
+    const exCyclePatch = await api('PATCH', `/api/exec/goals/${exGoal.data.id}`, { token: admin, body: { parentGoalId: exChild.data.id } })
+    check('R8：目标父链成环被拒', exCyclePatch.status === 400 && /成环/.test(exCyclePatch.error?.message ?? ''), JSON.stringify(exCyclePatch.error ?? {}).slice(0, 120))
+    const exProject = await api('POST', '/api/exec/projects', { token: admin, body: { goalId: exChild.data.id, name: '自测项目：视觉质检', repos: ['https://example.com/qc.git'] } })
+    check('E4：项目挂目标（repos 落库）', exProject.ok && exProject.data.goalId === exChild.data.id && exProject.data.repos.length === 1)
+
+    // -- E2/E3 任务执行锁 + 唤醒派发 --------------------------------------------
+    const exAgents = (await api('GET', '/api/agents', { token: admin })).data.agents
+    const exAgent = exAgents.find((a) => a.status === 'online' || a.status === 'trial')
+    check('E3 前置：存在运行态 Agent 可派发', Boolean(exAgent))
+    const exIssue = await api('POST', '/api/exec/issues', { token: admin, body: { projectId: exProject.data.id, title: '自测任务：采集通道打通', priority: 'P1', assigneeAgentId: exAgent.id } })
+    check('E2：任务创建（goalAncestry 写时物化 = 父目标→子目标→项目）',
+      exIssue.ok && JSON.stringify(exIssue.data.goalAncestry) === JSON.stringify([exGoal.data.id, exChild.data.id, exProject.data.id]),
+      JSON.stringify(exIssue.data?.goalAncestry))
+    const exPending1 = (await api('GET', '/api/exec/wakes?status=pending', { token: admin })).data.wakes
+    check('E3：assign 触发源自动入队唤醒', exPending1.some((w) => w.issueId === exIssue.data.id && w.trigger === 'assign'))
+    const exTick1 = await api('POST', '/api/exec/tick', { token: admin })
+    check('E3：tick 派发成功（治理前置全过后 woken≥1）', exTick1.ok && exTick1.data.woken >= 1, JSON.stringify(exTick1.data))
+    const exIssueLocked = (await api('GET', `/api/exec/issues?projectId=${exProject.data.id}`, { token: admin })).data.issues.find((i) => i.id === exIssue.data.id)
+    check('E2：CAS 取锁成功（executionRunId 落值，任务 todo→in_progress）',
+      exIssueLocked.status === 'in_progress' && Boolean(exIssueLocked.executionRunId), JSON.stringify({ status: exIssueLocked.status, run: exIssueLocked.executionRunId }))
+    const exRun = (await api('GET', '/api/exec/runs?status=running', { token: admin })).data.runs.find((r) => r.id === exIssueLocked.executionRunId)
+    check('E2/E4：run 登记上下文包（为什么而干注入）', Boolean(exRun) && /本任务服务于/.test(exRun.contextPack ?? ''), (exRun?.contextPack ?? '').slice(0, 80))
+    await api('POST', `/api/exec/issues/${exIssue.data.id}/wake`, { token: admin, body: { reason: '二唤验证' } })
+    await api('POST', '/api/exec/tick', { token: admin })
+    const exDeferred = (await api('GET', '/api/exec/wakes?status=deferred_issue_execution', { token: admin })).data.wakes
+    check('E2/E3：执行锁持有期二唤进延迟队列（deferred_issue_execution 具名态）',
+      exDeferred.some((w) => w.issueId === exIssue.data.id), JSON.stringify(exDeferred.length))
+    await api('PATCH', `/api/exec/issues/${exIssue.data.id}`, { token: admin, body: { assigneeAgentId: exAgent.id } })
+    const exPendingAfterReassign = (await api('GET', '/api/exec/wakes?status=pending', { token: admin })).data.wakes.filter((w) => w.issueId === exIssue.data.id)
+    check('E3：同小时桶重复指派不重复唤醒（幂等键去重）', exPendingAfterReassign.length === 0, `pending=${exPendingAfterReassign.length}`)
+    await api('POST', `/api/exec/issues/${exIssue.data.id}/transition`, { token: admin, body: { to: 'review' } })
+    const exDone = await api('POST', `/api/exec/issues/${exIssue.data.id}/transition`, { token: admin, body: { to: 'done' } })
+    const exIssueDone = (await api('GET', `/api/exec/issues?projectId=${exProject.data.id}`, { token: admin })).data.issues.find((i) => i.id === exIssue.data.id)
+    check('E2：done 收尾自动完结 run 并释放执行锁', exDone.ok && exIssueDone.status === 'done' && !exIssueDone.executionRunId, JSON.stringify({ status: exIssueDone.status }))
+
+    // -- E6 审批门禁（P0 高危任务） ---------------------------------------------
+    const exP0 = await api('POST', '/api/exec/issues', { token: admin, body: { projectId: exProject.data.id, title: '自测任务：P0 门禁', priority: 'P0', assigneeAgentId: exAgent.id } })
+    await api('POST', `/api/exec/issues/${exP0.data.id}/wake`, { token: admin, body: { reason: 'P0 门禁验证' } })
+    await api('POST', '/api/exec/tick', { token: admin })
+    const exP0After = (await api('GET', `/api/exec/issues?projectId=${exProject.data.id}`, { token: admin })).data.issues.find((i) => i.id === exP0.data.id)
+    const exP0Approval = (await api('GET', '/api/approvals', { token: admin })).data.approvals.find((a) => a.kind === 'exec.issue.run' && a.payload?.issueId === exP0.data.id)
+    check('E6：P0 任务执行前自动挂 exec.issue.run 审批（挂单不派发）',
+      exP0After.status === 'todo' && Boolean(exP0Approval), JSON.stringify({ status: exP0After.status, approval: Boolean(exP0Approval) }))
+    const exP0Decide = await api('POST', `/api/approvals/${exP0Approval.id}/decide`, { token: approver, body: { decision: 'approve', confirmed: true, finalReview: true } })
+    check('E6：P0 审批异人通过（executed）', exP0Decide.ok && exP0Decide.data.status === 'executed', JSON.stringify(exP0Decide.error ?? {}).slice(0, 120))
+    await api('POST', '/api/exec/tick', { token: admin })
+    const exP0Final = (await api('GET', `/api/exec/issues?projectId=${exProject.data.id}`, { token: admin })).data.issues.find((i) => i.id === exP0.data.id)
+    check('E6：审批放行后派发（锁落值 in_progress）', exP0Final.status === 'in_progress' && Boolean(exP0Final.executionRunId), JSON.stringify({ status: exP0Final.status }))
+    await api('POST', `/api/exec/issues/${exP0.data.id}/transition`, { token: admin, body: { to: 'review' } })
+    await api('POST', `/api/exec/issues/${exP0.data.id}/transition`, { token: admin, body: { to: 'done' } })
+
+    // -- E7 例行三源（webhook 面 + cron 词法） -----------------------------------
+    const exRoutine = await api('POST', '/api/exec/routines', { token: admin, body: { agentId: exAgent.id, name: '自测 webhook 例行', kind: 'webhook', webhookPath: 'qa-hook-selftest-2026' } })
+    check('E7：webhook 例行登记（路径即凭证）', exRoutine.ok && exRoutine.data.webhookPath === 'qa-hook-selftest-2026')
+    const exCronBad = await api('POST', '/api/exec/routines', { token: admin, body: { agentId: exAgent.id, name: '自测坏 cron', kind: 'cron', cron: '* * * *' } })
+    check('E7：cron 表达式词法校验拒绝（5 段制）', exCronBad.status === 400, JSON.stringify(exCronBad.error ?? {}).slice(0, 100))
+    const exHookHit = await rawReq('POST', '/api/exec/webhook/qa-hook-selftest-2026', { headers: { 'content-type': 'application/json' }, body: '{}' })
+    check('E7：webhook 匿名触发入队（200 + wakeId）', exHookHit.status === 200 && jsonBody(exHookHit).ok === true, exHookHit.body.slice(0, 120))
+    const exHookMiss = await rawReq('POST', '/api/exec/webhook/not-registered-path', { headers: { 'content-type': 'application/json' }, body: '{}' })
+    check('E7：未登记路径 404 fail-closed（不泄露存在性）', exHookMiss.status === 404)
+
+    // -- E2 僵尸锁回收（EXEC_LOCK_TIMEOUT_MS=2500 压缩口径） ----------------------
+    const exZ = await api('POST', '/api/exec/issues', { token: admin, body: { projectId: exProject.data.id, title: '自测任务：僵尸锁回收', priority: 'P2', assigneeAgentId: exAgent.id } })
+    await api('POST', `/api/exec/issues/${exZ.data.id}/wake`, { token: admin, body: { reason: '僵尸锁验证' } })
+    await api('POST', '/api/exec/tick', { token: admin })
+    const exZLocked = (await api('GET', `/api/exec/issues?projectId=${exProject.data.id}`, { token: admin })).data.issues.find((i) => i.id === exZ.data.id)
+    check('E2：僵尸锁靶任务先取锁', Boolean(exZLocked.executionRunId), JSON.stringify({ status: exZLocked.status }))
+    await new Promise((resolve) => setTimeout(resolve, 3000))
+    const exZTick = await api('POST', '/api/exec/tick', { token: admin })
+    // 回收后同 tick 的延迟唤醒会立即重新派发并取新锁（设计内行为：回收的是僵尸，不压制合法等待者）
+    // ——断言锚定在回收证据本身：reclaimed 计数 + 旧 run 落 timeout 终态
+    const exTimeoutRun = (await api('GET', '/api/exec/runs?status=timeout', { token: admin })).data.runs.find((r) => r.id === exZLocked.executionRunId)
+    check('E2：僵尸锁超时强制回收（旧 run 落 timeout 终态 + reclaimed 计数）',
+      exZTick.data.reclaimed >= 1 && Boolean(exTimeoutRun), `reclaimed=${exZTick.data.reclaimed} timeoutRun=${Boolean(exTimeoutRun)}`)
+
+    // -- E5 exec_lineage + R9 健康度总览 ----------------------------------------
+    const exLineage = await api('GET', `/api/exec/lineage/${exIssue.data.id}`, { token: admin })
+    check('E5：血缘视图（目标→项目→任务，exec_lineage 工具同源）',
+      exLineage.ok && exLineage.data.goal?.id === exChild.data.id && exLineage.data.project?.id === exProject.data.id, JSON.stringify(exLineage.error ?? {}))
+    const exOverview = await api('GET', '/api/exec/overview', { token: admin })
+    check('R9：总览（健康度五档枚举 + 锁/唤醒计数齐备）',
+      exOverview.ok && Array.isArray(exOverview.data.agentsHealth) && exOverview.data.agentsHealth.length > 0
+      && exOverview.data.agentsHealth.every((a) => ['healthy', 'stale', 'silent', 'frozen', 'offline'].includes(a.health)),
+      JSON.stringify(exOverview.data?.agentsHealth?.length))
+    const exHbAgent = exOverview.data.agentsHealth.find((a) => a.agentId === exAgent.id)
+    check('R9：被派发 Agent 有心跳留痕（健康度 healthy/stale）', ['healthy', 'stale'].includes(exHbAgent?.health), JSON.stringify(exHbAgent))
+
+    // -- R10 Agent 主体预算：熔断 → 联动冻结 → L4 解冻审批 → 恢复 ----------------
+    const exBudget = await api('PUT', '/api/modelgw/budgets', { token: admin, body: { subject: `agent:${exAgent.id}`, dailyLimitCents: 0, action: 'block', freezeAgent: true } })
+    check('R10：Agent 主体预算登记（0 元 block + freezeAgent 联动）', exBudget.ok && exBudget.data.subject === `agent:${exAgent.id}`)
+    const exFreezeIssue = await api('POST', '/api/exec/issues', { token: admin, body: { projectId: exProject.data.id, title: '自测任务：预算熔断', priority: 'P2', assigneeAgentId: exAgent.id } })
+    await api('POST', `/api/exec/issues/${exFreezeIssue.data.id}/wake`, { token: admin, body: { reason: '预算验证' } })
+    await api('POST', '/api/exec/tick', { token: admin })
+    const exFroze = (await api('GET', '/api/agents', { token: admin })).data.agents.find((a) => a.id === exAgent.id)
+    check('R10：预算前置熔断 → 联动冻结（frozenAt 落值）', Boolean(exFroze.attrs.frozenAt), JSON.stringify(exFroze.attrs.frozenAt))
+    const exUnfreezeApproval = (await api('GET', '/api/approvals', { token: admin })).data.approvals.find((a) => a.kind === 'agent.unfreeze' && a.payload?.agentId === exAgent.id && a.status === 'pending')
+    check('R10：冻结联动生成 agent.unfreeze L4 审批单（orgId 自动推导）', Boolean(exUnfreezeApproval) && Boolean(exUnfreezeApproval.orgId))
+    const exFailedWake = (await api('GET', '/api/exec/wakes?status=failed', { token: admin })).data.wakes.find((w) => w.issueId === exFreezeIssue.data.id)
+    check('E6/R10：熔断唤醒失败留痕（lastError 含预算）', Boolean(exFailedWake) && /预算/.test(exFailedWake.lastError ?? ''), exFailedWake?.lastError ?? '')
+    const exLogs = await api('GET', '/api/audit/logs?limit=200', { token: admin })
+    check('E6：预算拒绝审计留痕（exec.wakeup.budget_denied）',
+      exLogs.ok && JSON.stringify(exLogs.data).includes('exec.wakeup.budget_denied'), '')
+    const exUnfreeze = await api('POST', `/api/approvals/${exUnfreezeApproval.id}/decide`, { token: approver, body: { decision: 'approve', confirmed: true, finalReview: true } })
+    check('R10：解冻审批异人通过（executed）', exUnfreeze.ok && exUnfreeze.data.status === 'executed', JSON.stringify(exUnfreeze.error ?? {}).slice(0, 120))
+    const exThawed = (await api('GET', '/api/agents', { token: admin })).data.agents.find((a) => a.id === exAgent.id)
+    check('R10：审批执行器解冻生效（frozenAt 清空）', exThawed.attrs.frozenAt === undefined)
+    const exBudgetDel = await api('DELETE', `/api/modelgw/budgets/${exBudget.data.id}`, { token: admin })
+    check('R4：预算 DELETE 路由可用（联动验证后清理）', exBudgetDel.ok)
+    await api('POST', `/api/exec/issues/${exFreezeIssue.data.id}/wake`, { token: admin, body: { reason: '解冻后复派' } })
+    await api('POST', '/api/exec/tick', { token: admin })
+    const exRefinal = (await api('GET', `/api/exec/issues?projectId=${exProject.data.id}`, { token: admin })).data.issues.find((i) => i.id === exFreezeIssue.data.id)
+    check('R10：解冻后恢复派发（治理闭环回绿）', exRefinal.status === 'in_progress' && Boolean(exRefinal.executionRunId), JSON.stringify({ status: exRefinal.status }))
+    await api('POST', `/api/exec/issues/${exFreezeIssue.data.id}/transition`, { token: admin, body: { to: 'review' } })
+    await api('POST', `/api/exec/issues/${exFreezeIssue.data.id}/transition`, { token: admin, body: { to: 'done' } })
+
+    // -- R3 modelSlug='*' 通配 + invoke 熔断 ------------------------------------
+    const exModel = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'qa-wildcard-model', endpoint: `http://127.0.0.1:${GH_PORT}/v1`, provider: 'stub', costCentsPerKTokens: 1, status: 'online', dataClassLimit: 'secret' } })
+    check('R3 前置：登记自测模型', exModel.ok, JSON.stringify(exModel.error ?? {}).slice(0, 100))
+    const exWild = await api('PUT', '/api/modelgw/budgets', { token: admin, body: { orgId: newOrg.data.id, modelSlug: '*', dailyLimitCents: 0, action: 'block' } })
+    check("R3 前置：登记 '*' 通配预算（QA 组织 0 元 block）", exWild.ok)
+    const exWildInvoke = await api('POST', '/api/modelgw/invoke', { token: admin, body: { model: 'qa-wildcard-model', orgId: newOrg.data.id, messages: [{ role: 'user', content: '通配验证' }] } })
+    check("R3：modelSlug='*' 通配命中任意模型（字面量模型名被通配预算熔断）",
+      !exWildInvoke.ok && /预算/.test(exWildInvoke.error?.message ?? ''), JSON.stringify(exWildInvoke.error ?? {}).slice(0, 160))
+    await api('DELETE', `/api/modelgw/budgets/${exWild.data.id}`, { token: admin })
+    const exWildInvoke2 = await api('POST', '/api/modelgw/invoke', { token: admin, body: { model: 'qa-wildcard-model', orgId: newOrg.data.id, messages: [{ role: 'user', content: '通配删除后' }] } })
+    check('R3 后续：删除通配预算后不再熔断（错误面走到上游调用层）',
+      !exWildInvoke2.ok && !/预算/.test(exWildInvoke2.error?.message ?? ''), JSON.stringify(exWildInvoke2.error ?? {}).slice(0, 120))
+
+    // -- R4 角色删除面 + R11 清单收口（selftest 口径） ----------------------------
+    const exRole = await api('POST', '/api/iam/roles', { token: admin, body: { code: 'qa_exec_del_role', name: '自测删除角色', permissions: ['console.login'] } })
+    check('R4 前置：创建自定义角色', exRole.ok)
+    const exRoleDel = await api('DELETE', `/api/iam/roles/${exRole.data.id}`, { token: admin })
+    check('R4：无挂载自定义角色可删除', exRoleDel.ok)
+    const exMemberRole = (await api('GET', '/api/iam/roles', { token: admin })).data.roles.find((r) => r.code === 'member')
+    const exBuiltinDel = await api('DELETE', `/api/iam/roles/${exMemberRole.id}`, { token: admin })
+    check('R4：内置角色删除被拒', exBuiltinDel.status === 400, JSON.stringify(exBuiltinDel.error ?? {}).slice(0, 100))
+    const exActiveUser = (await api('GET', '/api/iam/users', { token: admin })).data.users.find((u) => u.status === 'active')
+    const exUserDel = await api('DELETE', `/api/iam/users/${exActiveUser.id}`, { token: admin })
+    check('R4：在职账号物理删除被拒（仅已注销可删）', exUserDel.status === 400, JSON.stringify(exUserDel.error ?? {}).slice(0, 100))
+    const exAdminAgents = (await api('GET', '/api/agents', { token: admin })).data.agents
+    const exDevAgents = (await api('GET', '/api/agents', { token: dev })).data.agents
+    check('R11：非 * 管理员 Agent 台账按组织子树收敛', exDevAgents.length < exAdminAgents.length, `admin=${exAdminAgents.length} dev=${exDevAgents.length}`)
+    const exDevOrgs = (await api('GET', '/api/iam/orgs', { token: dev })).data
+    check('R11：组织清单按子树收敛（dev 仅见本组织）', Array.isArray(exDevOrgs) && exDevOrgs.length < (await api('GET', '/api/iam/orgs', { token: admin })).data.length, `dev=${exDevOrgs.length}`)
+    const exCross = exAdminAgents.find((a) => !exDevAgents.some((d) => d.id === a.id) && a.orgId)
+    if (exCross) {
+      const exCrossProbe = await api('GET', `/api/agents?org=${exCross.orgId}`, { token: dev })
+      check('R11：越界 ?org= 显式 403（不静默收窄）', exCrossProbe.status === 403, `status=${exCrossProbe.status}`)
+    }
+
+    // 清理：exec 自测实体（项目须先清任务）
+    for (const issue of (await api('GET', `/api/exec/issues?projectId=${exProject.data.id}`, { token: admin })).data.issues) {
+      if (issue.executionRunId) await api('POST', `/api/exec/issues/${issue.id}/transition`, { token: admin, body: { to: 'cancelled' } })
+      await api('DELETE', `/api/exec/issues/${issue.id}`, { token: admin })
+    }
+    await api('DELETE', `/api/exec/routines/${exRoutine.data.id}`, { token: admin })
+    await api('DELETE', `/api/exec/projects/${exProject.data.id}`, { token: admin })
+    await api('DELETE', `/api/exec/goals/${exChild.data.id}`, { token: admin })
+    await api('DELETE', `/api/exec/goals/${exGoal.data.id}`, { token: admin })
+    await api('DELETE', '/api/modelgw/models/' + exModel.data.id, { token: admin })
+    const exCleanup = await api('GET', '/api/exec/goals', { token: admin })
+    check('执行中枢自测实体清理完成（目标树清空）', exCleanup.data.goals.every((g) => !g.title.startsWith('自测目标')), `剩余 ${exCleanup.data.goals.length} 目标`)
   }
 
   // ================================================================ QA-20260912 修复批次回归（A-03 / A-04 / A-08 / B-04）

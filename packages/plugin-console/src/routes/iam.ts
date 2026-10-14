@@ -10,6 +10,37 @@ import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { PermissionCatalog, type UserManageActor } from '../../../plugin-iam/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
+/**
+ * R11 多公司清单收口（2026-10-14）：非 `*` 管理员的可见组织子树集合（null=全量豁免）。
+ * 人类主体按自身 orgId 收敛（无组织=fail-closed 空集）；机器主体解析其归属 Agent 的
+ * orgId（refType=agent）。agents/apps/approvals 等清单路由 import 复用。
+ */
+export function scopedOrgIdsOf(
+  ctx: Context,
+  caller: ConsoleRouteDeps['caller'],
+  exchange: HttpExchange,
+): string[] | null {
+  const info = caller(exchange)
+  if (info.permissions.includes('*')) return null
+  let orgId = info.userId ? ctx.iam.users().get(info.userId)?.orgId : undefined
+  if (!orgId && info.kind === 'machine' && info.refType === 'agent' && info.refId) {
+    orgId = ctx.resourceCore.collection('agent').get(info.refId)?.orgId
+  }
+  return orgId ? ctx.iam.orgSubtreeIds(orgId) : []
+}
+
+/** scopedOrgIdsOf 的过滤形态：返回谓词（null=全量豁免）；空子树=fail-closed 仅可见无归属记录。 */
+export function scopedOrgFilterOf(
+  ctx: Context,
+  caller: ConsoleRouteDeps['caller'],
+  exchange: HttpExchange,
+): ((orgId: string | undefined) => boolean) | null {
+  const scope = scopedOrgIdsOf(ctx, caller, exchange)
+  if (scope === null) return null
+  const allow = new Set(scope)
+  return (orgId) => !orgId || allow.has(orgId)
+}
+
 export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { guarded, body, changeLog, caller } = deps
 
@@ -18,10 +49,36 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const info = caller(exchange)
     return { userId: info.userId, permissions: info.permissions }
   }
-  // -- IAM ----------------------------------------------------------------
-  guarded('GET', '/api/iam/orgs/tree', 'iam.org.read', () => ctx.iam.orgTree())
 
-  guarded('GET', '/api/iam/orgs', 'iam.org.read', () => ctx.iam.orgs().all())
+  /**
+   * R11 多公司清单收口（见模块级 scopedOrgFilter 导出）：组织清单/树按调用者子树收敛。
+   */
+  const scopedOrgIds = (exchange: HttpExchange): string[] | null => scopedOrgIdsOf(ctx, caller, exchange)
+
+  // -- IAM ----------------------------------------------------------------
+  // R11：组织清单/树按调用者子树收敛（`*` 豁免全量）——「一个部署跑多家公司」的读面隔离
+  guarded('GET', '/api/iam/orgs/tree', 'iam.org.read', (exchange) => {
+    const scope = scopedOrgIds(exchange)
+    if (scope === null) return ctx.iam.orgTree()
+    const rootId = scope[0]
+    if (!rootId) return []
+    const findIn = (nodes: ReturnType<typeof ctx.iam.orgTree>, id: string): ReturnType<typeof ctx.iam.orgTree> | null => {
+      for (const node of nodes) {
+        if (node.id === id) return [node]
+        const hit = findIn(node.children ?? [], id)
+        if (hit) return hit
+      }
+      return null
+    }
+    return rootId ? (findIn(ctx.iam.orgTree(), rootId) ?? []) : []
+  })
+
+  guarded('GET', '/api/iam/orgs', 'iam.org.read', (exchange) => {
+    const scope = scopedOrgIds(exchange)
+    if (scope === null) return ctx.iam.orgs().all()
+    const allow = new Set(scope)
+    return ctx.iam.orgs().all().filter((org) => allow.has(org.id))
+  })
 
   guarded('POST', '/api/iam/orgs', 'iam.org.write', (exchange) => {
     const input = body<{ name: string; parentId?: string | null; order?: number }>(exchange)
@@ -147,6 +204,23 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     return decorateUser(ctx, user)
   })
 
+  // R4 删除面：物理删除仅限已注销账号（deactivate 软删除先行，双保险防误删在职账号）
+  guarded('DELETE', '/api/iam/users/:id', 'iam.user.freeze', (exchange) => {
+    const id = exchange.params['id']!
+    const target = ctx.iam.users().get(id)
+    if (!target) {
+      exchange.fail(404, 'NOT_FOUND', `账号不存在：${id}`)
+      return
+    }
+    if (target.status !== 'deactivated') {
+      exchange.fail(400, 'BAD_REQUEST', `仅已注销账号可物理删除（当前状态 ${target.status}；请先执行 deactivate）`)
+      return
+    }
+    ctx.iam.deleteUser(id, manageActor(exchange))
+    changeLog(exchange, 'iam.user.delete', 'user', id, target.displayName, '物理删除（已注销账号）')
+    return { deleted: true }
+  })
+
   guarded('GET', '/api/iam/roles', 'iam.org.read', () => ({
     roles: ctx.iam.roles().all(),
     catalog: PermissionCatalog,
@@ -168,6 +242,15 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const role = ctx.iam.updateRole(exchange.params['id']!, input)
     changeLog(exchange, 'iam.role.update', 'role', role.id, role.name)
     return role
+  })
+
+  // R4 删除面：自定义角色删除（内置角色与仍被挂载角色由服务层护栏拒绝）
+  guarded('DELETE', '/api/iam/roles/:id', 'iam.role.write', (exchange) => {
+    const id = exchange.params['id']!
+    const role = ctx.iam.roles().get(id)
+    ctx.iam.deleteRole(id)
+    changeLog(exchange, 'iam.role.delete', 'role', id, role?.name ?? '', '')
+    return { deleted: true }
   })
 
   // -- 场景级授权（IAW 交接 6-1：角色 × 场景 ABAC） ------------------------------

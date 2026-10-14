@@ -457,6 +457,47 @@ SaaS 数据面网关（roadmap 第 9 步之二「连接器市场」执行缺口�
 - 验收：selftest 700/700（新增「连接器自动同步与全员名册」分节 16 项：到期判定/0=仅手动不巡检/
   不重复处理/名册契约/负责人链/PII 最小化/401/403/机器凭证拉取/审计留痕）；lint:manifests 75/75。
 
+## 三J、执行中枢与治理收口（本迭代，v1.8，2026-10-14）
+
+六大能力（Paperclip 视角）从「部分实现」补齐为整体闭环——Goal Alignment 与 Heartbeats 从零落地，
+Budget/Multi-Company/Org 三项缺口收口，交付路线图 R2-R12 全量：
+
+- **执行中枢 `plugin-exec-hub`**（新插件，目标四「干活中枢」）：
+  - **目标血缘（R8）**：`exec:goals`（支持父目标树 + 指标基线/目标/单位）→ `exec:projects` →
+    `exec:issues`；`goalAncestry` 写时物化，唤醒时上下文包装载「本任务服务于 → 目标/项目/前置」
+    （为什么而干）。
+  - **任务执行锁（E2）**：issue 行上三字段 CAS（`executionRunId/executionAgentKey/executionLockedAt`），
+    决策（domain 纯函数，64 组合穷举单测）与 CAS 护栏分层；run 级批量释放；僵尸锁超时强制回收
+    （`EXEC_LOCK_TIMEOUT_MS`，缺省 5 分钟）。
+  - **心跳唤醒（E3/R9）**：`exec:wakes` 队列（幂等键去重）+ 30s 心跳循环（`EXEC_HUB_TICK_MS`）：
+    预算前置 → 冻结检查 → Agent 机器主体权限校验 → P0 审批门禁 → proceed/coalesce/defer 三态裁决；
+    待办三源拉取（exec 任务/面板任务/事务流 Agent 步骤）；metrics-report 超 24h 自动催办；
+    心跳留痕入 Agent 健康度五档（healthy/stale/silent/frozen/offline）。
+  - **例行调度（E7）**：interval / 5 段 cron / webhook 三源；webhook 端点路径即凭证
+    （未登记/停用一律 404 fail-closed）。
+  - **Agent 工具（E5）**：`exec_wakeup_status` / `exec_claim` / `exec_complete` / `exec_lineage`，
+    Agent 会话内直接取锁交回，无需知晓执行中枢存在。
+- **R7 Agent 组织化**：agent schema 新增 `orgRole`（CEO/CTO/经理/工程师/分析师）/`rank`/
+  `managerId`（汇报线，自指/成环/悬空全部拒绝）/`heartbeatIntervalMinutes`；控制台组织页渲染
+  人 + Agent 双层视图。
+- **R10 预算深化**：预算主体扩展到 `agent:<id>`/`app:<id>`（与计量 subject 同口径）；
+  metrics-report 用量自动入账 usage 窗口（价格簿自动播种 0 成本规则 + 幂等键防重）；
+  **超额联动停用**——预算前置熔断时冻结 Agent（attrs 软态）并自动生成 `agent.unfreeze`
+  L4 解冻审批单（复用审批基建，天然带二次确认），审批执行即解冻。
+- **R3 通配语义**：`modelSlug:'*'` 显式通配命中任意模型（原文档字面量歧义收口）。
+- **R4 删除面**：自定义角色（内置/仍被挂载拒绝）、已注销账号、预算规则三条 DELETE 路由补齐。
+- **R11 多公司收口**：`/api/agents` `/api/apps` `/api/iam/orgs(/tree)` `/api/approvals` 四清单
+  按组织子树收敛（`*` 豁免；机器主体按归属 Agent 组织；显式 `?org=` 越界 403）；
+  审批单落 `orgId`（agent.* 类自动推导）。
+- **R12 职责分离复议落地**：`agent.online`（雇佣语义）恢复「提交人≠审批人」，其余类型维持
+  2026-09-15 放开决策。
+- **R2-B 模型目录管理面**：`#/finops` 模型目录卡（modelgw.read/admin 门控：登记/上下线/删除 +
+  渠道组 + 预算编辑含主体与联动冻结）；`modelgw.read` 补入 resource_admin。
+- 验收：selftest **1257/1257**（新增「执行中枢」分节 47 项：目标树成环拒绝/血缘物化/assign 自动
+  入队/CAS 取锁/二唤延迟队列/幂等键去重/done 收尾释放锁/P0 审批门禁闭环/webhook 404 fail-closed/
+  僵尸锁回收/R10 冻结-解冻全闭环/R3 通配熔断/R4 删除面/R11 收敛与越界 403）；exec-hub 纯决策层
+  单测 13 项（唤醒准入 64 组合穷举）；dom-smoke 14/15+1 跳过持平；lint 三件套 0 红。
+
 ## 三、目录结构（插件标准解剖）
 
 ```

@@ -5,6 +5,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
+import { scopedOrgFilterOf } from './iam.ts'
 
 export interface AppRouteDeps extends ConsoleRouteDeps {
   requestOrigin: (exchange: HttpExchange) => string | undefined
@@ -15,15 +16,21 @@ export interface AppRouteDeps extends ConsoleRouteDeps {
 export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
   const { http, guarded, body, changeLog, caller, requestOrigin, enrichTopology, appSsoGuard } = deps
   // -- App ----------------------------------------------------------------
-  guarded('GET', '/api/apps', 'app.read', () => ({
-    apps: ctx.resourceCore.list('app').map((app) => ({
-      ...app,
-      metrics: ctx.appRegistry.metrics(app.id),
-      availableTransitions: ctx.resourceCore.availableTransitions('app', app.id),
-    })),
-    schema: ctx.resourceCore.typeSpec('app')?.schema,
-    lifecycle: ctx.resourceCore.typeSpec('app')?.lifecycle,
-  }))
+  // R11 多公司收口：非 `*` 管理员按本组织子树过滤应用台账（与 /api/agents 同口径）
+  guarded('GET', '/api/apps', 'app.read', (exchange) => {
+    const orgFilter = scopedOrgFilterOf(ctx, caller, exchange)
+    return {
+      apps: ctx.resourceCore.list('app')
+        .filter((app) => (orgFilter ? orgFilter(app.orgId) : true))
+        .map((app) => ({
+          ...app,
+          metrics: ctx.appRegistry.metrics(app.id),
+          availableTransitions: ctx.resourceCore.availableTransitions('app', app.id),
+        })),
+      schema: ctx.resourceCore.typeSpec('app')?.schema,
+      lifecycle: ctx.resourceCore.typeSpec('app')?.lifecycle,
+    }
+  })
 
   // 开发者选择器数据源（注册表单下拉/搜索用）：挂在 app.write 下——能注册应用即可枚举
   // 在编用户的瘦字段（id/姓名/账号/部门/钉钉 unionId 绑定），不经 iam.user.read；须注册在 /api/apps/:id 之前（路由先匹配先中）

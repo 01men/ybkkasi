@@ -109,6 +109,12 @@ const COPY = {
     message: '请求的资源不存在或已被移除。请确认链接/编号无误；若从列表进入，可能已被他人删除，刷新后重试。',
     action: { label: '回到工作台', href: '#/dashboard' },
   },
+  CONFLICT: {
+    tone: 'warn',
+    title: '资源已被占用或状态冲突',
+    message: '目标已被他人占用/命名重复（如 webhook 路径已被占用）。请换一个标识后重试。',
+    action: null,
+  },
   INTERNAL: {
     tone: 'danger',
     title: '服务器内部错误',
