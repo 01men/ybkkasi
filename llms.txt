@@ -14,6 +14,7 @@ RongQi (ybkk-AIOS) is a self-hosted enterprise AI resource management platform: 
 - 流程编排（flow-core）：TF 编排 + 步骤状态机、模板库 + contextPack、SLA 与进度、甘特时间轴（`/api/flow/*`，`flow.*` 事件入总线与面板 SSE 扇出）
 - 数据要素域：数据集登记、四维质量分、血缘反向追溯、指标字典口径仲裁
 - 场景治理与协作：IAM 场景级授权（sceneCode，deny→allow→fail-closed）、审计证据锚点登记反查与场景维度时间线、通知中心持久化（since 增量 + 已读游标）
+- 执行中枢（plugin-exec-hub）：目标对齐（exec:goals 父目标树 + 指标三件套 → projects → issues，goalAncestry 写时物化）、30s 心跳循环（唤醒队列幂等键 + 治理前置链 + 待办三源拉取 + 健康度五档）、issue 执行锁 CAS（纯函数决策 64 组合穷举 + 僵尸锁回收）、例行调度（interval / 5 段 cron / webhook 路径即凭证）、exec_wakeup 四工具与五联动护栏（预算硬停 / 权限校验 / 审计留痕 / 密级注记 / P0 审批门禁）；Agent 组织化（orgRole/rank/managerId）与主体预算超额联动冻结 + L4 解冻审批
 - 平台工程加固：契约面 output.schema 强校验、审批执行能力令牌防冒充、事件总线持久化与重试/死信、平台自更新 pin/签名/回滚、连接器 ODD 声明块与 TOCTOU 执行侧快照校验、P95 尾延迟质量闸门与故障注入演练；入参校验收口（审批 decision/告警规则/应用指标/skill-storage 枚举）；Ed25519 签名基建平台级抽升与发布清单验签（防篡改）
 - 用量计量：schema v1 幂等管道（死信重放/消费幂等）、零价快照价格簿、三方对账、能力漂移检测、成本穿透报表（单位 DAU 成本）；事件保留策略默认 730 天（`USAGE_RETENTION_DAYS`，0=永久，附清除运维口）
 - FinOps 报告 v1（CFO 视图）：成本穿透（部门×模型交叉矩阵 + 上月环比 + Top 消耗主体）、空转检测 v1（近似口径、页面显式标注需人工复核）、「财务视图」SPA 页（#/finops）与一键 CSV 导出（Excel 友好 UTF-8 BOM）
@@ -55,4 +56,4 @@ RongQi (ybkk-AIOS) is a self-hosted enterprise AI resource management platform: 
 - 全部文件操作经 MCP 文件网关并按真实用户身份（X-On-Behalf-User）留痕；测试内 stub 均为进程内真实 HTTP 服务，不降级为 mock
 - 全中文单语产品（2026-10-13 起）：表现层（UI/CLI/通知/错误提示）一律中文，不维护英文版本；协议层例外——事件名/权限点/错误原因码/API 信封字段/环境变量名/浏览器存储键保留 ASCII 键（跨系统机器契约），逐键中文释义见 docs/协议键中文对照总表.md
 
-（更新日期：2026-10-13）
+（更新日期：2026-10-15）
