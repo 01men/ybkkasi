@@ -30,6 +30,31 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
     })
   }
 
+  /**
+   * Agent 写操作归属守卫（镜像 app 域 QA A-04 守卫；QA-20261014 生命周期测试实测发现缺失）：
+   * PATCH/删除/接入提示词/指标上报/状态流转此前仅校验 agent.write——本轮实测任意机器凭证
+   * （hermes-agent）可 200 改写他人 Agent（zcode-agent）名称，onboarding-prompt 带 rotate 还可
+   * 轮换他人凭证形成完全接管。现收敛为：平台管理员（'*'）、Agent owner（人类）、绑定本 Agent
+   * 的机器主体（refType=agent 自助通道）之外一律 403 并落 audit.authz.denied。
+   */
+  const assertAgentOwner = (exchange: HttpExchange, agentId: string): boolean => {
+    const info = caller(exchange)
+    if (info.permissions.includes('*')) return true
+    const agent = ctx.resourceCore.get('agent', agentId)
+    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    const isOwner = info.kind === 'human' && info.userId !== undefined && agent.ownerId === info.userId
+    const isBoundMachine = info.kind === 'machine' && info.refType === 'agent' && info.refId === agentId
+    if (isOwner || isBoundMachine) return true
+    ctx.platformBus.emit('audit.authz.denied', {
+      actorId: info.userId ?? info.principalId,
+      actorName: info.name,
+      point: `agent.write(owner:${agentId})`,
+      path: exchange.path,
+    })
+    exchange.fail(403, 'FORBIDDEN', `仅平台管理员与 Agent 负责人可变更「${agent.name}」（owner 校验，QA A-04 同款）`)
+    return false
+  }
+
   guarded('GET', '/api/agents', 'agent.read', (exchange) => {
     machineAudit(exchange, '-', 'Agent 台账')
     return {
@@ -244,6 +269,7 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
   })
 
   guarded('PATCH', '/api/agents/:id', 'agent.write', (exchange) => {
+    if (!assertAgentOwner(exchange, exchange.params['id']!)) return
     const input = body<{ name?: string; attrs?: Record<string, unknown> }>(exchange)
     const agent = ctx.resourceCore.update('agent', exchange.params['id']!, input)
     changeLog(exchange, 'agent.update', 'agent', agent.id, agent.name)
@@ -252,6 +278,7 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
 
   // Agent 接入提示词（与 app 同构）：rotate=true 轮换机器凭证并随提示词返回完整凭证（旧值立即失效）。
   guarded('POST', '/api/agents/:id/onboarding-prompt', 'agent.write', (exchange) => {
+    if (!assertAgentOwner(exchange, exchange.params['id']!)) return
     const { rotate } = body<{ rotate?: boolean }>(exchange)
     const id = exchange.params['id']!
     const result = ctx.agentRegistry.buildOnboardingPrompt(id, requestOrigin(exchange) ?? 'http://127.0.0.1:7300', { rotate: rotate === true })
@@ -261,6 +288,7 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
 
   // 运营数据提报（Agent 接入义务，与 AI 应用 metrics-report 同级）：dau 同日取最大、会话数累加、用户哈希去重并集
   guarded('POST', '/api/agents/:id/metrics-report', 'agent.write', (exchange) => {
+    if (!assertAgentOwner(exchange, exchange.params['id']!)) return
     const id = exchange.params['id']!
     const input = body<{ dau?: number; sessions?: number; userIds?: string[]; uniqueUsers?: number; date?: string }>(exchange)
     ctx.agentRegistry.reportUsage(id, input)
@@ -284,6 +312,7 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
 
   /** 删除 Agent：草稿（从未上线）或已归档可删；被未归档资源（如 AI 应用）引用时拒绝。 */
   guarded('DELETE', '/api/agents/:id', 'agent.write', (exchange) => {
+    if (!assertAgentOwner(exchange, exchange.params['id']!)) return
     const id = exchange.params['id']!
     const agent = ctx.resourceCore.get('agent', id)
     if (!agent) throw new Error(`Agent 不存在：${id}`)
@@ -300,6 +329,7 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
   })
 
   guarded('POST', '/api/agents/:id/transition', 'agent.approve', (exchange) => {
+    if (!assertAgentOwner(exchange, exchange.params['id']!)) return
     const { action, note } = body<{ action: string; note?: string }>(exchange)
     const info = caller(exchange)
     const id = exchange.params['id']!

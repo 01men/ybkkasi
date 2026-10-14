@@ -191,14 +191,20 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
         if (!definition) {
           return reply({ content: [{ type: 'text', text: `未知工具：${name}` }], isError: true })
         }
-        if (definition.permission && !info.permissions.includes('*') && !info.permissions.includes(definition.permission)) {
+        // 权限基线与 REST 工具桥对齐（QA-20261014 生命周期测试新发现）：REST 面 /api/tools/execute
+        // 有路由级 console.login 兜底，而 /mcp 此前对「未声明 permission 的工具」不做任何权限点校验，
+        // 36 个存量工具（含 audit_logs / authn_token_list / iam_user_list 等敏感读面）对任意有效
+        // 令牌（任意 scopes 的机器凭证）放行。现收敛：未声明 permission 的工具一律要求 console.login
+        // 基线；存量工具的逐一 permission 声明（最小权限映射）另立台账跟进。
+        const required = definition.permission ?? 'console.login'
+        if (!info.permissions.includes('*') && !info.permissions.includes(required)) {
           ctx.platformBus.emit('audit.authz.denied', {
             actorId: info.userId ?? info.principalId,
             actorName: info.name,
-            point: definition.permission,
+            point: required,
             path: '/mcp',
           })
-          return reply({ content: [{ type: 'text', text: `缺少权限点 ${definition.permission}（调用方 ${info.name}），调用被拒绝` }], isError: true })
+          return reply({ content: [{ type: 'text', text: `缺少权限点 ${required}（调用方 ${info.name}），调用被拒绝` }], isError: true })
         }
         const result = await ctx.tools.execute({ name, arguments: injectToolIdentity(name, args, info), principal: info })
         return reply({
