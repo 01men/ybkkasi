@@ -16,6 +16,9 @@ events:
   - name: workforce.permit.revoked
     mode: emit
     description: 工作授权撤销（停职/调岗/过期）
+  - name: workforce.gray.denied
+    mode: emit
+    description: 灰度关闭组织的工作路径拒绝事件（W7/D-② 组织级灰度：认领/续租/受控调用入口显式拒绝，surface=port/admission 区分收口面）
   - name: workforce.invocation.settled
     mode: emit
     description: 受控调用落账（含 denied/approval_required/outcome_unknown 全状态）

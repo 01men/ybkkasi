@@ -7,3 +7,5 @@ points:
   - mcp.service.offline
   - mcp.permgroup.write
   - mcp.invoke
+  # W 批次 W1（V11 根治）：MCP 工具可信风险登记审批面——登记/两级审批/重审清单/退场
+  - mcp.risk.admin

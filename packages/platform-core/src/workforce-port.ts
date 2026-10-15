@@ -52,6 +52,8 @@ export type WorkDenyCode =
   | 'ARTIFACT_SCOPE_DENIED'
   | 'RATE_LIMITED'
   | 'TOOL_UNKNOWN'
+  | 'RISK_UNREGISTERED'
+  | 'WORKFORCE_DISABLED'
   | 'POLICY_INTERNAL_ERROR'
 
 export const WORK_DENY_CODE_LABELS: Record<WorkDenyCode, string> = {
@@ -71,6 +73,8 @@ export const WORK_DENY_CODE_LABELS: Record<WorkDenyCode, string> = {
   ARTIFACT_SCOPE_DENIED: '文件范围越界（仅允许受控 artifact 上传/读取）',
   RATE_LIMITED: '命中可重试流控，请按服务端重试策略退避',
   TOOL_UNKNOWN: '工具句柄无法解析到已登记资源',
+  RISK_UNREGISTERED: '工具风险未登记生效，写能力须先经风险登记审批（V11）',
+  WORKFORCE_DISABLED: '数字员工域对本组织处于灰度关闭',
   POLICY_INTERNAL_ERROR: '工作策略执行异常（fail-closed）',
 }
 
@@ -103,7 +107,13 @@ export interface ResourceActionFacts {
   registryId: string
   /** 工具名 / 动作 ID / invoke / read|write|search… 由各网关语义决定。 */
   action: string
-  risk: 'read' | 'write' | 'admin'
+  /**
+   * W 批次 V11 根治：risk 取「可信风险登记生效值」；无生效登记时为 'unknown'
+   * （不再按 read 隐式开放、也不按 write 盲目保守初判）。
+   * 'unknown' 的裁决在工作策略端口：只读语境（清单句柄仅授 read / 只读约束）放行，
+   * 写语境一律 RISK_UNREGISTERED 拒绝——写能力必须先经「登记→审核→生效」。
+   */
+  risk: 'read' | 'write' | 'admin' | 'unknown'
 }
 
 /** 工作引用索引：允许由请求携带，仅作索引；授权事实一律服务端回查（§10.4）。 */

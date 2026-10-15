@@ -153,7 +153,12 @@ const mcpBackendStub = createServer(async (req, res) => {
   if (message.id === undefined || message.id === null) { res.writeHead(202, sessionHeaders); res.end(); return }
   const reply = (result) => json(200, { jsonrpc: '2.0', id: message.id, result }, sessionHeaders)
   if (message.method === 'initialize') return reply({ protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'qms-batch-drill-stub', version: '1.0.0' } })
-  if (message.method === 'tools/list') return reply({ tools: [{ name: 'qms_batch_read', description: 'stub qms_batch_read', inputSchema: { type: 'object' } }] })
+  // W1/V11：tools/list 含读（qms_batch_read）与写（qms_batch_export）两工具——远端清单无法自证风险，
+  // 经 syncTools 同步后两工具在网关侧一律落 riskLevel='unknown'（不再隐式映射 read）
+  if (message.method === 'tools/list') return reply({ tools: [
+    { name: 'qms_batch_read', description: 'stub qms_batch_read', inputSchema: { type: 'object' } },
+    { name: 'qms_batch_export', description: 'stub qms_batch_export（写：导出批次数据）', inputSchema: { type: 'object' } },
+  ] })
   if (message.method === 'tools/call') {
     const name = String(message.params?.name ?? '')
     const args = message.params?.arguments ?? {}
@@ -481,6 +486,67 @@ try {
   try { ctx.workforceEmployees.setStatus(adminCaller, employee.id, 'active', 'drill 收尾：复岗'); reactivated = ctx.workforceEmployees.get(employee.id).status === 'active' } catch { reactivated = false }
   check('A34', '复岗流转成功（suspended→active；被撤 permit 不随复岗恢复）', reactivated
     && ctx.workforceStore.permits.findWhere({ employeeId: employee.id }).every((p) => p.status === 'revoked'))
+
+  // ================================================================ S9 W1 风险登记闸门（V11 根治 · D-① 两级审批）
+  section('S9 W1 风险登记闸门：未登记写拒绝落账 + 登记→两级审批→按登记风险放行（V11 根治）')
+  // 放在 S8 之后的原因：workforce 身份解析恒取「最新生效任用」——若在中途创建第二任用，
+  // A31 的 claimB/句柄解析会被重投影到新清单。收尾段创建任用 v2 不影响既有 35 项断言。
+  // 工具同步：以远端 tools/list 为准刷新清单 → 全部工具 riskLevel 变 unknown（V11：远端清单不再隐式
+  // 映射 read）。A23 夹具在 createService 时已显式申报 riskLevel:'read'，闸门按显式申报值放行只读调用，
+  // 此前不受影响；同步后写工具的收敛路径即本节 A36/A37。
+  const synced = await ctx.mcpRegistry.syncTools(mcpService.id)
+  // 写授权夹具：非只读权限组（unknown 不得借它按 read 放行）+ 任用 v2 授 qms_batch_export（grant risk='write'）
+  ctx.mcpRegistry.createPermGroup({
+    name: `drill-qms-export-${RUN_TAG}`,
+    description: '导出工具权限组（W1 夹具：非只读语境）',
+    policies: { [mcpService.id]: { allowedTools: ['qms_batch_export'], constraints: {} } },
+    subjects: [{ type: 'agent', id: agentA.id, name: agentA.name }],
+  })
+  const grantsW = [{ kind: 'mcp', registryId: mcpService.id, actions: ['qms_batch_export'], risk: 'write', constraints: { factoryIds: ['JH-01'] } }]
+  const appointmentW = ctx.workforceAppointments.create({ employeeId: employee.id, position: '金华工厂质量分析员（数据导出）', orgId: org.id, dataClass: 'internal', effectiveFrom: new Date().toISOString(), grants: grantsW, approvedBy: adminUser.id, approvalRef: `drill-appr-w-${RUN_TAG}` })
+  const activatedW = await ctx.workforceAppointments.activate(adminCaller, appointmentW.id)
+  const issueW = ctx.execHub.createIssue({ orgId: org.id, title: '导出批次 Q-1024 检验数据（W1 风险登记演练）', assigneeAgentId: agentA.id, createdBy: adminUser.id })
+  const claimW = await ctx.workforceAdmission.claimWork(machineCaller, { issueId: issueW.id })
+  const exportHandle = claimW.ok === true ? claimW.tools.find((t) => t.kind === 'mcp' && t.action === 'qms_batch_export') : undefined
+  let exportDeny = { status: '', code: '' }
+  if (claimW.ok === true && exportHandle) {
+    // A36（W1 验收）：未登记写工具受控调用——闸门 facts.risk=unknown（无生效登记），
+    // 端口按句柄风险裁决：写句柄 → RISK_UNREGISTERED 拒绝（fail-closed，写能力必须先经登记审批）
+    const denyOutcome = await ctx.workforceInvocations.invoke(machineCaller, { permitId: claimW.permit.id, toolHandle: exportHandle.handle, stepKey: 'drill.w1.export_deny', arguments: { factoryId: 'JH-01' } })
+    exportDeny = { status: denyOutcome.status, code: denyOutcome.code ?? '' }
+  }
+  // 网关侧证据：invoke() 的 gate denied 分支照 V07 口径落 mcp:calls（status='denied' + 附领域拒绝码）
+  const deniedGatewayCall = ctx.mcpRegistry.calls().findOne((c) => c.serviceId === mcpService.id && c.tool === 'qms_batch_export' && c.status === 'denied')
+  check('A36', '未登记写工具受控调用被拒且网关落账（sync 后工具=unknown；RISK_UNREGISTERED 附码落 mcp:calls）',
+    synced.tools.length === 2 && synced.tools.every((t) => t.riskLevel === 'unknown')
+      && activatedW?.status === 'effective' && claimW.ok === true && Boolean(exportHandle)
+      && exportDeny.status === 'denied'
+      && Boolean(deniedGatewayCall) && deniedGatewayCall.ok === false && deniedGatewayCall.code === 'RISK_UNREGISTERED',
+    `synced=${synced.tools.map((t) => `${t.name}:${t.riskLevel}`).join(',')} activate=${activatedW?.status} claim=${JSON.stringify(claimW.ok ? {} : { code: claimW.code }).slice(0, 120)} outcome=${exportDeny.status}/${exportDeny.code || '（workforce 层不透传网关码，详见 mcp:calls）'} gateway=${deniedGatewayCall ? `${deniedGatewayCall.status}/${deniedGatewayCall.code}` : '未落账'}`)
+
+  // A37（W1 验收）：登记→domain 审→security 审→effective（D-① 两级审批，进程内直调 mcpToolRisks）
+  // → 闸门 facts.risk 取登记生效值 write → 端口写句柄匹配放行 → 原权限组 → real 传输完成。
+  const riskActor = { id: adminUser.id, name: '质量主管' }
+  const riskRecord = ctx.mcpToolRisks.submit({ serviceId: mcpService.id, toolName: 'qms_batch_export', risk: 'write', reason: `drill：质检批次数据导出为受控写能力（tag=${RUN_TAG}）`, actor: riskActor })
+  const domainOk = ctx.mcpToolRisks.decide(riskRecord.id, { decision: 'approve', level: 'domain', opinion: 'drill：领域审批通过', actor: riskActor })
+  const securityOk = ctx.mcpToolRisks.decide(riskRecord.id, { decision: 'approve', level: 'security', opinion: 'drill：安全加签通过', actor: riskActor })
+  const exportOk = claimW.ok === true && exportHandle
+    ? await ctx.workforceInvocations.invoke(machineCaller, { permitId: claimW.permit.id, toolHandle: exportHandle.handle, stepKey: 'drill.w1.export_ok', arguments: { factoryId: 'JH-01' } })
+    : { status: 'skipped', invocationId: '' }
+  const okGatewayCall = ctx.mcpRegistry.calls().findOne((c) => c.serviceId === mcpService.id && c.tool === 'qms_batch_export' && c.ok === true)
+  check('A37', '登记+两级审批生效后按登记风险放行（pending_domain→pending_security→effective；受控调用 completed）',
+    riskRecord.status === 'pending_domain' && domainOk.status === 'pending_security' && securityOk.status === 'effective'
+      && ctx.mcpToolRisks.effectiveRisk(mcpService.id, 'qms_batch_export') === 'write'
+      && exportOk.status === 'completed' && mcpBackendCalls.some((c) => c.name === 'qms_batch_export') && Boolean(okGatewayCall),
+    `flow=${riskRecord.status}→${domainOk.status}→${securityOk.status} effectiveRisk=${ctx.mcpToolRisks.effectiveRisk(mcpService.id, 'qms_batch_export')} outcome=${exportOk.status} stub=${mcpBackendCalls.some((c) => c.name === 'qms_batch_export')} gatewayOk=${Boolean(okGatewayCall)}`)
+  evidence.riskGate = {
+    syncedToolsUnknown: synced.tools.every((t) => t.riskLevel === 'unknown'),
+    denyOutcome: exportDeny.status,
+    deniedCallLogged: Boolean(deniedGatewayCall) && deniedGatewayCall.code === 'RISK_UNREGISTERED',
+    registrationId: riskRecord.id,
+    registrationFlow: `${riskRecord.status}→${domainOk.status}→${securityOk.status}`,
+    exportCompleted: exportOk.status === 'completed',
+  }
 } catch (error) {
   fatal = error
   console.error(`\x1b[31m[drill][fatal] ${error instanceof Error ? error.stack?.slice(0, 800) ?? error.message : String(error)}\x1b[0m`)
@@ -511,6 +577,7 @@ console.log(JSON.stringify({
   acceptance: evidence.acceptance ?? null,
   rejection: evidence.rejection ?? null,
   usageLinks: evidence.usageLinkCount ?? 0,
+  riskGate: evidence.riskGate ?? null,
   registeredDefects: defects.map((d) => `${d.id} ${d.where}`),
 }, null, 2))
 

@@ -9,7 +9,8 @@ endpoints:
   - POST /api/mcp/services/:id/verify|deploy|rollback|offline|health · POST /api/mcp/services/:id/final-review（两级审批终审）
   - GET /api/mcp/services/:id/metrics · GET /api/mcp/calls
   - GET/POST /api/mcp/perm-groups · PATCH/DELETE /api/mcp/perm-groups/:id
-  - POST /api/mcp/invoke（网关统一鉴权/限流/审计）
+  - POST /api/mcp/invoke（网关统一鉴权/限流/审计；body.work 仅 permitId/runId/stepKey 索引透传）
+  - POST/GET /api/mcp/risk-registry · POST /api/mcp/risk-registry/:id/decide|retire · GET /api/mcp/risk-registry/review-list（W1/V11 工具风险登记：两级审批+全量重审，mcp.risk.admin）
 tools:
   - mcp_service_list
   - mcp_deploy
@@ -21,3 +22,6 @@ services:
   - key: mcpRegistry
     access: ctx.mcpRegistry
     description: 服务注册/版本/灰度/回滚 + 健康探活熔断 + 权限组 + 调用网关 + 监控
+  - key: mcpToolRisks
+    access: ctx.mcpToolRisks
+    description: W1/V11 工具可信风险登记（submit/decide 两级审批/list/reviewList 重审清单/retire 退场；effectiveRisk 为网关闸门唯一风险来源）

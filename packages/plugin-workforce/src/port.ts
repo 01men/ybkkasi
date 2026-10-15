@@ -18,6 +18,7 @@ import {
   type WorkforceCapabilities,
   type WorkforceIdentityResolver,
   type WorkforceStore,
+  type WorkforceGrayConfig,
 } from './contract.ts'
 import type {
   ManagedEmployeeRef,
@@ -29,7 +30,7 @@ import type {
 } from '../../platform-core/src/workforce-port.ts'
 import type { ResourceExecutionPolicyPort } from '../../platform-core/src/workforce-port.ts'
 
-export function createWorkforcePolicyPort(ctx: Context): ResourceExecutionPolicyPort {
+export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGrayConfig = {}): ResourceExecutionPolicyPort {
   // -- 依赖（结构化探测；端口在 workforce 装配完成后注册，依赖均已就绪） ----------------
 
   const store = (): WorkforceStore => {
@@ -117,6 +118,26 @@ export function createWorkforcePolicyPort(ctx: Context): ResourceExecutionPolicy
     if (!resolution) {
       return { allow: false, code: 'EMPLOYEE_NOT_ACTIVE', message: '非受管数字员工或绑定缺失' }
     }
+    // 1.5 灰度开关（W 批次 W7 契约，D-② 组织级）：关闭组织显式拒绝（WORKFORCE_DISABLED），
+    //     绝不静默回落 legacy——gateManagedWork 会把 denied 交回网关落账（V29 同口径：拒绝并可观测）
+    if ((grayConfig.grayMode ?? 'off') === 'allowlist'
+      && !(grayConfig.enabledOrgs ?? []).includes(resolution.appointment.orgId)) {
+      try {
+        ctx.platformBus?.emit('workforce.gray.denied', {
+          orgId: resolution.appointment.orgId,
+          employeeId: resolution.employee.id,
+          surface: 'port',
+          at: new Date().toISOString(),
+        })
+      } catch {
+        // platformBus 未注入当前 fiber 时跳过通知（拒绝本身不受影响）
+      }
+      return {
+        allow: false,
+        code: 'WORKFORCE_DISABLED',
+        message: `数字员工域对组织 ${resolution.appointment.orgId} 处于灰度关闭（仅白名单组织开放）`,
+      }
+    }
     if (resolution.employee.status !== 'active') {
       return { allow: false, code: 'EMPLOYEE_NOT_ACTIVE', message: '数字员工不在岗（停职或已离岗）' }
     }
@@ -151,7 +172,18 @@ export function createWorkforcePolicyPort(ctx: Context): ResourceExecutionPolicy
       return { allow: false, code: 'TOOL_NOT_GRANTED', message: '工具未列入本任用能力清单' }
     }
     // 5. 风险交集：facts 为写/admin 而清单只授 read → 拒绝（附录 D.5：不信任自报风险）
-    if ((query.facts.risk === 'write' || query.facts.risk === 'admin') && tool.risk === 'read') {
+    //    W 批次 V11 根治（契约冻结 2026-10-15）：facts.risk='unknown'（网关侧无生效风险登记）时——
+    //    清单句柄仅授 read → 按只读语境放行（网关只读约束兜底，残余风险由重审清单收敛）；
+    //    句柄授写/admin → RISK_UNREGISTERED 拒绝：写能力必须先经「登记→审核→生效」。
+    if (query.facts.risk === 'unknown') {
+      if (tool.risk !== 'read') {
+        return {
+          allow: false,
+          code: 'RISK_UNREGISTERED',
+          message: '工具风险未登记生效，写能力须先经 MCP 风险登记审批（V11）',
+        }
+      }
+    } else if ((query.facts.risk === 'write' || query.facts.risk === 'admin') && tool.risk === 'read') {
       return { allow: false, code: 'ARGUMENT_SCOPE_DENIED', message: '该动作为写/管理风险，超出本句柄的只读授权' }
     }
     // 6. 步骤冲突防御（纵深防御：主校验在 invocation-service 的唯一约束）

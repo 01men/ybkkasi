@@ -12,6 +12,7 @@ endpoints:
   - POST /api/workforce/artifacts（workforce.invoke；受控上传：内容经 base64 入服务端 staging，禁平台本地路径）· GET /api/workforce/artifacts/:id（workforce.invoke）
   - POST /api/workforce/deliverables（workforce.invoke；结构化交付→任务入 review）· GET /api/workforce/deliverables?runId=（workforce.invoke）
   - POST /api/workforce/acceptances（workforce.accept；真人验收/退回：accepted→done，rejected→退回并保留全部调用事实）
+  - POST /api/workforce/admin/employees/status-batch（workforce.admin；批量停职/复岗：逐员工独立事务联动撤 permit 与租约，部分失败不整批回滚）· GET /api/workforce/admin/employees/:id/audit（workforce.admin；任用审计穿透报表：员工/绑定/任用+授权+能力清单/permit/调用/交付一次聚合，跨组织）· GET /api/workforce/admin/invocations?employeeId=&runId=&status=&limit=（workforce.admin；跨组织调用账本穿透查询，createdAt 倒序）· POST /api/workforce/admin/maintenance/run（workforce.admin；台账巡检手动触发：过期 permit 落账+终态 run 盘点封存不删行）
 tools:
   - workforce_claim
   - workforce_invoke

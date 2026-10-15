@@ -20,11 +20,15 @@ import type {
   RunLeaseRecord,
   WorkforceAdmission,
   WorkforceCapabilities,
+  WorkforceGrayConfig,
   WorkforceIdentityResolver,
   WorkforcePermits,
   WorkforceStore,
 } from './contract.ts'
 import { appointmentInEffect } from './domain.ts'
+// WorkforceError 为值导入（领域错误类）：本文件全部拒绝路径（灰度关闭/服务未就绪/任用失效/所有权）共用。
+// 此前遗漏该导入为潜伏缺陷——未触发拒绝路径时不暴露，灰度收口（W7）首次踩中并修复。
+import { WorkforceError } from './contract.ts'
 import type { WorkCallerRef, WorkDenyCode, WorkExecutionContext } from '../../platform-core/src/workforce-port.ts'
 
 /** exec-hub 员工工作集成结构化探针（组3 additive：ctx.execHub.claimForEmployee）。 */
@@ -43,8 +47,12 @@ function probeExecHub(ctx: Context): ExecHubProbe {
 export class AdmissionService extends Service implements WorkforceAdmission {
   static readonly provide = 'workforceAdmission'
 
-  constructor(ctx: Context) {
+  /** 灰度开关（W7 契约 D-② 组织级）：index.ts 装配传入全量 config，缺省 {}＝off 全开（向后兼容）。 */
+  private readonly grayConfig: WorkforceGrayConfig
+
+  constructor(ctx: Context, config: WorkforceGrayConfig = {}) {
     super(ctx, 'workforceAdmission')
+    this.grayConfig = config
   }
 
   // -- 依赖 -------------------------------------------------------------
@@ -100,6 +108,37 @@ export class AdmissionService extends Service implements WorkforceAdmission {
     )
   }
 
+  // -- 灰度开关（W7 契约 D-②，与 port.authorizeWorkAction 同口径） -----------------------
+
+  /**
+   * 灰度拒绝判定：allowlist 模式且 orgId 不在名单 → true。off 模式（默认）全组织开放，
+   * 等价一期行为。查询面（拉取 work-items、状态查询）不拦——观测面保持开放。
+   */
+  private grayDenied(orgId: string): boolean {
+    return (this.grayConfig.grayMode ?? 'off') === 'allowlist'
+      && !(this.grayConfig.enabledOrgs ?? []).includes(orgId)
+  }
+
+  /**
+   * 灰度关闭组织的显式拒绝（拒绝语义＝显式拒绝而非静默回落 legacy，V29 同口径：拒绝并可观测）：
+   * emit workforce.gray.denied（surface:'admission'，payload 对齐 port 侧）后抛
+   * WORKFORCE_DISABLED（403）。认领/续租是新工作路径入口，此处收口在确认/延长之前。
+   */
+  private assertGrayOpen(orgId: string, employeeId: string): void {
+    if (!this.grayDenied(orgId)) return
+    try {
+      this.emit('workforce.gray.denied', {
+        orgId,
+        employeeId,
+        surface: 'admission',
+        at: new Date().toISOString(),
+      })
+    } catch {
+      // 通知失败不影响拒绝本身（拒绝先于可观测，fail-closed）
+    }
+    throw new WorkforceError('WORKFORCE_DISABLED', `数字员工域对组织 ${orgId} 处于灰度关闭（仅白名单组织开放）`, 403)
+  }
+
   // -- 认领 -------------------------------------------------------------
 
   async claimWork(caller: WorkCallerRef, input: ClaimInput): Promise<ClaimOutcome> {
@@ -108,14 +147,17 @@ export class AdmissionService extends Service implements WorkforceAdmission {
     if (!resolution) {
       return { ok: false, code: 'EMPLOYEE_NOT_ACTIVE', message: '非受管数字员工或绑定缺失' }
     }
-    // 2. 任用生效
+    // 2. 灰度开关（W7 契约 D-②）：关闭组织在确认前显式拒绝——认领＝幂等确认已分配租约，
+    //    灰度拒绝发生在确认之前（新工作路径入口收口，payload/语义与 port 侧对齐）
+    this.assertGrayOpen(resolution.appointment.orgId, resolution.employee.id)
+    // 3. 任用生效
     try {
       this.assertAppointmentEffective(resolution.appointment)
     } catch (error) {
       if (error instanceof WorkforceError) return { ok: false, code: error.code, message: error.message }
       throw error
     }
-    // 3. 能力清单（active 复用，否则按生效授权构建——构建含 skill 版本锁定探针，失败即认领失败）
+    // 4. 能力清单（active 复用，否则按生效授权构建——构建含 skill 版本锁定探针，失败即认领失败）
     let manifest: ManifestRecord
     try {
       manifest = this.capabilities.activeForAppointment(resolution.appointment.id)
@@ -123,7 +165,7 @@ export class AdmissionService extends Service implements WorkforceAdmission {
     } catch (error) {
       return { ok: false, code: 'APPOINTMENT_NOT_EFFECTIVE', message: `能力清单构建失败：${error instanceof Error ? error.message : String(error)}` }
     }
-    // 4. exec-hub 集成（结构化探测；缺席＝工作路径不可用，不静默降级）
+    // 5. exec-hub 集成（结构化探测；缺席＝工作路径不可用，不静默降级）
     const hub = probeExecHub(this.ctx)
     if (typeof hub.claimForEmployee !== 'function') {
       return { ok: false, code: 'WORKFORCE_NOT_READY', message: '执行中枢未提供员工工作集成（execHub.claimForEmployee 缺席），工作路径暂不可用' }
@@ -144,7 +186,7 @@ export class AdmissionService extends Service implements WorkforceAdmission {
     if (!claim.ok) {
       return this.mapClaimFailure(claim)
     }
-    // 5. permit 幂等：该 run 已有本员工 active 且未过期的 permit → 直接复用，不重复签发
+    // 6. permit 幂等：该 run 已有本员工 active 且未过期的 permit → 直接复用，不重复签发
     const existing = this.store.permits.findWhere({ runId: claim.runId }).find((permit) =>
       permit.status === 'active'
       && permit.employeeId === resolution.employee.id
@@ -223,6 +265,10 @@ export class AdmissionService extends Service implements WorkforceAdmission {
     // D3 修复：verifyPermit 返回 Promise，必须 await 取值——此前 permit.runId 为 undefined，
     // 续租全路径被 exec-hub「参数不足」守卫拒绝（恒 LEASE_STALE）
     const permit = await this.verifyPermit(caller, permitId, { requireRun: true })
+    // 灰度收口（W7 契约 D-②，与认领/port 同口径）：关闭组织不得续租延长工作——
+    // orgId 从 permit 绑定的任用回查（不依赖 identity 解析窗口，任用非生效时同样可判）
+    const appointment = this.store.appointments.get(permit.appointmentId)
+    if (appointment) this.assertGrayOpen(appointment.orgId, permit.employeeId)
     const hub = probeExecHub(this.ctx)
     if (typeof hub.renewLease !== 'function') {
       return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: '执行中枢未提供租约续期能力（execHub.renewLease 缺席）' }

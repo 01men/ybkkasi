@@ -15,16 +15,22 @@ import {
   type WorkCallerRef, type WorkDenyCode, type WorkExecutionContext, type WorkRefIndex, type WorkforcePolicyRegistry,
 } from '../../platform-core/src/index.ts'
 import * as mcpTools from './tools.ts'
+import { McpToolRiskRegistry } from './risk-registry.ts'
 
 // ---------------------------------------------------------------------------
 // 数据模型
 // ---------------------------------------------------------------------------
 
+/**
+ * 工具风险申报值。W 批次 W1（V11 根治）扩 'unknown'：远端 tools/list 同步的工具无法自证风险，
+ * 一律落 'unknown'（不再隐式映射 read）——'unknown' 的裁决在闸门与工作策略端口（只读语境放行、
+ * 写语境 RISK_UNREGISTERED 拒绝），写能力必须先经风险登记审批（risk-registry.ts）。
+ */
 export interface McpToolSpec {
   name: string
   description: string
   inputSchema: Record<string, unknown>
-  riskLevel: 'read' | 'write' | 'admin'
+  riskLevel: 'read' | 'write' | 'admin' | 'unknown'
 }
 
 export interface McpVersion {
@@ -253,6 +259,8 @@ export class McpService extends Service {
   private rateBuckets = new Map<string, number[]>()
   /** 远端 streamable HTTP 会话缓存：endpoint → { sessionId（'' 表示无状态服务）, 过期时间 }。 */
   private mcpSessions = new Map<string, { sessionId: string; expiresAt: number }>()
+  /** 风险登记服务引用（同插件 apply() 直连装配；独立单测宿主缺席=无生效登记口径）。 */
+  private riskRegistryRef: McpToolRiskRegistry | undefined
 
   constructor(ctx: Context) {
     super(ctx, 'mcpRegistry')
@@ -276,6 +284,20 @@ export class McpService extends Service {
 
   calls(): Collection<McpCallRecord> {
     return this.ctx.opsStorage.collection<McpCallRecord>('mcp:calls')
+  }
+
+  /**
+   * 风险登记服务取用（W1/V11）。console 的 inject 清单未含 mcpToolRisks——cordis 严格注入下
+   * 跨 fiber 访问未声明键会被拦（cannot get property without inject），故 REST 面统一经本方法
+   * 结构化取用（同插件 apply() 直连，不新增 console 依赖声明）；网关 invoke() 亦走同一引用。
+   */
+  riskRegistry(): McpToolRiskRegistry | undefined {
+    return this.riskRegistryRef
+  }
+
+  /** apply() 装配时直连风险登记服务（同插件内无循环依赖：登记服务反向只读 services() 集合）。 */
+  attachRiskRegistry(registry: McpToolRiskRegistry): void {
+    this.riskRegistryRef = registry
   }
 
   // -- 注册与部署 ---------------------------------------------------------
@@ -354,7 +376,9 @@ export class McpService extends Service {
         inputSchema: tool.inputSchema && typeof tool.inputSchema === 'object' && !Array.isArray(tool.inputSchema)
           ? tool.inputSchema as Record<string, unknown>
           : { type: 'object', properties: {} },
-        riskLevel: 'read' as const,
+        // V11 根治核心：远端 tools/list 不再隐式映射 read——远端清单无法自证风险，
+        // 一律 'unknown' 入账，写能力须经风险登记（mcpToolRisks）审批生效后放行。
+        riskLevel: 'unknown' as const,
       }))
       .filter((tool: McpToolSpec) => tool.name)
   }
@@ -748,7 +772,10 @@ export class McpService extends Service {
     for (const policy of grants) {
       const allowed = policy.allowedTools === '*' || policy.allowedTools.includes(toolName)
       if (!allowed) continue
-      if (policy.constraints.readOnly && tool.riskLevel !== 'read') {
+      // W1/V11 只读约束口径（与工作策略端口同判）：只读语境拦截 write/admin；
+      // unknown 按只读语境放行（未登记工具在只读语境下视为 read——写能力已被写语境拒绝面兜住，
+      // 残余风险由重审清单 reviewList 收敛，不再「未知即拒」误伤只读消费）。
+      if (policy.constraints.readOnly && (tool.riskLevel === 'write' || tool.riskLevel === 'admin')) {
         return { ok: false, reason: `权限组约束为只读模式，工具 ${toolName}（${tool.riskLevel}）被拒绝` }
       }
       return { ok: true, readOnly: Boolean(policy.constraints.readOnly) }
@@ -774,9 +801,14 @@ export class McpService extends Service {
     // 授权事实（permit/租约/能力清单/参数范围）一律由 workforce 侧服务端回查。
     const callerRef = workCallerRefFromInvokeCaller(caller)
     const toolSpec = service.tools.find((item) => item.name === toolName)
-    // 风险初判：按工具登记风险；未登记/拿不准按 'write' 保守处理（V11：未知风险不按 read 放行）。
-    // authorize() 之后的最终 readOnly 与初判不符且 gate 已放行时无需重跑（一期口径）。
-    const gateRisk: 'read' | 'write' | 'admin' = toolSpec?.riskLevel === 'read' ? 'read' : toolSpec?.riskLevel === 'admin' ? 'admin' : 'write'
+    // W1/V11 根治：闸门风险一律取「可信风险登记生效值」（effectiveRisk）；
+    // 无生效登记时——工具清单显式申报了具体风险（read/write/admin）→ 按申报值（存量显式声明面不回退）；
+    // 未申报/申报 unknown → 'unknown'（不再隐式映射 read）。'unknown' 的裁决：
+    //   受管链在工作策略端口（清单句柄仅授 read → 只读语境放行；句柄授写/admin → RISK_UNREGISTERED 拒绝）；
+    //   legacy 链在本网关只读语境（见下方 authorize 之后的显式拒绝路径）。
+    const registeredRisk = this.riskRegistryRef?.effectiveRisk(serviceId, toolName)
+    const gateRisk: 'read' | 'write' | 'admin' | 'unknown' = registeredRisk
+      ?? (toolSpec?.riskLevel && toolSpec.riskLevel !== 'unknown' ? toolSpec.riskLevel : 'unknown')
     const gate = await gateManagedWork(workforcePolicyOf(this.ctx), callerRef, {
       facts: { kind: 'mcp', registryId: serviceId, action: toolName, risk: gateRisk },
       ...(workRef ? { ref: workRef } : {}),
@@ -823,6 +855,20 @@ export class McpService extends Service {
     if (!auth.ok) {
       this.recordCall(service, toolName, caller, { ok: false, status: 'denied', latencyMs: Date.now() - started, version: service.currentVersion, error: auth.reason }, workRefForRecord)
       return { ok: false, status: 'denied', latencyMs: Date.now() - started, version: service.currentVersion, error: auth.reason }
+    }
+
+    // W1/V11 新增拒绝路径：legacy 链上的 unknown 工具必须处于只读语境（权限组 readOnly 约束）才可放行；
+    // 非只读语境一律 RISK_UNREGISTERED 拒绝——写能力必须先经风险登记审批（mcpToolRisks 登记生效后
+    // gateRisk 取登记值，本路径自然不再触发）。受管链无需重复裁决：port 侧已按清单句柄风险判定
+    // （read 句柄放行=只读语境；写/admin 句柄已在上方 gate denied 分支以 RISK_UNREGISTERED 拒绝落账）。
+    if (gate.mode !== 'managed' && gateRisk === 'unknown' && !auth.readOnly) {
+      const message = `工具 ${toolName} 风险未登记生效：${WORK_DENY_CODE_LABELS.RISK_UNREGISTERED}`
+      const latencyMs = Date.now() - started
+      // 拒绝同样落调用记录（V07 口径：拒绝是事实，按 status='denied' 留存并附领域拒绝码）
+      this.recordCall(service, toolName, caller, {
+        ok: false, status: 'denied', latencyMs, version: service.currentVersion, error: message, code: 'RISK_UNREGISTERED',
+      }, workRefForRecord)
+      return { ok: false, status: 'denied', latencyMs, version: service.currentVersion, error: message, code: 'RISK_UNREGISTERED' }
     }
 
     // 灰度路由：未命中灰度比例的调用走稳定版本
@@ -1167,6 +1213,8 @@ function workCallerRefFromInvokeCaller(caller: InvokeCaller): WorkCallerRef {
 declare module '@deepseek-ai/cordis' {
   interface Context {
     mcpRegistry: McpService
+    /** W 批次 W1（V11 根治）：MCP 工具可信风险登记（登记→两级审批→生效→重审→退场）。 */
+    mcpToolRisks: McpToolRiskRegistry
   }
 }
 
@@ -1175,6 +1223,9 @@ export const inject = ['opsStorage', 'platformBus', 'iam', 'audit', 'usage', 'wo
 
 export function apply(ctx: Context) {
   const registry = new McpService(ctx)
+  // W 批次 W1（V11 根治）：工具风险登记服务与网关同批装配并直连（invoke 闸门与 console REST 面
+  // 经 mcpRegistry.riskRegistry() 取用；ctx.mcpToolRisks 键仍由 declare module 供宿主/根上下文使用）
+  registry.attachRiskRegistry(new McpToolRiskRegistry(ctx))
   ctx.plugin(mcpTools)
   // L4 审批执行器：mcp.offline 审批通过后自动执行下线
   ctx.effect(() => ctx.audit.registerExecutor('mcp.offline', async (payload) => {

@@ -23,6 +23,7 @@ import {
   type WorkforceInvocations,
   type WorkforceStore,
 } from './contract.ts'
+import type { MaintenanceRunResult } from './maintenance-service.ts'
 
 interface WorkforceServices {
   store: WorkforceStore
@@ -140,9 +141,9 @@ export function registerWorkforceRoutes(ctx: Context): void {
 
   gate.guarded('GET', '/api/workforce/employees', 'workforce.read', (exchange) => {
     const svc = services(ctx)
-    const url = new URL(exchange.request.url, 'http://localhost')
-    const orgId = url.searchParams.get('orgId') ?? undefined
-    const status = url.searchParams.get('status') ?? undefined
+    // 查询串取 exchange.query（HttpExchange 无 request 字段——W 批次修复存量缺陷，原 exchange.request.url 运行时必炸）
+    const orgId = exchange.query.get('orgId') ?? undefined
+    const status = exchange.query.get('status') ?? undefined
     const records = svc.employees.list({
       ...(orgId ? { orgId } : {}),
       ...(status ? { status: status as EmployeeStatus } : {}),
@@ -204,9 +205,8 @@ export function registerWorkforceRoutes(ctx: Context): void {
 
   gate.guarded('GET', '/api/workforce/appointments', 'workforce.read', (exchange) => {
     const svc = services(ctx)
-    const url = new URL(exchange.request.url, 'http://localhost')
-    const employeeId = url.searchParams.get('employeeId') ?? undefined
-    const status = url.searchParams.get('status') ?? undefined
+    const employeeId = exchange.query.get('employeeId') ?? undefined
+    const status = exchange.query.get('status') ?? undefined
     return svc.appointments.list({
       ...(employeeId ? { employeeId } : {}),
       ...(status ? { status: status as 'preparing' | 'effective' | 'revoking' | 'revoked' | 'failed' } : {}),
@@ -338,8 +338,7 @@ export function registerWorkforceRoutes(ctx: Context): void {
 
   gate.guarded('GET', '/api/workforce/invocations', 'workforce.invoke', async (exchange) => {
     const svc = services(ctx)
-    const url = new URL(exchange.request.url, 'http://localhost')
-    const runId = url.searchParams.get('runId') ?? ''
+    const runId = exchange.query.get('runId') ?? ''
     if (!runId) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '缺少 runId 查询参数')
     return svc.invocations.listByRun(callerRefOf(gate, exchange), runId)
   })
@@ -382,8 +381,7 @@ export function registerWorkforceRoutes(ctx: Context): void {
 
   gate.guarded('GET', '/api/workforce/deliverables', 'workforce.invoke', async (exchange) => {
     const svc = services(ctx)
-    const url = new URL(exchange.request.url, 'http://localhost')
-    const runId = url.searchParams.get('runId') ?? ''
+    const runId = exchange.query.get('runId') ?? ''
     if (!runId) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '缺少 runId 查询参数')
     return svc.delivery.listByRun(callerRefOf(gate, exchange), runId)
   })
@@ -404,5 +402,133 @@ export function registerWorkforceRoutes(ctx: Context): void {
     })
     gate.changeLog(exchange, 'workforce.acceptance.decide', 'deliverable', record.id, `${decision}（${record.decisionReason}）`)
     return record
+  })
+
+  // -- 运维面（workforce.admin，W5 决策 D-③ three-in-one 最小集） ---------------------------
+  // 本段是 workforce.admin 权限点的代码落点（此前仅清单/目录声明，contract-lint 报 perm_unused
+  // 预留告警；此处 guarded 第三参字面量即销账依据——routeRe 只认字面量引用）。
+  // 跨组织口径：admin 运维面直接读 store 表做穿透查询，不走 invocation-service 的 assertReadable
+  // （org 隔离是员工工作面的口径）——权限点即边界。
+
+  /** audit/invocations 查询的公共 limit 口径：默认 50，上限 500（穿透查询防全量拖库）。 */
+  function readLimit(query: URLSearchParams): number {
+    const raw = Number(query.get('limit') ?? 50)
+    return Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), 500) : 50
+  }
+
+  gate.guarded('POST', '/api/workforce/admin/employees/status-batch', 'workforce.admin', async (exchange) => {
+    const svc = services(ctx)
+    const body = readBody(exchange)
+    const rawIds = Array.isArray(body['employeeIds']) ? body['employeeIds'].map((item) => String(item).trim()) : []
+    const employeeIds = [...new Set(rawIds.filter((item) => item !== ''))]
+    if (employeeIds.length === 0) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', 'employeeIds 必须为非空员工 ID 数组')
+    if (employeeIds.length > 200) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', 'employeeIds 单批上限 200（逐员工撤权联动，防止超长批次）')
+    const status = String(body['status'] ?? '')
+    if (status !== 'suspended' && status !== 'active') {
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `批量状态只允许 suspended（停职）/ active（复岗）：${status || '（空）'}`)
+    }
+    const reason = String(body['reason'] ?? '').trim()
+    if (reason === '') throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '批量停职/复岗必须登记 reason（审计与解冻依据）')
+    const caller = callerRefOf(gate, exchange)
+    const now = new Date().toISOString()
+    const results: Array<{ employeeId: string; ok: boolean; error?: string; revokedPermits?: number; releasedRuns?: string[] }> = []
+    // 逐员工独立事务（不整批回滚）：setStatus 内部「撤 permit→释放租约→状态落库」是单员工
+    // 完整 fail-closed 闭环（employee-service.ts 一字不改）；部分失败如实呈现在 results，
+    // 响应即实体现实况，运维按条补办。
+    for (const employeeId of employeeIds) {
+      const beforeActive = svc.store.permits.findWhere({ employeeId, status: 'active' })
+      try {
+        await svc.employees.setStatus(caller, employeeId, status, reason)
+        const afterStatus = new Map(svc.store.permits.findWhere({ employeeId }).map((permit) => [permit.id, permit.status]))
+        // releasedRuns：停职时取「撤前 active permit 的 run，且撤后该 run 已无有效 permit」；
+        // 复岗不释放租约（恒空）。租约权威在 exec-hub（终态封存），此处为台账可观测投影。
+        const releasedRuns = status === 'suspended'
+          ? [...new Set(beforeActive.map((permit) => permit.runId).filter((runId) => runId !== ''))]
+              .filter((runId) => !svc.store.permits.findWhere({ runId })
+                .some((permit) => permit.status === 'active' && (!permit.expiresAt || permit.expiresAt > now)))
+          : []
+        results.push({
+          employeeId,
+          ok: true,
+          revokedPermits: beforeActive.filter((permit) => afterStatus.get(permit.id) !== 'active').length,
+          releasedRuns,
+        })
+      } catch (error) {
+        results.push({ employeeId, ok: false, error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+    const succeeded = results.filter((item) => item.ok).length
+    const failed = results.length - succeeded
+    gate.changeLog(exchange, 'workforce.employee.status-batch', 'employee', employeeIds.slice(0, 5).join(','),
+      '', `批量${status === 'suspended' ? '停职' : '复岗'}：${reason}；ids=${employeeIds.join(',')}；succeeded=${succeeded} failed=${failed}`)
+    return { results, succeeded, failed }
+  })
+
+  gate.guarded('GET', '/api/workforce/admin/employees/:id/audit', 'workforce.admin', (exchange) => {
+    const svc = services(ctx)
+    const employeeId = exchange.params['id'] ?? ''
+    const employee = svc.store.employees.get(employeeId)
+    if (!employee) throw new Error(`数字员工不存在：${employeeId}`)
+    // 跨组织穿透说明：本端点由 workforce.admin 把守，直接读 store 表按 employeeId/appointmentId
+    // 串链（不走 assertReadable 的 org 隔离）——admin 运维面审计报表，权限点即边界。
+    const limit = readLimit(exchange.query)
+    const now = new Date().toISOString()
+    const bindings = svc.store.bindings.findWhere({ employeeId })
+    const appointments = svc.store.appointments.findWhere({ employeeId })
+      .sort((a, b) => a.version - b.version)
+      .map((appointment) => ({
+        ...appointment,
+        grants: svc.store.grants.findWhere({ appointmentId: appointment.id }),
+        manifest: svc.store.manifests.findWhere({ appointmentId: appointment.id })
+          .sort((a, b) => b.version - a.version)[0] ?? null,
+      }))
+    const permits = svc.store.permits.findWhere({ employeeId })
+    const allInvocations = svc.store.invocations.findWhere({ employeeId })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    const deliverables = svc.store.deliverables.findWhere({ employeeId })
+    return {
+      employee,
+      bindings,
+      appointments,
+      permits,
+      invocations: allInvocations.slice(0, limit),
+      deliverables,
+      summary: {
+        // 有效=active 且未过 expiresAt；过期按 expiresAt<=now 事实计算（库里可能还没有
+        // expired 落账行——落账收敛见 MaintenanceService.run）
+        permitActive: permits.filter((permit) => permit.status === 'active' && (!permit.expiresAt || permit.expiresAt > now)).length,
+        permitExpired: permits.filter((permit) => permit.expiresAt !== '' && permit.expiresAt <= now).length,
+        invocationCount: allInvocations.length,
+        invocationDenied: allInvocations.filter((item) => item.status === 'denied').length,
+        deliverableAccepted: deliverables.filter((item) => item.status === 'accepted').length,
+        deliverableRejected: deliverables.filter((item) => item.status === 'rejected').length,
+      },
+    }
+  })
+
+  gate.guarded('GET', '/api/workforce/admin/invocations', 'workforce.admin', (exchange) => {
+    const svc = services(ctx)
+    // 跨组织调用账本穿透查询（admin 运维面，权限点即边界；工作面 GET /invocations 只按 runId
+    // 且过归属校验——本端点是运维对账口，createdAt 倒序）
+    const query = exchange.query
+    const employeeId = query.get('employeeId') ?? ''
+    const runId = query.get('runId') ?? ''
+    const status = query.get('status') ?? ''
+    let rows = svc.store.invocations.all()
+    if (employeeId) rows = rows.filter((row) => row.employeeId === employeeId)
+    if (runId) rows = rows.filter((row) => row.runId === runId)
+    if (status) rows = rows.filter((row) => row.status === status)
+    return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, readLimit(query))
+  })
+
+  gate.guarded('POST', '/api/workforce/admin/maintenance/run', 'workforce.admin', (exchange) => {
+    // 定时器跑 + admin 手动跑同一函数（POST /api/exec/tick、POST /api/usage/retention/purge 同款先例）
+    const maintenance = (ctx as unknown as { workforceMaintenance?: { run(): MaintenanceRunResult } }).workforceMaintenance
+    if (!maintenance || typeof maintenance.run !== 'function') {
+      throw new WorkforceError('WORKFORCE_NOT_READY', '台账维护服务未就绪', 503)
+    }
+    const result = maintenance.run()
+    gate.changeLog(exchange, 'workforce.maintenance.run', 'maintenance', 'workforce-ledger', '台账巡检', JSON.stringify(result))
+    return result
   })
 }

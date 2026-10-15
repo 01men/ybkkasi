@@ -157,7 +157,79 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
    * 反馈回传（WP-07/D1）：👍/👎 薄端点 —— 落零价快照 usage 事件（D2：charge=0 + nonbillable，
    * 不污染计量口径）。主体经 X-On-Behalf-User 归因（Agent 代用户回传），缺省取登录人；
    * 幂等键=主体+资源+消息（评分随事件内容 meter unit 落账），同 messageId 改评分不双计、同键重放不重复计数。
+   * W4 收敛：X-On-Behalf-User 此前零校验（任意主体可归因到任意用户，伪造他人口径的反馈事实），
+   * 现机器主体按「归一化 + 白名单三通道」收敛（见下方守卫注释）；human 主体行为完全不变。
    */
+  // -- feedback 归因守卫（W4）：X-On-Behalf-User 白名单收敛 ---------------------------------
+  // 头值归一化：平台 userId 直查 → 钉钉 staffId 等三方标识经 identityLinks 反查回平台 userId
+  // （镜像 plugin-nas resolveUser 口径；iam 注释：hermes X-On-Behalf-User 头即 staffId 口径）。
+  const resolveFeedbackOnBehalfUser = (raw: string): string | undefined => {
+    const direct = ctx.iam.users().get(raw)
+    if (direct) return direct.id
+    const link = ctx.iam.identityLinks().findOne((item) => item.providerUserId === raw)
+    return link ? ctx.iam.users().get(link.userId)?.id : undefined
+  }
+  // 拒绝形态照 denyUsageOwnership 样板：audit.authz.denied 留痕（point=usage.feedback(on-behalf:...)）
+  // + 403 中文原因，不静默改写。
+  const denyFeedbackAttribution = (exchange: HttpExchange, info: ReturnType<ConsoleRouteDeps['caller']>, point: string, subject: string, message: string): void => {
+    ctx.platformBus.emit('audit.authz.denied', {
+      actorId: info.userId ?? info.principalId,
+      actorName: info.name,
+      point,
+      path: exchange.path,
+      ...(subject ? { subject } : {}),
+    })
+    exchange.fail(403, 'FORBIDDEN', message)
+  }
+  /**
+   * 机器主体归因白名单守卫（human 行为不变，既有代报场景保持）：
+   *   - machine+无头：维持既有 403（补同形 audit 留痕，point=usage.feedback(on-behalf:missing)）；
+   *   - machine+有头：头值先归一化（fail-closed——两步皆 miss 拒绝，不可归因到不存在的人），通过后按
+   *     三通道白名单放行：①Agent 负责人（resourceCore ownerId）②绑定真人（agentRegistry boundUsers）
+   *     ③员工主管（workforceStore 结构化探测；console 先于 workforce 装配，缺席即静默跳过该通道，
+   *     不用 workforceIdentity.resolveByCaller——停职/无任用时返 null 会误杀合法主管）；
+   *     '*' 平台管理员直通白名单但不跳过归一化（归一化失败仍 403）。
+   * 返回 false=已拒绝（守卫内已写 audit + 403，调用方短路）；string=本次应采用的归因标识
+   * （human=原样透传保持既有口径；machine=归一化后的平台 userId）。
+   */
+  const assertFeedbackAttribution = (exchange: HttpExchange, info: ReturnType<ConsoleRouteDeps['caller']>, onBehalfRaw: string): string | false => {
+    if (info.kind !== 'machine') return onBehalfRaw
+    const point = info.refType === 'agent' && info.refId
+      ? `usage.feedback(on-behalf:agent:${info.refId})`
+      : 'usage.feedback(on-behalf:machine)'
+    if (!onBehalfRaw) {
+      denyFeedbackAttribution(exchange, info, 'usage.feedback(on-behalf:missing)', '', '机器主体回传反馈须携带 X-On-Behalf-User 归因到人')
+      return false
+    }
+    const targetUserId = resolveFeedbackOnBehalfUser(onBehalfRaw)
+    if (!targetUserId) {
+      denyFeedbackAttribution(exchange, info, point, onBehalfRaw, `禁止将反馈归因到不存在的主体（${onBehalfRaw} 未命中平台用户与三方身份映射）`)
+      return false
+    }
+    if (info.permissions.includes('*')) return targetUserId
+    if (info.refType !== 'agent' || !info.refId) {
+      denyFeedbackAttribution(exchange, info, point, targetUserId, '机器凭证未绑定 Agent 资源，无归因白名单通道')
+      return false
+    }
+    if (ctx.resourceCore.get('agent', info.refId)?.ownerId === targetUserId) return targetUserId
+    if (ctx.agentRegistry.boundUsers(info.refId).some((item) => item.userId === targetUserId)) return targetUserId
+    // 员工主管通道（结构化探测）：workforceStore 由 plugin-workforce 后补装配，缺席/形状不符静默跳过。
+    // cordis 严格注入：console fiber 未声明 workforceStore（装配序在其后），裸读 ctx 键会抛
+    // 「cannot get property without inject」——必须 try/catch 包裹（缺席=跳过通道，不阻断守卫）。
+    let workforce: {
+      bindings?: { findWhere?: (query: Record<string, unknown>) => Array<{ employeeId?: string }> }
+      employees?: { get?: (id?: string) => { supervisorUserId?: string } | undefined }
+    } | undefined
+    try {
+      workforce = (ctx as unknown as { workforceStore?: typeof workforce }).workforceStore
+    } catch { /* console 未注入 workforceStore（装配序在其后）——员工主管通道跳过 */ }
+    const binding = workforce?.bindings?.findWhere?.({ agentId: info.refId, status: 'active' })?.[0]
+    const supervisorUserId = binding ? workforce?.employees?.get?.(binding.employeeId)?.supervisorUserId : undefined
+    if (supervisorUserId && supervisorUserId === targetUserId) return targetUserId
+    denyFeedbackAttribution(exchange, info, point, targetUserId, '归因目标不在该 Agent 的白名单内（负责人/绑定真人/员工主管三通道均未命中）')
+    return false
+  }
+
   guarded('POST', '/api/usage/feedback', 'console.login', (exchange) => {
     const info = caller(exchange)
     const input = body<{ resource: string; messageId?: string; score: 'up' | 'down'; note?: string }>(exchange)
@@ -165,13 +237,22 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       exchange.fail(400, 'BAD_REQUEST', 'resource 与 score（up/down）必填')
       return
     }
-    const onBehalf = String(exchange.headers['x-on-behalf-user'] ?? '').trim()
+    // W4：归因收敛入口——machine 走白名单守卫（拒绝时已 403+audit，短路）；human 原样透传（行为不变）
+    const onBehalfHeader = exchange.headers['x-on-behalf-user']
+    const onBehalfResolved = assertFeedbackAttribution(exchange, info,
+      String((Array.isArray(onBehalfHeader) ? onBehalfHeader[0] : onBehalfHeader) ?? '').trim())
+    if (onBehalfResolved === false) return
+    const onBehalf = onBehalfResolved
     const subject = onBehalf ? `user:${onBehalf}` : (info.userId ? `user:${info.userId}` : '')
     if (!subject) {
       exchange.fail(403, 'FORBIDDEN', '机器主体回传反馈须携带 X-On-Behalf-User 归因到人')
       return
     }
-    const orgId = (info.userId ? ctx.iam.users().get(info.userId)?.orgId : undefined) ?? ''
+    // W4：组织口径随归因——机器代报（onBehalf=已归一化目标 userId）取目标用户组织；
+    // human（含 OBO 代报）维持调用者组织不变。机器无 userId，原口径恒空串会让
+    // usage 事件 org 必填校验 400，绑定真人白名单通道永远到不了 200。
+    const orgSourceUserId = info.kind === 'machine' && onBehalf ? onBehalf : (info.userId ?? '')
+    const orgId = (orgSourceUserId ? ctx.iam.users().get(orgSourceUserId)?.orgId : undefined) ?? ''
     const event = ctx.usage.record({
       ...nonbillableUsage({
         org: orgId,

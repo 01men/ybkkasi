@@ -11,8 +11,9 @@ export const inject = ['tools', 'mcpRegistry', 'authn']
  * work 参数白名单提取（施工蓝本 §10.4：技术参数透传与可信作用域）：
  * work 只允许携带 permitId/runId/stepKey 三个索引键（仅作索引，授权事实一律服务端回查）；
  * 其他任何键（包括 caller、employeeId 等身份字段）一律忽略——身份与授权不来自请求参数。
+ * 导出供 console REST 面（routes/mcp.ts /api/mcp/invoke）复用：工具与 REST 两个入口一套白名单口径。
  */
-function workRefFromArgs(raw: unknown): WorkRefIndex | undefined {
+export function workRefFromArgs(raw: unknown): WorkRefIndex | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const pick = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() !== '' ? value : undefined)
   const permitId = pick((raw as Record<string, unknown>).permitId)

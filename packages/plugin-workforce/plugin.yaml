@@ -19,6 +19,7 @@ provides:
     - workforceArtifacts
     - workforceDelivery
     - workforceAdapters
+    - workforceMaintenance
 permissions:
   - workforce.read
   - workforce.write

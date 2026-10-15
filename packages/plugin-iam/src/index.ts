@@ -246,6 +246,8 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'mcp.service.offline', label: '下线 MCP', group: 'MCP' },
   { point: 'mcp.permgroup.write', label: '管理 MCP 权限组', group: 'MCP' },
   { point: 'mcp.invoke', label: '调用 MCP 网关', group: 'MCP' },
+  // W 批次 W1（2026-10-15，V11 根治）：MCP 工具可信风险登记审批面——登记/两级审批/重审清单/退场
+  { point: 'mcp.risk.admin', label: 'MCP 工具风险登记审批（登记/两级审批/重审清单）', group: 'MCP' },
   // 连接器纳管（SaaS 数据面网关；invoke 独立权限点对齐 mcp.invoke 先例）
   { point: 'connector.gateway.write', label: '配置连接器网关与健康操作', group: '连接器' },
   { point: 'connector.catalog.read', label: '浏览连接器目录', group: '连接器' },
@@ -320,15 +322,25 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'exec.read', label: '查看执行中枢（目标/任务/唤醒/心跳）', group: '执行中枢' },
   { point: 'exec.write', label: '操作执行中枢任务', group: '执行中枢' },
   { point: 'exec.admin', label: '执行中枢运维（手动 tick 等）', group: '执行中枢' },
+  // 数字员工域（W 批次，plugin-workforce）：权限点此前只在 plugin.yaml/permissions.yaml 声明、
+  // 目录未收录（exec.* 孤儿点同先例）——收录后 authn 机器凭证才能签发 workforce.* scope、
+  // 内置角色与自定义角色才能按粒度授权（W5 运维面 workforce.admin 同批销账）
+  { point: 'workforce.read', label: '查看数字员工域（员工/任用/调用/交付）', group: '数字员工' },
+  { point: 'workforce.write', label: '管理数字员工域（员工/绑定/任用）', group: '数字员工' },
+  { point: 'workforce.admin', label: '数字员工运维（批量停复职/审计报表/台账清理）', group: '数字员工' },
+  { point: 'workforce.invoke', label: '数字员工受控调用（认领/续租/受控执行）', group: '数字员工' },
+  { point: 'workforce.accept', label: '数字员工交付验收（提交/决定）', group: '数字员工' },
 ]
 
 export const BuiltinRoles: Array<Omit<RoleRecord, 'id' | 'createdAt' | 'updatedAt'>> = [
   { code: 'super_admin', name: '平台超级管理员', builtin: true, description: '拥有全部权限点', permissions: ['*'] },
   // org_admin 补 exec.*（2026-10-14 执行中枢纳管）：组织管理员对本组织执行中枢全权（与 iam.* 同口径）
-  { code: 'org_admin', name: '组织管理员', builtin: true, description: '管理本组织账号与用户组', permissions: ['console.login', 'iam.*', 'approval.read', 'exec.*'] },
+  // + workforce.*（W 批次 2026-10-15）：本组织数字员工域全权（与 BUILTIN_ROLE_MIGRATION 两处同步）
+  { code: 'org_admin', name: '组织管理员', builtin: true, description: '管理本组织账号与用户组', permissions: ['console.login', 'iam.*', 'approval.read', 'exec.*', 'workforce.*'] },
   // resource_admin 补 exec.read + modelgw.read（2026-10-14）：资源管理员可查看执行中枢（操作 Agent 的运行面）
   // 与模型目录（R2-B：渠道分级/预算治理需要看到模型清单，写面仍归 modelgw.admin）
-  { code: 'resource_admin', name: '资源管理员', builtin: true, description: '管理 MCP/Skill/Agent/应用/NAS/连接器资源与数据要素', permissions: ['console.login', 'mcp.*', 'skill.*', 'agent.*', 'app.*', 'nas.*', 'authn.oidc.*', 'connector.*', 'resource.dataset.write', 'panel.read', 'flow.read', 'approval.read', 'modelgw.read', 'exec.read'] },
+  // + workforce.read（W 批次 2026-10-15）：资源管理员可查看数字员工域（员工消费其所管资源，运维面仍归 org_admin）
+  { code: 'resource_admin', name: '资源管理员', builtin: true, description: '管理 MCP/Skill/Agent/应用/NAS/连接器资源与数据要素', permissions: ['console.login', 'mcp.*', 'skill.*', 'agent.*', 'app.*', 'nas.*', 'authn.oidc.*', 'connector.*', 'resource.dataset.write', 'panel.read', 'flow.read', 'approval.read', 'modelgw.read', 'exec.read', 'workforce.read'] },
   { code: 'developer', name: '开发者', builtin: true, description: '提交与调试资源（应用限自身 owner 范围，服务端校验）', permissions: ['console.login', 'iam.user.read', 'iam.org.read', 'mcp.service.read', 'mcp.invoke', 'skill.read', 'skill.submit', 'skill.install', 'agent.read', 'agent.write', 'app.read', 'app.write', 'nas.read', 'connector.catalog.read', 'connector.connection.read', 'connector.invoke', 'exec.read', 'exec.write'] },
   { code: 'member', name: '普通用户', builtin: true, description: '浏览市场与可用资源', permissions: ['console.login', 'skill.read', 'agent.read', 'app.read', 'panel.read', 'panel.write', 'panel.task.write', 'scenegraph.read', 'flow.read', 'flow.write', 'exec.read', 'exec.write'] },
   { code: 'auditor', name: '审计员（只读）', builtin: true, description: '全平台只读审计', permissions: ['console.login', 'iam.org.read', 'iam.user.read', 'authn.principal.read', 'authn.oidc.read', 'mcp.service.read', 'skill.read', 'agent.read', 'app.read', 'nas.read', 'audit.read', 'approval.read', 'connector.runs.read', 'connector.connection.read', 'exec.read'] },
@@ -356,7 +368,8 @@ export const BUILTIN_ROLE_MIGRATION: Record<string, string[]> = {
   member: ['panel.read', 'panel.write', 'panel.task.write', 'scenegraph.read', 'flow.read', 'flow.write', 'exec.read', 'exec.write'],
   // org_admin 增 exec.*（2026-10-14）：本组织执行中枢全权（读/写/运维 tick，与 iam.* 通配同口径）
   // scenegraph.activate 摘除（E-06）：全仓无消费死点（见 PermissionCatalog 内注）
-  org_admin: ['panel.read', 'panel.write', 'panel.task.write', 'panel.config.write', 'scenegraph.read', 'flow.read', 'flow.write', 'flow.admin', 'exec.*'],
+  // + workforce.*（W 批次 2026-10-15）：本组织数字员工域全权（运维面 workforce.admin 与 exec.admin 同口径）
+  org_admin: ['panel.read', 'panel.write', 'panel.task.write', 'panel.config.write', 'scenegraph.read', 'flow.read', 'flow.write', 'flow.admin', 'exec.*', 'workforce.*'],
 }
 
 /** 兼容别名：迁移通道创建时的历史命名（仅 connector 批次）。 */

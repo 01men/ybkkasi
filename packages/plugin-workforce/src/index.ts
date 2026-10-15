@@ -21,14 +21,16 @@ import { CapabilityManifestService } from './capability-manifest.ts'
 import { InvocationService } from './invocation-service.ts'
 import { ArtifactService } from './artifact-service.ts'
 import { DeliveryService } from './acceptance-service.ts'
+import { MaintenanceService } from './maintenance-service.ts'
 import { AdapterRegistryService } from './adapters/index.ts'
 import { createWorkforcePolicyPort } from './port.ts'
 import { registerWorkforceTools } from './tools.ts'
 import { registerWorkforceRoutes } from './routes.ts'
+import type { WorkforceGrayConfig } from './contract.ts'
 
 export * from './contract.ts'
 
-export interface WorkforceConfig {
+export interface WorkforceConfig extends WorkforceGrayConfig {
   /** 数据目录（artifact staging 与 SQLite 同底座）；默认 <cwd>/data。 */
   dataDir?: string
   /** permit 默认有效期（毫秒），默认 30 分钟。 */
@@ -63,9 +65,14 @@ export async function apply(ctx: Context, config: WorkforceConfig = {}) {
   new AdapterRegistryService(ctx)
   new InvocationService(ctx)
   new DeliveryService(ctx)
-  new AdmissionService(ctx)
+  // 灰度开关（W7 契约 D-②）：admission 构造接收灰度配置，认领/续租入口按组织拒绝
+  new AdmissionService(ctx, config)
+  // 台账维护（W5 运维面 D-③）：过期 permit 落账 + 终态 run 盘点（封存不删行）；
+  // 构造期起定时巡检（env 可停用），REST /api/workforce/admin/maintenance/run 手动触发
+  new MaintenanceService(ctx)
   // 3. 登记窄端口实现（platform-core 登记器）：本插件 fiber 已持有全部同插件服务，同步登记
-  ctx.workforcePolicy.register(createWorkforcePolicyPort(ctx))
+  //    （灰度配置随端口进入 authorizeWorkAction：关闭组织在工作级授权入口显式拒绝）
+  ctx.workforcePolicy.register(createWorkforcePolicyPort(ctx, config))
   // 4. 运行时薄工具（workforce_claim/invoke/renew/submit；身份取 exec.principal，禁止 args 传入）
   registerWorkforceTools(ctx)
   // 5. REST 工作面（/api/workforce/*，guarded 路由依赖 console 中间件先行）
@@ -85,5 +92,6 @@ declare module '@deepseek-ai/cordis' {
     workforceArtifacts: ArtifactService
     workforceDelivery: DeliveryService
     workforceAdapters: AdapterRegistryService
+    workforceMaintenance: MaintenanceService
   }
 }

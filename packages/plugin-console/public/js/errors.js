@@ -6,7 +6,7 @@
  * 并断言 全集 ⊆ ERROR_CODES ∪ BINDING_REASONS，漏配即红。模块保持零依赖（selftest 直接 import 校验）。
  * ERROR_CODES 由 COPY 键集派生，注册表与文案同源、永不脱节。
  *
- * 原因码全集（REFACTOR-2026-10-13 阶段 2 完备化，共 40 + 3 条）：
+ * 原因码全集（REFACTOR-2026-10-13 阶段 2 完备化，共 43 + 3 条）：
  *   业务原因码（七条，rq-card 会话卡同键——语义冻结勿动）：
  *   nas-authz-deny    NAS 数据权限五步判定 deny（fail-closed）
  *   breaker-open      MCP 服务熔断器开启（连续失败≥3 次置位）
@@ -15,7 +15,7 @@
  *   degraded          服务健康 degraded（延迟>800ms，30s 轮询探活）
  *   binding-invalid   平台身份绑定失效（含 no_cookie / expired / account_inactive 细分）
  *   invoke-error      工具执行报错且无平台侧原因码时的兜底（rq-card 会话卡语义，WP-06 报备决议）
- *   后端 HTTP 大写码（28 条 fail 码 + 5 条内联载荷码）：见 COPY 内分组注释。
+ *   后端 HTTP 大写码（31 条 fail 码 + 5 条内联载荷码）：见 COPY 内分组注释。
  *   绑定失效细分小写码（3 条）：BINDING_REASONS（dsh-bridge /dsh-bridge/status 返回）。
  */
 
@@ -288,6 +288,26 @@ const COPY = {
     title: '市场提交失败',
     message: 'Skill 提交市场未成功（内容校验未通过）。请按提交要求检查资产信息后重试。',
     action: { label: '查看 Skill 市场', href: '#/skills' },
+  },
+
+  // ── MCP 工具风险登记（W 批次 W1，V11 根治）────────────────────────────
+  RISK_RECORD_NOT_FOUND: {
+    tone: 'warn',
+    title: '风险登记记录不存在',
+    message: '该风险登记记录不存在或已被删除。请刷新清单后重试。',
+    action: { label: '查看 MCP 服务', href: '#/mcp' },
+  },
+  RISK_NOT_PENDING: {
+    tone: 'warn',
+    title: '登记状态不允许该审批',
+    message: '该风险登记当前不在可审批状态（已生效/已驳回/已退场）。请刷新清单确认最新状态。',
+    action: { label: '查看 MCP 服务', href: '#/mcp' },
+  },
+  RISK_LEVEL_MISMATCH: {
+    tone: 'warn',
+    title: '审批级别与登记进度不匹配',
+    message: '当前登记未到该审批级别（write/admin 需先过领域级、再过安全级）。请按两级顺序审批。',
+    action: { label: '查看 MCP 服务', href: '#/mcp' },
   },
 }
 

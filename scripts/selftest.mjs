@@ -1314,6 +1314,47 @@ try {
     check('feedback：改评不产生第二条聚合（agent:dev-coder 行 up=1/down=1，down 仅 OBO msg-drill-2 一条）',
       fbStatsRescore.ok && rescoreRow && rescoreRow.up === 1 && rescoreRow.down === 1,
       JSON.stringify({ row: rescoreRow, err: fbStatsRescore.error }))
+    // ================================================================ W4 收敛：机器主体 X-On-Behalf-User 白名单（归一化 + 三通道 + audit 留痕）
+    {
+      // 专用新 Agent（owner=admin、零绑定、零 workforce 员工绑定）——三分支判定全部确定性，不依赖种子数据归属
+      const w4AgentCreate = await api('POST', '/api/agents', { token: admin, body: { name: 'W4 归因白名单自测机器人', attrs: { description: 'W4 feedback OBO 白名单自测专用', model: 'deepseek-chat', riskLevel: 'low' } } })
+      const w4Agent = w4AgentCreate.data.agent
+      const w4Cred = await api('POST', '/api/authn/principals', { token: admin, body: { name: `w4-feedback:${w4Agent.name}`, refType: 'agent', refId: w4Agent.id, scopes: ['console.login'] } })
+      const w4Cc = await api('POST', '/api/auth/client-credentials', { body: { clientId: w4Cred.data.clientId, clientSecret: w4Cred.data.clientSecret } })
+      check('W4：机器凭证就绪（refType=agent + console.login scope → client-credentials 换 token）',
+        w4Cc.ok && typeof w4Cc.data.token === 'string' && w4Cc.data.token.length > 0, JSON.stringify(w4Cc.error ?? {}))
+      const w4AuditHit = async () => {
+        for (let i = 0; i < 10; i++) {
+          const logs = (await api('GET', '/api/audit/logs?type=authz&q=' + encodeURIComponent('usage.feedback(on-behalf') + '&limit=100', { token: admin })).data.items
+          const hit = logs.find((item) => item.actorId === w4Cred.data.principalId && item.detail.includes('usage.feedback(on-behalf:agent:'))
+          if (hit) return true
+          await new Promise((resolve) => setTimeout(resolve, 200))
+        }
+        return false
+      }
+      // ① 机器凭证 OBO 指向白名单外用户（dev：非 owner/未绑定）→ 403 且 audit.authz.denied 留痕
+      const w4Deny = await rawReq('POST', '/api/usage/feedback', {
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${w4Cc.data.token}`, 'x-on-behalf-user': devUserId },
+        body: JSON.stringify({ resource: `agent:${w4Agent.id}`, messageId: 'w4-deny-1', score: 'up' }),
+      })
+      check('W4：机器凭证 OBO 指向白名单外用户 → 403（机器主体不得归因到任意用户）', w4Deny.status === 403, String(w4Deny.status))
+      check('W4：403 反查 audit/authz 留痕（detail 含 usage.feedback(on-behalf:agent:<refId>)）', await w4AuditHit())
+      // ② 绑定端点把 dev 绑为该 Agent 绑定真人 → 同头值放行 200（白名单内行为不变，零价快照口径不动）
+      const w4Bind = await api('POST', `/api/agents/${w4Agent.id}/bindings`, { token: admin, body: { userId: devUserId } })
+      check('W4：夹具——dev 绑定为该 Agent 绑定真人（既有 bindings 端点）', w4Bind.ok || /已绑定/.test(String(w4Bind.error?.message ?? '')), JSON.stringify(w4Bind.error ?? {}))
+      const w4Bound = await rawReq('POST', '/api/usage/feedback', {
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${w4Cc.data.token}`, 'x-on-behalf-user': devUserId },
+        body: JSON.stringify({ resource: `agent:${w4Agent.id}`, messageId: 'w4-bound-1', score: 'up', note: 'W4 绑定真人通道' }),
+      })
+      check('W4：OBO 指向绑定真人（dev）→ 200 且零价快照口径不变（nonbillable）',
+        w4Bound.status === 200 && jsonBody(w4Bound)?.data?.nonbillable === true, JSON.stringify({ status: w4Bound.status, body: jsonBody(w4Bound) }))
+      // ③ OBO 指向不存在用户 → 403（归一化两步皆 miss，fail-closed：不可归因到不存在的人）
+      const w4Ghost = await rawReq('POST', '/api/usage/feedback', {
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${w4Cc.data.token}`, 'x-on-behalf-user': 'w4-ghost-user-nonexist' },
+        body: JSON.stringify({ resource: `agent:${w4Agent.id}`, messageId: 'w4-ghost-1', score: 'up' }),
+      })
+      check('W4：OBO 指向不存在用户 → 403（fail-closed）', w4Ghost.status === 403, String(w4Ghost.status))
+    }
   }
   section('错误文案映射完整性（WP-06/C3：枚举全部对外原因码，漏配即红）')
   {
@@ -2049,7 +2090,7 @@ try {
 
   // 2. 全链路调用（SSE + 会话头 + 权限组）
   await api('POST', '/api/mcp/perm-groups', { token: admin, body: {
-    name: 'teambition 全放行', policies: { [impR.serviceId]: { allowedTools: '*', constraints: {} } },
+    name: 'teambition 全放行', policies: { [impR.serviceId]: { allowedTools: '*', constraints: { readOnly: true } } },
     subjects: [{ type: 'user', id: adminLogin.data.user.id, name: 'admin' }],
   } })
   const tbInvoke = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: impR.serviceId, tool: 'tb_query_task', args: { id: 't-1' } } })
@@ -2059,7 +2100,7 @@ try {
   const authConfig = JSON.stringify({ mcpServers: { 'authed-mcp': { type: 'http', url: `http://127.0.0.1:${ssePort}/api/mcp`, headers: { Authorization: 'Bearer tk-123' } } } })
   const impAuth = await api('POST', '/api/mcp/import', { token: admin, body: { config: authConfig } })
   await api('POST', '/api/mcp/perm-groups', { token: admin, body: {
-    name: 'authed 全放行', policies: { [impAuth.data.results[0].serviceId]: { allowedTools: '*', constraints: {} } },
+    name: 'authed 全放行', policies: { [impAuth.data.results[0].serviceId]: { allowedTools: '*', constraints: { readOnly: true } } },
     subjects: [{ type: 'user', id: adminLogin.data.user.id, name: 'admin' }],
   } })
   const authInvoke = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: impAuth.data.results[0].serviceId, tool: 'tb_query_task', args: {} } })
@@ -2094,6 +2135,56 @@ try {
   // 9. 在线外部服务同步工具
   const syncRes = await api('POST', `/api/mcp/services/${impR.serviceId}/sync-tools`, { token: admin })
   check('在线外部服务可同步工具清单', syncRes.ok && syncRes.data.tools.length === 2)
+
+  // ================================================================ W1/V11 工具风险登记（网关组交付，2026-10-15）
+  // 闭环：未登记 unknown 写拒绝落账 → 登记→domain 审→security 审→effective 放行 → 清单/重审清单 → retire 收回再拒
+  section('MCP 工具风险登记（W1/V11 根治）')
+  const w1Svc = await api('POST', '/api/mcp/services', { token: admin, body: {
+    name: 'W1 风险登记自测', slug: 'w1-risk-demo', orgId: newOrg.data.id, mode: 'external', exec: 'real',
+    endpoint: `http://127.0.0.1:${ssePort}/api/mcp`, transport: 'http',
+    tools: [
+      { name: 'w1_unregistered_write', description: '未登记写工具（unknown）', inputSchema: { type: 'object' }, riskLevel: 'unknown' },
+      { name: 'w1_read_tool', description: '未登记读工具（显式 read）', inputSchema: { type: 'object' }, riskLevel: 'read' },
+    ],
+  } })
+  check('W1 注册 external real 自测服务（显式申报 unknown/read 各一）', w1Svc.ok && w1Svc.data.tools.length === 2)
+  const w1SvcId = w1Svc.data.id
+  await api('POST', `/api/mcp/services/${w1SvcId}/verify`, { token: admin })
+  await api('POST', `/api/mcp/services/${w1SvcId}/deploy`, { token: admin, body: { grayPercent: 100, changelog: 'W1 自测全量' } })
+  await api('POST', '/api/mcp/perm-groups', { token: admin, body: {
+    name: 'W1 风险登记权限组（非只读）', policies: { [w1SvcId]: { allowedTools: '*', constraints: {} } },
+    subjects: [{ type: 'user', id: adminLogin.data.user.id, name: 'admin' }],
+  } })
+
+  const w1Deny = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: w1SvcId, tool: 'w1_unregistered_write', args: {} } })
+  check('W1 未登记 unknown 工具非只读语境调用被拒（RISK_UNREGISTERED）', w1Deny.ok && w1Deny.data.status === 'denied' && w1Deny.data.code === 'RISK_UNREGISTERED', JSON.stringify(w1Deny).slice(0, 300))
+  const w1DeniedCall = (await api('GET', `/api/mcp/calls?serviceId=${w1SvcId}&status=denied`, { token: admin })).data.items.find((c) => c.tool === 'w1_unregistered_write')
+  check('W1 拒绝链落账 mcp:calls（status=denied 且附领域拒绝码）', w1DeniedCall && w1DeniedCall.ok === false && w1DeniedCall.code === 'RISK_UNREGISTERED', JSON.stringify(w1DeniedCall ?? {}).slice(0, 200))
+
+  const w1Submit = await api('POST', '/api/mcp/risk-registry', { token: admin, body: { serviceId: w1SvcId, toolName: 'w1_unregistered_write', risk: 'write', reason: '自测：批次数据导出为受控写能力' } })
+  check('W1 风险登记提交（登记即提交 pending_domain）', w1Submit.ok && w1Submit.data.status === 'pending_domain', JSON.stringify(w1Submit).slice(0, 200))
+  const w1Skip = await api('POST', `/api/mcp/risk-registry/${w1Submit.data.id}/decide`, { token: admin, body: { decision: 'approve', level: 'security', opinion: '跳级应被拒' } })
+  check('W1 审批级别与 pending 级别不匹配 → 400 中文错误', w1Skip.status === 400 && /安全|领域/.test(w1Skip.error?.message ?? ''), JSON.stringify(w1Skip).slice(0, 200))
+  const w1Domain = await api('POST', `/api/mcp/risk-registry/${w1Submit.data.id}/decide`, { token: admin, body: { decision: 'approve', level: 'domain', opinion: '领域通过' } })
+  check('W1 domain 审批通过 → write 升级 pending_security（D-① 两级）', w1Domain.ok && w1Domain.data.status === 'pending_security', JSON.stringify(w1Domain).slice(0, 200))
+  const w1Security = await api('POST', `/api/mcp/risk-registry/${w1Submit.data.id}/decide`, { token: admin, body: { decision: 'approve', level: 'security', opinion: '安全加签通过' } })
+  check('W1 security 审批通过 → effective', w1Security.ok && w1Security.data.status === 'effective', JSON.stringify(w1Security).slice(0, 200))
+
+  const w1Ok = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: w1SvcId, tool: 'w1_unregistered_write', args: {} } })
+  check('W1 登记生效后按登记风险放行（闸门取登记值 write）', w1Ok.ok && w1Ok.data.ok === true && JSON.stringify(w1Ok.data.result).includes('sse-echo:w1_unregistered_write'), JSON.stringify(w1Ok).slice(0, 300))
+
+  const w1List = await api('GET', `/api/mcp/risk-registry?serviceId=${w1SvcId}&status=effective`, { token: admin })
+  check('W1 登记清单（serviceId+status 过滤命中 effective）', w1List.ok && w1List.data.total === 1 && w1List.data.items[0].toolName === 'w1_unregistered_write', JSON.stringify(w1List.data).slice(0, 240))
+  const w1Review = await api('GET', '/api/mcp/risk-registry/review-list', { token: admin })
+  const w1ReviewItems = (w1Review.data?.items ?? []).filter((i) => i.serviceId === w1SvcId)
+  check('W1 重审清单（D-⑤=a）：未登记读工具 unregistered + 已登记写工具 registered', w1Review.ok
+    && w1ReviewItems.some((i) => i.toolName === 'w1_read_tool' && i.state === 'unregistered')
+    && w1ReviewItems.some((i) => i.toolName === 'w1_unregistered_write' && i.state === 'registered' && i.registeredRisk === 'write'), JSON.stringify(w1ReviewItems).slice(0, 300))
+
+  const w1Retire = await api('POST', `/api/mcp/risk-registry/${w1Submit.data.id}/retire`, { token: admin, body: { reason: '自测：退场收回写能力' } })
+  check('W1 生效登记退场 → retired', w1Retire.ok && w1Retire.data.status === 'retired', JSON.stringify(w1Retire).slice(0, 160))
+  const w1DenyAgain = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: w1SvcId, tool: 'w1_unregistered_write', args: {} } })
+  check('W1 退场后闸门回到 unknown → 再调用被拒（RISK_UNREGISTERED）', w1DenyAgain.ok && w1DenyAgain.data.code === 'RISK_UNREGISTERED', JSON.stringify(w1DenyAgain).slice(0, 200))
 
   // -- 钉钉真实 stub（复刻 OpenAPI 形状） ---------------------------------
   const ddUsers = {
@@ -4730,10 +4821,12 @@ try {
   const servicesList = (await api('GET', '/api/mcp/services', { token: admin })).data.services
   const bridgedService = servicesList.find((service) => service.slug === 'open-connector-stub')
   check('桥接服务带「bridgeFrom=open-connector」治理降级标记', Boolean(bridgedService?.bridgeFrom) && bridgedService.bridgeFrom === 'open-connector', JSON.stringify({ slug: bridgedService?.slug, bridgeFrom: bridgedService?.bridgeFrom }))
-  // M0 治理降级语义：服务级粗粒度 MCP 权限组授权（无 action 级/连接级/令牌镜像）
+  // M0 治理降级语义：服务级粗粒度 MCP 权限组授权（无 action 级/连接级/令牌镜像）。
+  // W 批次 V11 根治后：导入工具 riskLevel='unknown'，非只读语境一律 RISK_UNREGISTERED 拒绝——
+  // 本组两条桥接调用（get_top_stories / execute_action→get_top_stories）均为读型，改挂只读约束。
   await api('POST', '/api/mcp/perm-groups', { token: admin, body: {
     name: '桥接自测组（M0）',
-    policies: { [bridgedService.id]: { allowedTools: '*', constraints: {} } },
+    policies: { [bridgedService.id]: { allowedTools: '*', constraints: { readOnly: true } } },
     subjects: [{ type: 'user_group', id: grpAdmin.id }],
   } })
   const bridgedCall = await rawReq('POST', '/mcp', {
@@ -5507,6 +5600,13 @@ try {
         j1Invoke.status === 200 && j1Invoke.data.ok === true && /J1 直调自测应答/.test(j1Invoke.data.reply ?? '')
         && j1Invoke.data.skill?.name === 'J1 直调自测技能' && j1Invoke.data.model === 'j1-stub-model',
         JSON.stringify(j1Invoke.error ?? j1Invoke.data).slice(0, 180))
+      // W3（D09/V12 加载证据化，REST 面）：invokeSkill 的 skillLoad 指纹随 ok 应答透传，路由层不再丢弃
+      check('J1/W3：直调应答携带 skillLoad 指纹（skillId=上架技能 id · version · sha256 contentHash 64 位 hex）',
+        j1Invoke.data.ok === true
+        && j1Invoke.data.skillLoad?.skillId === j1Submit.data.id
+        && j1Invoke.data.skillLoad?.version === '1.0.0'
+        && /^[0-9a-f]{64}$/.test(j1Invoke.data.skillLoad?.contentHash ?? ''),
+        JSON.stringify(j1Invoke.data?.skillLoad))
       const j1Msgs = (await api('GET', `/api/panel/mfg/messages?channelId=${j1Channel.id}&limit=30`, { token: j1Admin })).data.messages
       const j1Trace = j1Msgs.find((m) => m.senderType === 'human' && m.text.startsWith('/J1 直调自测技能'))
       const j1ReplyMsg = j1Msgs.find((m) => m.senderType === 'agent' && m.senderName === '⚡ J1 直调自测技能')
@@ -5528,6 +5628,10 @@ try {
       check('J1：panel_skill_invoke 工具面（与 REST 同一服务原语）',
         j1Tool.ok && j1Tool.data.value?.ok === true && j1Tool.data.value.skill?.name === 'J1 直调自测技能',
         JSON.stringify(j1Tool.error ?? j1Tool.data?.value).slice(0, 160))
+      check('J1/W3：panel_skill_invoke 工具面 skillLoad 同构（REST/工具两面同一 service 原语）',
+        j1Tool.ok && j1Tool.data.value?.skillLoad?.skillId === j1Submit.data.id
+        && /^[0-9a-f]{64}$/.test(j1Tool.data.value?.skillLoad?.contentHash ?? ''),
+        JSON.stringify(j1Tool.data?.value?.skillLoad))
       const j1AgentTool = await api('POST', '/api/tools/execute', { token: j1Admin, body: { name: 'panel_agent_invoke', args: { dept: 'mfg', agent: '面板质检员', message: '工具面点名 Agent' } } })
       check('J1：panel_agent_invoke 工具面（askAgent 同步应答，不落频道消息）',
         j1AgentTool.ok && j1AgentTool.data.value?.ok === true && /J1 直调自测应答/.test(j1AgentTool.data.value.reply ?? ''),
@@ -7000,6 +7104,29 @@ try {
       }
     } else if (wf) wfPending('停职撤权：员工 suspend 后其全部 active permit 被撤销（revoked）', '前置：认领未成功')
 
+    // -- W5 运维面（D-③）：maintenance run 过期 permit 落账（service 层；「过期不落库」口径收敛） ----
+    if (wf) {
+      try {
+        // 直插「已签发但已过期」的 active permit（落账断言只依赖 permits 表事实，不重跑认领链）
+        const w5StalePermitId = `wfpermit_g7_w5_stale_${Date.now() % 100000}`
+        wfCtx.workforceStore.permits.insert({
+          id: w5StalePermitId, employeeId: employee.id, agentId: g7Agent.id, principalId: '',
+          appointmentId: '', appointmentVersion: 0, manifestId: '', issueId: '', runId: '', leaseId: '', leaseVersion: 0,
+          status: 'active', expiresAt: new Date(Date.now() - 60_000).toISOString(),
+          createdAt: new Date().toISOString(), revokedAt: '', revokedReason: '',
+        })
+        const w5Maint = wfCtx.workforceMaintenance.run()
+        const w5StaleAfter = wfCtx.workforceStore.permits.get(w5StalePermitId)
+        check('W5 运维面：maintenance run 将过期 active permit 落账 expired（仓库内唯一写 expired 处）',
+          Array.isArray(w5Maint?.expiredPermits) && w5Maint.expiredPermits.includes(w5StalePermitId) && w5StaleAfter?.status === 'expired',
+          JSON.stringify({ expiredCount: w5Maint?.expiredPermits?.length, status: w5StaleAfter?.status }))
+        check('W5 运维面：maintenance run 返回终态 run 盘点计数（封存不删行，只报告）',
+          typeof w5Maint?.terminalRunCount === 'number' && typeof w5Maint?.permitsOnTerminalRuns === 'number' && typeof w5Maint?.invocationsOnTerminalRuns === 'number')
+      } catch (error) {
+        check('W5 运维面：maintenance run 将过期 active permit 落账 expired（仓库内唯一写 expired 处）', false, `异常：${errText(error)}`)
+      }
+    } else wfPending('W5 运维面：maintenance run 将过期 active permit 落账 expired')
+
     // -- 计量关联（§11.3）：invocationId 落库读回一致 + workforce_usage_links 事实映射 ------------
     try {
       const LINK_INV = 'wfi_g7_link_probe'
@@ -7059,6 +7186,189 @@ try {
       const deniedCc = await wfApi('POST', '/api/auth/client-credentials', { body: { clientId: deniedCred.clientId, clientSecret: deniedCred.clientSecret } })
       const overviewDenied = await wfApi('GET', '/api/workforce/overview', { token: deniedCc.data?.token })
       check('REST 冒烟：无 workforce 权限令牌访问 /api/workforce/overview 403', overviewDenied.status === 403, `status=${overviewDenied.status}`)
+
+      // -- W5 运维面（D-③）：status-batch 批量停职 / audit 报表 / 非 admin 令牌 403 ----------------
+      try {
+        const w5AgentA = wfCtx.agentRegistry.register({ name: `组7W5批量停职A-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: 'deepseek-chat', riskLevel: 'low' } }).agent
+        const w5AgentB = wfCtx.agentRegistry.register({ name: `组7W5批量停职B-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: 'deepseek-chat', riskLevel: 'low' } }).agent
+        const w5EmpA = wfCtx.workforceEmployees.create({ name: `组7W5批量停职A-${Date.now() % 100000}`, orgId: wfOrg.id, supervisorUserId: adminUser.id, agentId: w5AgentA.id })
+        const w5EmpB = wfCtx.workforceEmployees.create({ name: `组7W5批量停职B-${Date.now() % 100000}`, orgId: wfOrg.id, supervisorUserId: adminUser.id, agentId: w5AgentB.id })
+        // 直插 active permit 模拟已签发（批量断言聚焦撤权联动；认领→撤权全闭环已由上方断言覆盖）
+        const w5InsertPermit = (employeeId, agentId) => wfCtx.workforceStore.permits.insert({
+          id: `wfpermit_g7_w5_${employeeId.slice(-6)}_${Date.now() % 100000}`, employeeId, agentId, principalId: '',
+          appointmentId: '', appointmentVersion: 0, manifestId: '', issueId: '', runId: '', leaseId: '', leaseVersion: 0,
+          status: 'active', expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          createdAt: new Date().toISOString(), revokedAt: '', revokedReason: '',
+        })
+        w5InsertPermit(w5EmpA.id, w5AgentA.id)
+        w5InsertPermit(w5EmpB.id, w5AgentB.id)
+        const w5Batch = await wfApi('POST', '/api/workforce/admin/employees/status-batch', {
+          token: wfAdminToken, body: { employeeIds: [w5EmpA.id, w5EmpB.id], status: 'suspended', reason: '组7自测：W5 批量停职' },
+        })
+        check('W5 运维面：status-batch 双员工停职 200 且 succeeded=2 failed=0',
+          w5Batch.status === 200 && w5Batch.data?.succeeded === 2 && w5Batch.data?.failed === 0,
+          `status=${w5Batch.status} data=${JSON.stringify(w5Batch.data ?? w5Batch.error).slice(0, 160)}`)
+        const w5Permits = [...wfCtx.workforceStore.permits.findWhere({ employeeId: w5EmpA.id }), ...wfCtx.workforceStore.permits.findWhere({ employeeId: w5EmpB.id })]
+        check('W5 运维面：status-batch 后两员工 permit 全 revoked 且逐条聚合 revokedPermits=1',
+          w5Permits.length >= 2 && w5Permits.every((p) => p.status === 'revoked') &&
+            (w5Batch.data?.results ?? []).every((r) => r.ok === true && r.revokedPermits === 1),
+          JSON.stringify(w5Permits.map((p) => ({ id: p.id, status: p.status }))))
+        const w5Audit = await wfApi('GET', `/api/workforce/admin/employees/${w5EmpA.id}/audit?limit=10`, { token: wfAdminToken })
+        check('W5 运维面：audit 报表 200 且含 employee/bindings/appointments/permits/invocations/deliverables/summary 键',
+          w5Audit.status === 200 && ['employee', 'bindings', 'appointments', 'permits', 'invocations', 'deliverables', 'summary'].every((key) => key in (w5Audit.data ?? {})),
+          `status=${w5Audit.status} keys=${Object.keys(w5Audit.data ?? {}).join(',')}`)
+        const w5BatchDenied = await wfApi('POST', '/api/workforce/admin/employees/status-batch', {
+          token: deniedCc.data?.token, body: { employeeIds: [w5EmpA.id], status: 'active', reason: '越权尝试' },
+        })
+        const w5AuditDenied = await wfApi('GET', `/api/workforce/admin/employees/${w5EmpA.id}/audit`, { token: deniedCc.data?.token })
+        const w5MaintDenied = await wfApi('POST', '/api/workforce/admin/maintenance/run', { token: deniedCc.data?.token })
+        check('W5 运维面：无 workforce.admin 权限令牌访问 status-batch/audit/maintenance 全 403',
+          w5BatchDenied.status === 403 && w5AuditDenied.status === 403 && w5MaintDenied.status === 403,
+          `batch=${w5BatchDenied.status} audit=${w5AuditDenied.status} maint=${w5MaintDenied.status}`)
+      } catch (error) {
+        check('W5 运维面：admin 端点 REST 断言（status-batch/audit/403）', false, `异常：${errText(error)}`)
+      }
+
+      // -- W7/D-② 灰度收口（QA/交付组 additive 子段）：独立最小树 + allowlist 配置 ----------------
+      // 端口 7318（selftest 端口体系；数据子目录随主 DATA_DIR 终扫清理）。灰度配置注入形态=本批
+      // contract.ts 冻结契约：WorkforceConfig extends WorkforceGrayConfig，admission 与 port 同收口。
+      try {
+        const GRAY_PORT = 7318
+        const grayDataDir = join(DATA_DIR, 'workforce-gray-mount')
+        await rm(grayDataDir, { recursive: true, force: true })
+        await mkdir(grayDataDir, { recursive: true })
+        const grayCtx = new Context()
+        await grayCtx.plugin(platformCore, { dataDir: grayDataDir, http: { port: GRAY_PORT } })
+        await grayCtx.plugin(resourceCore)
+        await grayCtx.plugin(iam)
+        await grayCtx.plugin(authn)
+        await grayCtx.plugin(usage)
+        await grayCtx.plugin(audit)
+        await grayCtx.plugin(market)
+        await grayCtx.plugin(connector)
+        await grayCtx.plugin(mcp)
+        await grayCtx.plugin(nas)
+        await grayCtx.plugin(skillhub)
+        await grayCtx.plugin(agent)
+        await grayCtx.plugin(app)
+        await grayCtx.plugin(modelgw)
+        await grayCtx.plugin(connect, { role: 'host' })
+        await grayCtx.plugin(update)
+        await grayCtx.plugin(portal)
+        await grayCtx.plugin(consolePlugin)
+        await grayCtx.plugin(panelCore)
+        await grayCtx.plugin(flowCore)
+        await grayCtx.plugin(execHub)
+        // 名单/名单外组织先建（enabledOrgs 需要名单组织 ID），再挂 workforce
+        const gAdminU = grayCtx.iam.users().findOne((u) => u.username === 'admin')
+        const gAdminP = grayCtx.authn.ensureHumanPrincipal(gAdminU.id, gAdminU.displayName ?? '平台管理员')
+        const gAdminCaller = { kind: 'human', principalId: gAdminP.id, userId: gAdminU.id, name: '平台管理员' }
+        const orgIn = grayCtx.iam.createOrg({ name: `灰度名单组织-${Date.now() % 100000}` }, iam.SYSTEM_ACTOR)
+        const orgOut = grayCtx.iam.createOrg({ name: `灰度名单外组织-${Date.now() % 100000}` }, iam.SYSTEM_ACTOR)
+        const GRAY_MODEL = `gray-model-${Date.now() % 100000}`
+        grayCtx.modelGateway.upsertModel({ slug: GRAY_MODEL, displayName: '灰度自测模型', provider: 'stub', endpoint: 'http://127.0.0.1:9/noop', apiKey: 'sk-gray-selftest', costCentsPerKTokens: 1, status: 'online', dataClassLimit: 'internal' })
+        const grayEvents = []
+        grayCtx.platformBus.on('workforce.gray.denied', (payload) => grayEvents.push(payload ?? {}))
+        const grayWf = await import('../packages/plugin-workforce/src/index.ts')
+        await grayCtx.plugin(grayWf, { dataDir: join(grayDataDir, 'domain'), grayMode: 'allowlist', enabledOrgs: [orgIn.id] })
+        const mkGrayEmployee = (org, agentName, empName) => {
+          const reg = grayCtx.agentRegistry.register({ name: agentName, ownerId: gAdminU.id, ownerName: '平台管理员', orgId: org.id, attrs: { description: '组7灰度子段', model: 'deepseek-chat', riskLevel: 'low' } })
+          const employee = grayCtx.workforceEmployees.create({ name: empName, displayName: empName, orgId: org.id, supervisorUserId: gAdminU.id, agentId: reg.agent.id, principalId: reg.credential.principal.id, runtime: 'dsh' })
+          const caller = { kind: 'machine', principalId: reg.credential.principal.id, refType: 'agent', refId: reg.agent.id, name: reg.agent.name }
+          return { reg, employee, caller }
+        }
+        const activateGray = async (employee) => {
+          const appt = grayCtx.workforceAppointments.create({ employeeId: employee.id, position: '灰度自测岗', orgId: employee.orgId, dataClass: 'internal', effectiveFrom: new Date().toISOString(), grants: [{ kind: 'model', registryId: GRAY_MODEL, actions: ['invoke'], risk: 'read', constraints: { maxTokens: 64 } }], approvedBy: gAdminU.id })
+          return grayCtx.workforceAppointments.activate(gAdminCaller, appt.id)
+        }
+        // 名单内基线：认领/续租不受灰度影响
+        const inHouse = mkGrayEmployee(orgIn, '灰度名单内Agent', 'gray-in-analyst')
+        await activateGray(inHouse.employee)
+        const issueIn = grayCtx.execHub.createIssue({ orgId: orgIn.id, title: '灰度自测：名单内任务', assigneeAgentId: inHouse.reg.agent.id, createdBy: 'selftest-gray' })
+        const claimIn = await grayCtx.workforceAdmission.claimWork(inHouse.caller, { issueId: issueIn.id })
+        check('灰度D-②：名单内组织认领正常（allowlist 不拦名单组织，run/permit 四件套）',
+          claimIn.ok === true && Boolean(claimIn.runId) && Boolean(claimIn.permit?.id),
+          JSON.stringify(claimIn.ok ? {} : { code: claimIn.code, message: claimIn.message }).slice(0, 200))
+        // 名单外：认领显式拒绝（WORKFORCE_DISABLED）——admission 侧收口（抛 403 WorkforceError）
+        const outHouse = mkGrayEmployee(orgOut, '灰度名单外Agent', 'gray-out-analyst')
+        await activateGray(outHouse.employee)
+        const issueOut = grayCtx.execHub.createIssue({ orgId: orgOut.id, title: '灰度自测：名单外任务', assigneeAgentId: outHouse.reg.agent.id, createdBy: 'selftest-gray' })
+        let outDenied = { denied: false, code: '', message: '' }
+        try {
+          const verdict = await grayCtx.workforceAdmission.claimWork(outHouse.caller, { issueId: issueOut.id })
+          outDenied = verdict.ok ? { denied: false, code: 'NOT_DENIED', message: `意外成功 run=${verdict.runId}` } : { denied: verdict.code === 'WORKFORCE_DISABLED', code: verdict.code, message: verdict.message }
+        } catch (error) {
+          outDenied = { denied: error?.code === 'WORKFORCE_DISABLED', code: error?.code ?? errText(error), message: error?.message ?? '' } // admission 收口形态：抛 WorkforceError(403)
+        }
+        check('灰度D-②：关闭组织认领被拒 WORKFORCE_DISABLED（中文灰度语义，非静默回落 legacy）',
+          outDenied.denied && outDenied.message.includes('灰度关闭'), JSON.stringify(outDenied).slice(0, 240))
+        check('灰度D-②：拒绝发生在确认前（名单外任务无 run 投影、无 permit——不产生半开工作状态）',
+          (issueOut.executionRunId ?? '') === '' && grayCtx.workforceStore.permits.findWhere({ employeeId: outHouse.employee.id }).length === 0,
+          `executionRunId=${issueOut.executionRunId ?? '空'} permits=${grayCtx.workforceStore.permits.findWhere({ employeeId: outHouse.employee.id }).length}`)
+        // 事件可观测（总线异步串行派发，断言前排水）：admission surface + port surface 双口径
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        check('灰度D-②：workforce.gray.denied 事件可观测（surface=admission，payload 含 orgId/employeeId/at）',
+          grayEvents.some((e) => e.surface === 'admission' && e.orgId === orgOut.id && e.employeeId === outHouse.employee.id && Boolean(e.at)),
+          JSON.stringify(grayEvents).slice(0, 240))
+        const portVerdict = await grayCtx.workforcePolicy.port().authorizeWorkAction(outHouse.caller, { facts: { kind: 'model', registryId: GRAY_MODEL, action: 'invoke', risk: 'read' }, ref: {} })
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        check('灰度D-②：port 侧同口径拒绝（authorizeWorkAction → WORKFORCE_DISABLED + surface=port 事件，三分支口径一致）',
+          portVerdict?.allow === false && portVerdict?.code === 'WORKFORCE_DISABLED' && grayEvents.some((e) => e.surface === 'port' && e.orgId === orgOut.id),
+          JSON.stringify({ verdict: portVerdict, events: grayEvents.map((e) => e.surface) }).slice(0, 240))
+        // 观测面不拦：名单外员工身份解析照常（V29 口径=拒绝并可观测，非失联）
+        const outResolution = await grayCtx.workforceIdentity.resolveByCaller(outHouse.caller)
+        check('灰度D-②：观测面不拦（名单外员工身份仍可解析，拉取/状态查询保持开放）',
+          Boolean(outResolution) && outResolution.employee.id === outHouse.employee.id)
+        await rm(grayDataDir, { recursive: true, force: true }).catch(() => { /* 主终扫兜底 */ })
+      } catch (error) {
+        check('灰度D-②：灰度收口子段（独立最小树 allowlist）', false, `子段异常：${error instanceof Error ? error.stack?.slice(0, 300) ?? error.message : String(error)}`)
+      }
+
+      // -- W2（四入口等价 §2.3）：同一机器凭证经 REST /api/mcp/invoke 携带 work 索引与 /mcp 工具面同约束
+      try {
+        // 1. 托管演示服务（hosted+demo，无外网依赖；defaultToolsFor 产出 <slug>_search 等）
+        const w2Slug = `g7-w2-probe-${Date.now() % 100000}`
+        const w2Svc = await wfApi('POST', '/api/mcp/services', { token: wfAdminToken, body: { name: '组7 W2 接入面等价自测', slug: w2Slug, orgId: wfOrg.id, transport: 'http', mode: 'hosted', exec: 'demo' } })
+        const w2SvcId = w2Svc.data?.id
+        check('W2 夹具：托管演示服务注册+verify+全量上线', Boolean(w2SvcId), `status=${w2Svc.status} error=${JSON.stringify(w2Svc.error ?? {}).slice(0, 160)}`)
+        await wfApi('POST', `/api/mcp/services/${w2SvcId}/verify`, { token: wfAdminToken })
+        await wfApi('POST', `/api/mcp/services/${w2SvcId}/deploy`, { token: wfAdminToken, body: { grayPercent: 100, changelog: 'W2 全量' } })
+        const w2Tool = `${w2Slug}_search`
+        // 2. Agent 主体 MCP 权限组（只读约束——与 /mcp 工具面同一约束形态）
+        await wfApi('POST', '/api/mcp/perm-groups', { token: wfAdminToken, body: {
+          name: '组7 W2 agent 只读', policies: { [w2SvcId]: { allowedTools: '*', constraints: { readOnly: true } } },
+          subjects: [{ type: 'agent', id: g7Agent.id, name: g7Agent.name }],
+        } })
+        // 3. 任用升版：追加真实 mcp grant（服务已上线+权限组在位，激活探针可通过）
+        const w2Appt = wfCtx.workforceAppointments.create({ employeeId: employee.id, position: '质量分析员', orgId: wfOrg.id, dataClass: 'internal', effectiveFrom: new Date().toISOString(), grants: [
+          { kind: 'model', registryId: G7_MODEL_SLUG, actions: ['invoke'], risk: 'read' },
+          { kind: 'mcp', registryId: w2SvcId, actions: [w2Tool], risk: 'read' },
+        ], approvedBy: adminUser.id })
+        const w2ApptActivated = await wfCtx.workforceAppointments.activate(adminCaller, w2Appt.id)
+        // 4. 新任务认领 → 新 permit（旧 permit 已被停职链路撤销）
+        const w2Issue = wfCtx.execHub.createIssue({ orgId: wfOrg.id, title: '组7 W2 REST 接入面等价', assigneeAgentId: g7Agent.id, createdBy: 'selftest-w2' })
+        const w2Claim = await wfCtx.workforceAdmission.claimWork(g7AgentCaller, { issueId: w2Issue.id })
+        check('W2 夹具：任用生效+认领成功（mcp 句柄入清单）',
+          w2ApptActivated?.status === 'effective' && w2Claim.ok === true && w2Claim.tools.some((t) => t.kind === 'mcp' && t.action === w2Tool),
+          `appt=${w2ApptActivated?.status}(${w2ApptActivated?.statusReason ?? ''}) claim=${JSON.stringify(w2Claim.ok ? {} : { code: w2Claim.code, message: w2Claim.message }).slice(0, 160)}`)
+        // 5. 机器令牌（refType=agent 可反查员工绑定）经 REST：不带 work → TOOL_NOT_GRANTED（V28）
+        const w2AgentCred = wfCtx.authn.createMachineCredential({ name: 'g7-w2-agent-token', refType: 'agent', refId: g7Agent.id, scopes: ['mcp.invoke'] })
+        const w2AgentCc = await wfApi('POST', '/api/auth/client-credentials', { body: { clientId: w2AgentCred.clientId, clientSecret: w2AgentCred.clientSecret } })
+        const w2NoWork = await wfApi('POST', '/api/mcp/invoke', { token: w2AgentCc.data?.token, body: { serviceId: w2SvcId, tool: w2Tool, args: { query: 'x' } } })
+        check('W2：受管机器凭证经 REST 不带 work 索引 → TOOL_NOT_GRANTED（必须持 permit 经受控入口，V28）',
+          w2NoWork.data?.status === 'denied' && w2NoWork.data?.code === 'TOOL_NOT_GRANTED',
+          `status=${w2NoWork.data?.status} code=${w2NoWork.data?.code} err=${JSON.stringify(w2NoWork.error ?? {}).slice(0, 120)}`)
+        // 6. 带 work 索引（permitId/runId/stepKey，§10.4 仅索引非授权事实）→ 闸门放行且 demo 调用成功
+        const w2WithWork = await wfApi('POST', '/api/mcp/invoke', { token: w2AgentCc.data?.token, body: { serviceId: w2SvcId, tool: w2Tool, args: { query: 'x' }, work: { permitId: w2Claim.permit.id, runId: w2Claim.runId, stepKey: 'g7.w2.rest' } } })
+        check('W2：携带 work 索引 → 受管闸门放行且调用成功（REST 面与 /mcp 工具面同凭证同约束，V01 完整态）',
+          w2WithWork.data?.ok === true && w2WithWork.data?.status === 'ok',
+          `status=${w2WithWork.data?.status} code=${w2WithWork.data?.code} err=${JSON.stringify(w2WithWork.data?.error ?? w2WithWork.error ?? {}).slice(0, 160)}`)
+        // 7. 网关调用记录携带工作索引（与 /mcp 工具面 A23 同口径：work.permitId 落账）
+        const w2CallRow = (await wfApi('GET', `/api/mcp/calls?serviceId=${w2SvcId}&status=ok`, { token: wfAdminToken })).data.items.find((c) => c.work?.permitId === w2Claim.permit.id)
+        check('W2：网关调用记录关联工作索引（work.permitId 落 mcp:calls，四入口等价可对账）', Boolean(w2CallRow), JSON.stringify(w2CallRow ?? {}).slice(0, 160))
+      } catch (error) {
+        check('W2：REST /api/mcp/invoke work 索引透传断言', false, `异常：${errText(error)}`)
+      }
     } catch (error) {
       check('REST 冒烟：GET /api/workforce/overview 200（workforce.read 权限令牌）', false, `异常：${errText(error)}`)
     }

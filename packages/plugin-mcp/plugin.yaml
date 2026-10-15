@@ -6,6 +6,7 @@ depends: ['dsh-plugin-platform-core', 'dsh-plugin-iam', 'dsh-plugin-audit']
 provides:
   services:
     - mcpRegistry
+    - mcpToolRisks
 permissions:
   - mcp.service.read
   - mcp.service.write
@@ -13,3 +14,5 @@ permissions:
   - mcp.service.offline
   - mcp.permgroup.write
   - mcp.invoke
+  # W 批次 W1（V11 根治）：MCP 工具风险登记审批（登记/两级审批/重审清单/退场）
+  - mcp.risk.admin

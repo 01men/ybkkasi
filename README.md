@@ -100,22 +100,31 @@ DSHCTL_USER=admin DSHCTL_PASS=*** node cli/dshctl.mjs help    # CLI 帮助（凭
 每个业务域 = 一个插件包，独立声明依赖/权限点/事件，可独立启停：
 
 ```
-接入层   dsh-plugin-console        REST 网关 + 控制台 SPA + 工具桥 + 种子数据
-业务域   dsh-plugin-iam            组织/账号/角色/用户组/三方连接器（钉钉演示）
-         dsh-plugin-authn          双轨身份 + 令牌 + on-behalf-of 链
-         dsh-plugin-mcp            部署/灰度/回滚/健康熔断/权限组/调用网关/监控（真实 HTTP 传输层）
-         dsh-plugin-skillhub       提交→静态扫描→两级审批→版本化上架
-         dsh-plugin-agent          Agent 本体（resource-core 底座 + 机器凭证）
-         dsh-plugin-app            AI 应用（编排拓扑 + 应用指标 + 成本穿透）
-         dsh-plugin-usage          计量管道（schema v1 / 幂等 / 死信重放 / 价格簿 / 三方对账 / 能力漂移）
-         dsh-plugin-modelgw        模型接入网关（OpenAI 兼容真实转发 / 零价快照计量 / 内部成本参考）
-         dsh-plugin-market         第三方与自营插件市场（契约五面 / Ed25519 验签 / L0 运行时 / 零价计量声明）
-         dsh-plugin-audit          四类审计日志 + 告警规则 + 成本归集 + 审批中心
-         dsh-plugin-connect        远程 dsh 接入（宿主角色：接入码/enroll/客户端管理；客户端角色：凭证申请 + 工具远程代理 + 本机配置页）
-         dsh-plugin-update         平台自更新：上游版本检查（自动+手动）→ 通知 → source 形态一键升级（git pull + npm install，dry-run/审计/权限点）
-         dsh-plugin-portal         门户数据通道（外部拉取端点·非核心：企业门户免鉴权只读拉取已上线应用/Agent/技能，CORS + 可见性留痕，PORTAL_SYNC=off 可停用，见 docs/portal-integration.md）
-底座     dsh-plugin-resource-core  资源本体：属性 schema + 生命周期状态机 + 依赖图
-基础层   dsh-plugin-platform-core  存储(JSON集合/原子落盘) + SQLite 事务存储 + YAML 解析 + 事件总线 + ToolRuntime-lite + HTTP
+接入层   dsh-plugin-console          REST 网关 + 控制台 SPA + 工具桥 + 种子数据
+         dsh-plugin-dsh-bridge       宿主桥：平台数据面（REST/控制台 SPA/docs/MCP）以 /rq 前缀挂进 dsh webServer，dsh web 端口即唯一入口
+         dsh-plugin-panel-core       部门 Agent 工作台面板（/panel SPA + /api/panel/* REST + SSE）
+         dsh-plugin-dingtalk-bridge  钉钉桥接（群桥/出向投递/审批推送/告警通道）
+         dsh-plugin-rq-card          会话侧注入卡片（四态执行卡 + 👍/👎 反馈条，dsh.client 双面插件）
+业务域   dsh-plugin-iam              组织/账号/角色/用户组/三方连接器（钉钉演示）
+         dsh-plugin-authn            双轨身份 + 令牌 + on-behalf-of 链
+         dsh-plugin-mcp              部署/灰度/回滚/健康熔断/权限组/调用网关/监控（真实 HTTP 传输层）
+         dsh-plugin-nas              NAS 文件存储资产纳管（MCP 文件网关通道 / 组织位置 RBAC / 签名下载链接 / Skill 包直传）
+         dsh-plugin-skillhub         提交→静态扫描→两级审批→版本化上架
+         dsh-plugin-agent            Agent 本体（resource-core 底座 + 机器凭证）
+         dsh-plugin-app              AI 应用（编排拓扑 + 应用指标 + 成本穿透）
+         dsh-plugin-usage            计量管道（schema v1 / 幂等 / 死信重放 / 价格簿 / 三方对账 / 能力漂移）
+         dsh-plugin-modelgw          模型接入网关（OpenAI 兼容真实转发 / 零价快照计量 / 内部成本参考）
+         dsh-plugin-connector        SaaS 连接器纳管（open-connector sidecar 作数据面：Provider 目录 / OAuth 代理 / 凭证保险库 / 双层授权镜像 / 计量对账）
+         dsh-plugin-market           第三方与自营插件市场（契约五面 / Ed25519 验签 / L0 运行时 / 零价计量声明）
+         dsh-plugin-audit            四类审计日志 + 告警规则 + 成本归集 + 审批中心
+         dsh-plugin-connect          远程 dsh 接入（宿主角色：接入码/enroll/客户端管理；客户端角色：凭证申请 + 工具远程代理 + 本机配置页）
+         dsh-plugin-update           平台自更新：上游版本检查（自动+手动）→ 通知 → source 形态一键升级（git pull + npm install，dry-run/审计/权限点）
+         dsh-plugin-portal           门户数据通道（外部拉取端点·非核心：企业门户免鉴权只读拉取已上线应用/Agent/技能，CORS + 可见性留痕，PORTAL_SYNC=off 可停用，见 docs/portal-integration.md）
+         dsh-plugin-flow-core        事务流引擎（TF 编排 + 步骤状态机 / 模板库 contextPack / SLA 与进度 / 甘特时间轴）
+         dsh-plugin-exec-hub         执行中枢（目标血缘 / 心跳唤醒 / 任务执行锁 CAS / 例行调度）
+         dsh-plugin-workforce        数字员工域（员工/任用/permit 工作授权/受控调用/交付验收）
+底座     dsh-plugin-resource-core    资源本体：属性 schema + 生命周期状态机 + 依赖图
+基础层   dsh-plugin-platform-core    存储(JSON集合/原子落盘) + SQLite 事务存储 + YAML 解析 + 事件总线 + ToolRuntime-lite + HTTP
 ```
 
 **插件协作铁律**：状态变更必发事件；跨插件联动只通过事件总线或扩展点（`ctx.platformBus`），
@@ -646,4 +655,4 @@ PV 同日累加与 UV/DAU 取最大、成本穿透恒等、技能热力矩阵、
 
 ---
 
-> 最近更新：2026-10-15 · 审查反馈整体整改批次——组织隔离 fail-closed、MCP 工具权限最小化（存量工具逐一补声明最小权限 permission，`/mcp` tools/call 的 console.login 基线收敛为漏声明 fail-safe）、模型渠道降级链预算守卫、/docs 白名单公开、内核韧性十项收口；控制台 ⌘K 命令面板页面索引补齐 6 条真实路由（NAS 存储/数据权限/财务视图/连接器/资产登记/宿主服务连接），sceneCode 全链路口径补注面板任务创建入口（本批次接线）。此前：2026-10-15 · 执行中枢 plugin-exec-hub 整体交付 + 六大能力治理收口 R2-R12——目标对齐（exec:goals 目标树+指标三件套→projects→issues）、30s 心跳循环（唤醒队列/治理前置链/健康度五档）、issue 执行锁 CAS、例行调度（interval/cron/webhook）、Agent 组织化、主体预算联动冻结+L4 解冻、模型目录管理面、多公司清单收口与自审批复议（[docs/qa-report-20261014-execution-hub-delivery.md](docs/qa-report-20261014-execution-hub-delivery.md)；selftest 1257/1257）。此前：2026-10-13 · 全局重构 REFACTOR-2026-10-13 七项收敛（对照 paperclip）——R4 console 后端拆分（4,702→300 行 15 域文件）+ R5 鉴权样板收敛 rest-gate 单实现 + R1 汉化收敛（真实残留清零，lint:cjk 门禁）+ R10 协议键中文对照总表（280 键）+ 错误映射全集断言 + R6 连接器风险声明目录（S1/S2 分层）+ R7 设计 token 三端单源（定制轨覆写 :root 即换品牌色）。产品能力口径以 [docs/release-notes-2026-09-09-m0.md](docs/release-notes-2026-09-09-m0.md) 为准。
+> 最近更新：2026-10-15 · 数字员工二期 W 批次整体交付——MCP 工具可信风险登记流程（V11 根治）、REST/Panel 接入面等价收敛、usage 代报白名单、workforce.admin 运维面、灰度交付包（蓝本与批次计划见 [docs/数字员工二期开发计划-20261015.md](docs/数字员工二期开发计划-20261015.md)；六门验证：lint 全绿 · selftest ≥1380 · drill ≥37，详见批次提交）。此前：2026-10-15 · 审查反馈整体整改批次——组织隔离 fail-closed、MCP 工具权限最小化（存量工具逐一补声明最小权限 permission，`/mcp` tools/call 的 console.login 基线收敛为漏声明 fail-safe）、模型渠道降级链预算守卫、/docs 白名单公开、内核韧性十项收口；控制台 ⌘K 命令面板页面索引补齐 6 条真实路由（NAS 存储/数据权限/财务视图/连接器/资产登记/宿主服务连接），sceneCode 全链路口径补注面板任务创建入口（本批次接线）。此前：2026-10-15 · 执行中枢 plugin-exec-hub 整体交付 + 六大能力治理收口 R2-R12——目标对齐（exec:goals 目标树+指标三件套→projects→issues）、30s 心跳循环（唤醒队列/治理前置链/健康度五档）、issue 执行锁 CAS、例行调度（interval/cron/webhook）、Agent 组织化、主体预算联动冻结+L4 解冻、模型目录管理面、多公司清单收口与自审批复议（[docs/qa-report-20261014-execution-hub-delivery.md](docs/qa-report-20261014-execution-hub-delivery.md)；selftest 1257/1257）。此前：2026-10-13 · 全局重构 REFACTOR-2026-10-13 七项收敛（对照 paperclip）——R4 console 后端拆分（4,702→300 行 15 域文件）+ R5 鉴权样板收敛 rest-gate 单实现 + R1 汉化收敛（真实残留清零，lint:cjk 门禁）+ R10 协议键中文对照总表（280 键）+ 错误映射全集断言 + R6 连接器风险声明目录（S1/S2 分层）+ R7 设计 token 三端单源（定制轨覆写 :root 即换品牌色）。产品能力口径以 [docs/release-notes-2026-09-09-m0.md](docs/release-notes-2026-09-09-m0.md) 为准。

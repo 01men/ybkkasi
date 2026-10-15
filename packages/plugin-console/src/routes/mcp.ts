@@ -8,6 +8,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { CallerInfo, HttpExchange } from '../../../platform-core/src/index.ts'
+import { workRefFromArgs } from '../../../plugin-mcp/src/tools.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export interface McpRouteDeps extends ConsoleRouteDeps {
@@ -36,7 +37,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   }))
 
   guarded('POST', '/api/mcp/services', 'mcp.service.write', (exchange) => {
-    const input = body<{ name: string; slug?: string; description?: string; icon?: string; endpoint?: string; transport?: 'stdio' | 'sse' | 'http'; mode?: 'hosted' | 'external'; orgId?: string; headers?: Record<string, string>; tools?: Array<{ name: string; description: string; riskLevel?: 'read' | 'write' | 'admin'; inputSchema?: Record<string, unknown> }> }>(exchange)
+    const input = body<{ name: string; slug?: string; description?: string; icon?: string; endpoint?: string; transport?: 'stdio' | 'sse' | 'http'; mode?: 'hosted' | 'external'; orgId?: string; headers?: Record<string, string>; tools?: Array<{ name: string; description: string; riskLevel?: 'read' | 'write' | 'admin' | 'unknown'; inputSchema?: Record<string, unknown> }> }>(exchange)
     // orgId 缺省回落根组织（与 /api/mcp/import 同口径）：外部推送方（机器凭证）无需 iam.org.read 即可注册
     const orgId = input.orgId ?? ctx.iam.orgs().findOne((org) => org.parentId === null)?.id
     const service = ctx.mcpRegistry.createService({
@@ -46,7 +47,8 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
       ...(input.tools ? { tools: input.tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
-        riskLevel: tool.riskLevel ?? 'read',
+        // W1/V11 根治：REST 创建服务的风险缺省不再隐式 read——未申报即 unknown（写能力须先经风险登记）
+        riskLevel: tool.riskLevel ?? 'unknown',
         // 完整透传外部工具的 inputSchema（导入链路的关键信息），仅缺省时兜底空对象
         inputSchema: tool.inputSchema && typeof tool.inputSchema === 'object' && Object.keys(tool.inputSchema).length > 0
           ? tool.inputSchema
@@ -200,14 +202,94 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
     return { deleted: true }
   })
 
+  // W2（D11 additive）：REST 面与工具面同一套 work 引用白名单口径（workRefFromArgs）——
+  // 仅 permitId/runId/stepKey 三键作索引透传（空串剔除、其余键一律忽略），授权事实一律服务端回查；
+  // 身份解析链不动（仍令牌解析 resolveMcpCaller，不接受请求参数自报身份）。
   guarded('POST', '/api/mcp/invoke', 'mcp.invoke', async (exchange) => {
-    const input = body<{ serviceId: string; tool: string; args?: Record<string, unknown> }>(exchange)
+    const input = body<{ serviceId: string; tool: string; args?: Record<string, unknown>; work?: { permitId?: string; runId?: string; stepKey?: string } }>(exchange)
     const info = caller(exchange)
     return await ctx.mcpRegistry.invoke({
       ...resolveMcpCaller(info),
       ...(info.actChain.length > 0 ? { actChain: info.actChain } : {}),
       ...(info.actChain.length > 0 ? { onBehalfOf: info.actChain[0]!.name } : {}),
-    }, input.serviceId, input.tool, input.args ?? {})
+    }, input.serviceId, input.tool, input.args ?? {}, workRefFromArgs(input.work))
+  })
+
+  // -- MCP 工具风险登记（W 批次 W1 · V11 根治：登记→两级审批→生效→重审清单→退场） ------------
+  // 全域权限点 mcp.risk.admin；审批人身份一律取 caller（body 不收审批人，防代审）；全部动作 changeLog 留痕。
+  // 取用口径：经 ctx.mcpRegistry.riskRegistry()（同插件直连引用）——console 的 inject 清单未含
+  // mcpToolRisks，cordis 严格注入下直接访问 ctx.mcpToolRisks 会被拦（without inject）。
+  const risks = () => {
+    const registry = ctx.mcpRegistry.riskRegistry()
+    if (!registry) throw new Error('MCP 工具风险登记服务未装配（请确认 plugin-mcp 版本）')
+    return registry
+  }
+  guarded('POST', '/api/mcp/risk-registry', 'mcp.risk.admin', (exchange) => {
+    const input = body<{ serviceId: string; toolName: string; risk: 'read' | 'write' | 'admin'; reason: string }>(exchange)
+    if (!input.reason?.trim()) throw new Error('登记必须填写原因（write/admin 风险更须说明用途与影响面）')
+    const info = caller(exchange)
+    const record = risks().submit({
+      serviceId: input.serviceId,
+      toolName: input.toolName,
+      risk: input.risk,
+      reason: input.reason,
+      actor: { id: info.userId ?? info.principalId, name: info.name },
+    })
+    changeLog(exchange, 'mcp.risk.submit', 'mcp_tool_risk', record.id, `${record.serviceId}/${record.toolName}`, `risk=${record.risk} status=${record.status}`)
+    return record
+  })
+
+  guarded('POST', '/api/mcp/risk-registry/:id/decide', 'mcp.risk.admin', (exchange) => {
+    const input = body<{ decision: 'approve' | 'reject'; level: 'domain' | 'security'; opinion?: string }>(exchange)
+    const id = exchange.params['id']!
+    const record = risks().get(id)
+    if (!record) {
+      exchange.fail(404, 'RISK_RECORD_NOT_FOUND', `风险登记不存在：${id}`)
+      return
+    }
+    // level 与当前 pending 级别不匹配 → 400 中文错误（顺序状态机不可跳级，D-①）
+    const pendingLevel = record.status === 'pending_domain' ? 'domain' : record.status === 'pending_security' ? 'security' : undefined
+    if (!pendingLevel) {
+      exchange.fail(400, 'RISK_NOT_PENDING', `当前状态 ${record.status} 不可审批（仅 pending 态可审批）`)
+      return
+    }
+    if (input.level !== pendingLevel) {
+      exchange.fail(400, 'RISK_LEVEL_MISMATCH', pendingLevel === 'domain'
+        ? '当前等待领域审批（level 须为 domain）'
+        : '当前等待安全审批（level 须为 security；write/admin 风险必须安全加签）')
+      return
+    }
+    const info = caller(exchange)
+    const updated = risks().decide(id, {
+      decision: input.decision,
+      level: input.level,
+      opinion: input.opinion ?? '',
+      actor: { id: info.userId ?? info.principalId, name: info.name },
+    })
+    changeLog(exchange, `mcp.risk.${input.decision}`, 'mcp_tool_risk', updated.id, `${updated.serviceId}/${updated.toolName}`, `${input.level} → ${updated.status}`)
+    return updated
+  })
+
+  guarded('GET', '/api/mcp/risk-registry', 'mcp.risk.admin', (exchange) => {
+    return risks().list({
+      serviceId: exchange.query.get('serviceId') ?? undefined,
+      status: exchange.query.get('status') ?? undefined,
+    })
+  })
+
+  // D-⑤=a 全量重审清单：external+real 服务全工具「申报值 vs 生效登记值」逐一对账（含 orphan）
+  guarded('GET', '/api/mcp/risk-registry/review-list', 'mcp.risk.admin', () => risks().reviewList())
+
+  guarded('POST', '/api/mcp/risk-registry/:id/retire', 'mcp.risk.admin', (exchange) => {
+    const input = body<{ reason: string }>(exchange)
+    if (!input.reason?.trim()) throw new Error('退场必须填写原因（护栏要求，重审与追溯依赖该口径）')
+    const info = caller(exchange)
+    const record = risks().retire(exchange.params['id']!, {
+      reason: input.reason,
+      actor: { id: info.userId ?? info.principalId, name: info.name },
+    })
+    changeLog(exchange, 'mcp.risk.retire', 'mcp_tool_risk', record.id, `${record.serviceId}/${record.toolName}`, input.reason)
+    return record
   })
 
   // -- 连接器纳管（open-connector 融合） ------------------------------------

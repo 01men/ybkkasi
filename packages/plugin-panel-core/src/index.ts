@@ -390,7 +390,9 @@ export function apply(ctx: Context) {
       ddSync: false, ...(result.model ? { replyModel: result.model } : {}),
       ...(trace.sceneCode ? { sceneCode: trace.sceneCode } : {}),
     })
-    return { ok: true as const, reply: result.reply, model: result.model, skill: result.skill, message: trace, replyMessage: reply }
+    // D09/V12 加载证据化：REST 面与工具面（panel_skill_invoke）同构，均随 ok 应答回带
+    // skillLoad { skillId, version, contentHash }（service.invokeSkill 已构造 sha256 指纹，路由层透传不丢弃）
+    return { ok: true as const, reply: result.reply, model: result.model, skill: result.skill, message: trace, replyMessage: reply, skillLoad: result.skillLoad }
   })
 
   // -- 任务看板 -----------------------------------------------------------------
@@ -851,6 +853,8 @@ export function apply(ctx: Context) {
       required: ['skill', 'message'],
     },
     output: { schema: { type: 'object' }, render: renderJson },
+    // 工具面与 REST 面（POST /api/panel/:dept/skills/invoke）共用 panel.invokeSkill 原语，
+    // 返回结构同构：ok 时均含 skillLoad { skillId, version, contentHash } 加载指纹（D09/V12 对账证据）。
     async execute(args, exec) {
       const input = args as { skill: string; message: string; context_note?: string }
       return await panel.invokeSkill(input.skill, input.message, {

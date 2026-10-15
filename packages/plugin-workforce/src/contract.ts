@@ -43,6 +43,23 @@ export type {
   WorkPolicyDecision,
 } from '../../platform-core/src/workforce-port.ts'
 
+// ---------------------------------------------------------------------------
+// 灰度开关契约（W 批次 W7，决策 D-②：组织级启停）
+// ---------------------------------------------------------------------------
+
+/**
+ * 灰度开关（W7 契约冻结 2026-10-15，D-② 组织级）：
+ *   - grayMode='off'（默认）：全组织开放，等价一期行为；
+ *   - grayMode='allowlist'：仅 enabledOrgs 列表内组织可走工作路径（认领/续租/受控调用），
+ *     名单外组织一律拒绝（WORKFORCE_DISABLED）并可观测（workforce.gray.denied 事件）。
+ * 关闭语义＝显式拒绝而非静默回落 legacy（与 V29「不静默无策略放行」同口径）：
+ * 在 port.authorizeWorkAction 与 admission 认领/续租入口同步收口，网关侧 denied 照常落账。
+ */
+export interface WorkforceGrayConfig {
+  grayMode?: 'off' | 'allowlist'
+  enabledOrgs?: string[]
+}
+
 /** 领域错误：code 为统一拒绝码（中文映射见 platform-core WORK_DENY_CODE_LABELS）。 */
 export class WorkforceError extends Error {
   readonly code: WorkDenyCode
