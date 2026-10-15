@@ -41,20 +41,27 @@ import { renderRegister } from './pages/register.js'
 import { renderPlatform } from './pages/platform.js'
 import { renderConnect } from './pages/connect.js'
 import { renderConnections } from './pages/connections.js'
+import { renderGateway } from './pages/gateway.js'
+import { renderUsage } from './pages/usage.js'
+import { renderAccess } from './pages/access.js'
 import { renderOauthAuthorize, renderOauthError, renderOauthLogout } from './pages/oauth.js'
 import { mountUpdateBadge, openUpdateDrawer } from './update.js'
 
+// 导航分组（Kimi CIO 仪表盘设计适配，2026-10-14 · docs/design-adaptation-spec-20261014.md §4）：
+// 主干四组「总览 / 资源 / 治理 / 企业」对齐设计稿信息架构；全部既有功能页保留入组。
 const NAV = [
   { section: '总览', items: [
     { path: '#/dashboard', label: '工作台', icon: 'dashboard', perm: 'console.login' },
     // 部门面板（review-dsh-agent-panel-v2）：独立零构建 SPA，经 ext 外链进入（/panel，挂载形态 /rq/panel/）
     { ext: () => `${BASE}/panel/`, label: '部门面板', icon: 'users', perm: 'console.login', landing: 'panel' },
-    // 执行中枢（D 团队）：目标/项目/任务/调度四位一体（#/exec），与部门面板同属「总览」事务分组
+    // 执行中枢：目标/项目/任务/调度四位一体（#/exec），工作台「目标与价值/行动项目」tab 的下钻落点
     { path: '#/exec', label: '执行中枢', icon: 'target', perm: 'exec.read' },
   ] },
-  { section: 'AI 资源', items: [
+  { section: '资源', items: [
+    { path: '#/assets', label: '资产台账', icon: 'boxes', perm: 'usage.read' },
+    { path: '#/skills', label: 'AI 市场', icon: 'store', perm: 'skill.read', badge: 'skills' },
+    { path: '#/gateway', label: '模型网关', icon: 'route', perm: 'usage.read' },
     { path: '#/register', label: '资产登记', icon: 'zap', perm: 'console.login' },
-    { path: '#/skills', label: 'Skill 市场', icon: 'sparkles', perm: 'skill.read', badge: 'skills' },
     { path: '#/agents', label: 'Agent 本体', icon: 'bot', perm: 'agent.read' },
     { path: '#/apps', label: 'AI 应用', icon: 'app', perm: 'app.read' },
     { path: '#/mcp', label: 'MCP 服务', icon: 'plug', perm: 'mcp.service.read' },
@@ -62,20 +69,18 @@ const NAV = [
     { path: '#/nas-authz', label: '数据权限', icon: 'shield', perm: 'nas.authz.read' },
     { path: '#/connectors', label: '连接器', icon: 'plug', perm: 'connector.catalog.read' },
   ] },
-  { section: '治理与运营', items: [
-    { path: '#/assets', label: '资产运营', icon: 'layers', perm: 'usage.read' },
+  { section: '治理', items: [
+    { path: '#/usage', label: '用量与成本', icon: 'barChart3', perm: 'usage.read' },
     { path: '#/finops', label: '财务视图', icon: 'coins', perm: 'usage.read' },
-    { path: '#/approvals', label: '审批中心', icon: 'checkSquare', perm: 'approval.read', badge: 'approvals' },
-    { path: '#/audit', label: '审计与告警', icon: 'scroll', perm: 'audit.read', badge: 'alerts' },
+    { path: '#/approvals', label: '审批中心', icon: 'fileCheck', perm: 'approval.read', badge: 'approvals' },
+    { path: '#/audit', label: '审计与告警', icon: 'shieldAlert', perm: 'audit.read', badge: 'alerts' },
     { path: '#/authn', label: '认证与令牌', icon: 'key', perm: 'authn.principal.read' },
   ] },
-  { section: '组织', items: [
-    { path: '#/iam', label: '组织与账号', icon: 'users', perm: 'iam.user.read' },
+  { section: '企业', items: [
+    { path: '#/iam', label: '组织与账号', icon: 'building2', perm: 'iam.user.read' },
     { path: '#/iam?tab=roles', label: '角色权限', icon: 'shield', perm: 'iam.org.read' },
     { path: '#/iam?tab=connectors', label: '三方集成', icon: 'link', perm: 'iam.org.read' },
-  ] },
-  { section: '平台', items: [
-    { path: '#/connect', label: '平台接入', icon: 'fingerprint', perm: 'connect.manage' },
+    { path: '#/access', label: '平台接入', icon: 'fingerprint', perm: 'connect.manage' },
     { path: '#/connections', label: '宿主服务连接', icon: 'server', perm: 'console.login' },
     { path: '#/platform', label: '插件与工具', icon: 'puzzle', perm: 'console.login' },
   ] },
@@ -142,6 +147,9 @@ function navigate() {
     platform: renderPlatform,
     connect: renderConnect,
     connections: renderConnections,
+    gateway: renderGateway,
+    usage: renderUsage,
+    access: renderAccess,
   }
   const builder = builders[page] ?? renderDashboard
   renderShell(page, params, builder)
@@ -154,8 +162,8 @@ function renderShell(page, params, builder) {
         <div class="sidebar-brand">
           <img class="brand-mark brand-logo" src="ybk-mark.png" alt="元冰可">
           <div>
-            <div class="brand-name" style="white-space:normal;font-size:13px;line-height:1.35">元冰可 · 企业AI资源管理平台</div>
-            <div class="brand-sub">DeepSeek Harness · 一切皆插件</div>
+            <div class="brand-name" style="font-size:13.5px;line-height:1.3">元冰可 AIOS</div>
+            <div class="brand-sub">企业 AI 资源管理平台</div>
           </div>
         </div>
         <nav class="sidebar-nav" id="nav"></nav>
@@ -208,14 +216,14 @@ function renderShell(page, params, builder) {
     nav.appendChild(sec)
   }
 
-  // 侧边栏底部用户信息
+  // 侧边栏底部用户信息（浅色侧栏 · 设计适配：文字用语义 token，不再内联深色底专用色值）
   const footer = $('#sidebar-footer')
   footer.innerHTML = `
     <div class="flex" style="gap:10px">
       <div class="avatar sm">${esc((session.user?.displayName ?? '?').slice(0, 1))}</div>
       <div class="grow" style="min-width:0">
-        <div class="fs-13 ellipsis" style="color:#e5e7eb">${esc(session.user?.displayName ?? '')}</div>
-        <div class="fs-11 text-4 ellipsis">${esc(session.user?.roles?.[0] ?? '成员')}</div>
+        <div class="fs-13 ellipsis" style="font-weight:600">${esc(session.user?.displayName ?? '')}</div>
+        <div class="fs-11 ellipsis" style="color:var(--text-3)">${esc(session.user?.roles?.[0] ?? '成员')}</div>
       </div>
       <button class="icon-btn" id="btn-logout" title="退出登录" style="width:28px;height:28px">${icon('logout', 15)}</button>
     </div>`

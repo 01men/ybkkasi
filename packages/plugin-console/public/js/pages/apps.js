@@ -25,12 +25,12 @@ function appIconHtml(value) {
   return `<div class="res-icon" style="background:linear-gradient(135deg,#eef6ff,#dcecff);font-size:21px">${esc(String(value ?? '').trim() || '✨')}</div>`
 }
 
-/** 平台授权直达：签发一次性入场票据后带 #entry_ticket 打开应用（裸跳转已下线，与应用自有 OIDC 接入互不影响）。 */
+/** 平台授权直达：签发一次性入场票据后带 #entry_ticket 同窗口整页跳转应用
+ *  （裸跳转已下线；弹窗子窗口已消灭——与应用自有 OIDC 接入互不影响，§6）。 */
 async function openAppEntry(app) {
   try {
     const issued = await api.post(`/api/apps/${app.id}/entry-ticket`)
-    window.open(`${app.attrs['url']}#entry_ticket=${encodeURIComponent(issued.ticket)}`, '_blank', 'noopener')
-    toast(`已带平台身份打开（票据 ${issued.ttlSeconds}s 内有效，已留痕审计）`)
+    location.assign(`${app.attrs['url']}#entry_ticket=${encodeURIComponent(issued.ticket)}`)
   } catch (error) { toast(error.message, 'error') }
 }
 
@@ -53,8 +53,9 @@ export async function renderApps(content, params, ctx) {
   content.innerHTML = `
     <div class="page-head">
       <div>
-        <div class="page-title">AI 应用本体管理</div>
-        <div class="page-desc">在 Agent 底座上扩展应用形态与访问入口；应用 → Agent → MCP/Skill 依赖一图穿透，成本链路可归集。</div>
+        <div class="micro-label">AI APPS</div>
+        <div class="page-title">AI 应用</div>
+        <div class="page-sub">在 Agent 底座上扩展应用形态与访问入口；应用 → Agent → MCP/Skill 依赖一图穿透，成本链路可归集。</div>
       </div>
       <div class="page-actions">
         <button class="btn btn-primary" id="app-add">${icon('plus', 14)}注册应用</button>

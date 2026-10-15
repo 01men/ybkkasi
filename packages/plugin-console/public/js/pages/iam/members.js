@@ -36,13 +36,19 @@ export async function renderMembers(ctx) {
   const body = $('#iam-body')
   body.innerHTML = `
     <div style="display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start">
-      <div class="card" style="padding:10px 8px">
-        <div class="flex" style="padding:4px 8px 8px;justify-content:space-between">
-          <span class="fs-12 text-3" style="font-weight:600">组织架构</span>
-          <span class="fs-11 text-4" id="org-user-total">${usersData.total} 人</span>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="card" style="padding:10px 8px">
+          <div class="flex" style="padding:4px 8px 8px;justify-content:space-between">
+            <span class="fs-12 text-3" style="font-weight:600">组织架构</span>
+            <span class="fs-11 text-4" id="org-user-total">${usersData.total} 人</span>
+          </div>
+          <div class="tree" id="org-tree"></div>
+          <div class="fs-11 text-4" style="padding:8px 8px 2px;margin-top:6px;border-top:1px dashed var(--border);display:flex;gap:5px;align-items:center">${icon('gitBranch', 11)}<span>把右侧成员拖到部门上可直接调岗</span></div>
         </div>
-        <div class="tree" id="org-tree"></div>
-        <div class="fs-11 text-4" style="padding:8px 8px 2px;margin-top:6px;border-top:1px dashed var(--border);display:flex;gap:5px;align-items:center">${icon('gitBranch', 11)}<span>把右侧成员拖到部门上可直接调岗</span></div>
+        <div class="card" style="padding:12px 14px" id="iam-conn-card">
+          <div class="micro-label" style="margin-bottom:8px">三方连接器</div>
+          <div class="fs-12 text-4">加载中…</div>
+        </div>
       </div>
       <div>
         <div class="filter-bar">
@@ -56,6 +62,24 @@ export async function renderMembers(ctx) {
         <div id="org-leader-bar"></div>
         <div id="member-batchbar"></div>
         <div id="member-table"></div>
+      </div>
+    </div>
+    <div class="grid-cards g4 mt-14" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:14px">
+      <div class="card" style="padding:14px">
+        <div class="flex" style="gap:6px;align-items:center;font-size:13px;font-weight:500">${icon('shield', 14)} 权限点矩阵</div>
+        <div class="fs-12 text-3 mt-4" style="line-height:1.7">角色 × 权限点统一注册，接口按权限点实时校验，越权调用即拒绝并留痕。</div>
+      </div>
+      <div class="card" style="padding:14px">
+        <div class="flex" style="gap:6px;align-items:center;font-size:13px;font-weight:500">${icon('users', 14)} 动态用户组</div>
+        <div class="fs-12 text-3 mt-4" style="line-height:1.7">用户组按组织链圈人，NAS 数据权限 C 叠加组跨域只读随组织变动自动重算。</div>
+      </div>
+      <div class="card" style="padding:14px">
+        <div class="flex" style="gap:6px;align-items:center;font-size:13px;font-weight:500">${icon('fingerprint', 14)} 一人一号</div>
+        <div class="fs-12 text-3 mt-4" style="line-height:1.7">同一三方身份仅可绑定一个平台账号（引擎级唯一约束），冲突进入对比式工单处理。</div>
+      </div>
+      <div class="card" style="padding:14px">
+        <div class="flex" style="gap:6px;align-items:center;font-size:13px;font-weight:500">${icon('alert', 14)} 冻结联动</div>
+        <div class="fs-12 text-3 mt-4" style="line-height:1.7">冻结账号即吊销其全部访问令牌（含 refresh 链），登录与调用入口立即失效。</div>
       </div>
     </div>
     <div class="card" id="agent-org-card" style="margin-top:14px"></div>`
@@ -220,30 +244,41 @@ export async function renderMembers(ctx) {
     const data = await api.get('/api/iam/users' + search)
     $('#member-count').textContent = `共 ${data.total} 人`
     renderLeaderBar()
+    // MFA 列仅在数据源真实提供该字段时出现（设计 §5.8「MFA 若有」——无数据不造假列）
+    const mfaKey = ['mfaEnabled', 'mfa'].find((key) => data.users.some((u) => u && u[key] !== undefined))
+    const columns = [
+      {
+        title: '<input type="checkbox" class="member-checkall" title="全选本页成员">',
+        width: '36px', cls: 'col-check',
+        render: (u) => `<input type="checkbox" class="member-check" data-id="${esc(u.id)}"${selectedUserIds.has(u.id) ? ' checked' : ''}>`,
+      },
+      {
+        title: '成员', width: '20%',
+        render: (u) => `
+          <div class="flex" style="gap:10px">
+            <div class="avatar sm">${esc(u.displayName.slice(0, 1))}</div>
+            <div>
+              <div class="col-strong">${esc(u.displayName)}${nameStatusMismatch(u)}</div>
+            </div>
+          </div>`,
+      },
+      { title: '账号', width: 130, render: (u) => `<span class="mono fs-12 text-3">@${esc(u.username)}</span>` },
+      { title: '角色', render: (u) => (u.roles?.length ? u.roles.map((r) => `<span class="badge badge-brand no-dot" style="margin-right:4px">${esc(r.name)}</span>`).join('') : '<span class="text-4">未分配</span>') },
+      { title: '组织 / 职位', render: (u) => `<div>${esc(u.orgName || '—')}</div><div class="col-sub">${esc(u.title || '—')}</div>` },
+      { title: '三方绑定', render: (u) => u.bindings?.length ? u.bindings.map((b) => `<span class="badge badge-purple no-dot">${esc(providerName(b.provider))}</span>`).join(' ') : '<span class="text-4">—</span>' },
+      { title: '状态', width: 90, render: (u) => statusBadge(u.status) },
+      { title: '最近登录', width: 130, render: (u) => `<span class="fs-12 text-3">${timeAgo(u.lastLoginAt)}</span>` },
+    ]
+    if (mfaKey) {
+      columns.push({
+        title: 'MFA', width: 90,
+        render: (u) => u[mfaKey]
+          ? `<span class="fs-12" style="color:var(--ok)">${icon('shieldCheck', 12)} 已开启</span>`
+          : '<span class="fs-12" style="color:var(--warn)">未开启</span>',
+      })
+    }
     const table = renderTable({
-      columns: [
-        {
-          title: '<input type="checkbox" class="member-checkall" title="全选本页成员">',
-          width: '36px', cls: 'col-check',
-          render: (u) => `<input type="checkbox" class="member-check" data-id="${esc(u.id)}"${selectedUserIds.has(u.id) ? ' checked' : ''}>`,
-        },
-        {
-          title: '姓名', width: '22%',
-          render: (u) => `
-            <div class="flex" style="gap:10px">
-              <div class="avatar sm">${esc(u.displayName.slice(0, 1))}</div>
-              <div>
-                <div class="col-strong">${esc(u.displayName)}${nameStatusMismatch(u)}</div>
-                <div class="col-sub">@${esc(u.username)}</div>
-              </div>
-            </div>`,
-        },
-        { title: '部门 / 职位', render: (u) => `<div>${esc(u.orgName || '—')}</div><div class="col-sub">${esc(u.title || '—')}</div>` },
-        { title: '角色', render: (u) => (u.roles?.length ? u.roles.map((r) => `<span class="badge badge-brand no-dot" style="margin-right:4px">${esc(r.name)}</span>`).join('') : '<span class="text-4">未分配</span>') },
-        { title: '三方绑定', render: (u) => u.bindings?.length ? u.bindings.map((b) => `<span class="badge badge-purple no-dot">${esc(providerName(b.provider))}</span>`).join(' ') : '<span class="text-4">—</span>' },
-        { title: '状态', width: 90, render: (u) => statusBadge(u.status) },
-        { title: '最近登录', width: 130, render: (u) => `<span class="fs-12 text-3">${timeAgo(u.lastLoginAt)}</span>` },
-      ],
+      columns,
       rows: data.users,
       onRowClick: (id) => openUserDetail(id),
     })
@@ -504,6 +539,8 @@ export async function renderMembers(ctx) {
   await refreshMembers()
   // R7 人 + Agent 双层视图：组织树（人）之下的 Agent 名册卡；Agent 列表不可用时整卡降级隐藏
   void mountAgentOrgView(treeData)
+  // 三方连接器摘要卡（§5.8）：connectors tab 数据摘要——模式 / 频率 / 最近同步 / 冲突数；无权限或无配置时降级
+  void mountConnectorSummary()
 
   function openUserCreate(tree, users) {
     const modal = openModal({
@@ -871,5 +908,53 @@ async function mountAgentOrgView(treeData) {
     <div class="card-body" style="padding-top:0;padding-bottom:14px">
       ${agents.length ? orgBlocks : `<div class="tbl-empty">${icon('bot', 28)}<span>暂无 Agent——注册 Agent 并挂到组织后在此显示名册</span></div>`}
     </div>`
+}
+
+/**
+ * 三方连接器摘要卡（§5.8 默认视图左列）：取自 connectors tab 同源数据
+ * （GET /api/iam/connectors + /api/iam/conflicts），只读展示 模式 / 同步频率 / 最近同步 / 冲突数；
+ * 无 iam.connector 读权限或请求失败时降级移除整卡，完整管理在「三方集成」tab。
+ */
+async function mountConnectorSummary() {
+  const host = $('#iam-conn-card')
+  if (!host) return
+  let configs = []
+  try {
+    configs = (await api.get('/api/iam/connectors')).configs ?? []
+  } catch {
+    host.remove()
+    return
+  }
+  let conflictCount = null
+  try {
+    conflictCount = (await api.get('/api/iam/conflicts')).conflicts.length
+  } catch { /* 冲突数读不到时省略该行，不造假 */ }
+  const conflictText = conflictCount === null ? '' : ` · ${conflictCount} 冲突`
+  const jumpTab = (tab) => { location.hash = `#/iam?tab=${tab}` }
+  host.innerHTML = `
+    <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="micro-label">三方连接器</div>
+      <button class="btn btn-ghost btn-sm" id="iam-conn-more">管理 ${icon('chevronRight', 12)}</button>
+    </div>
+    ${configs.length ? configs.map((config) => `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <div class="flex" style="justify-content:space-between;align-items:center">
+          <span class="fs-13" style="font-weight:500">${esc(config.name || providerName(config.provider))}</span>
+          ${config.enabled
+            ? `<span class="fs-11" style="display:inline-flex;align-items:center;gap:5px;color:var(--ok)"><span class="dot dot-ok" style="width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block"></span>已启用</span>`
+            : '<span class="fs-11 text-4">未启用</span>'}
+        </div>
+        <div class="fs-12 text-3" style="margin-top:6px;line-height:1.8">
+          <div class="flex" style="justify-content:space-between"><span>模式</span><span class="mono">${config.mode === 'real' ? 'real' : 'mock'}</span></div>
+          <div class="flex" style="justify-content:space-between"><span>同步频率</span><span class="mono">${(config.intervalMinutes ?? 60) > 0 ? `每 ${config.intervalMinutes ?? 60} 分钟` : '仅手动'}</span></div>
+          <div class="flex" style="justify-content:space-between"><span>最近同步</span><span class="mono">${config.lastSyncAt ? timeAgo(config.lastSyncAt) : '从未同步'}${conflictText}</span></div>
+        </div>
+      </div>`).join('') : `
+      <div class="fs-12 text-4" style="line-height:1.8">尚未接入三方身份源——到「三方集成」tab 配置钉钉等连接器后，通讯录将按频率自动同步。</div>`}
+    ${conflictCount ? `<button class="btn btn-default btn-sm" id="iam-conn-conflicts" style="width:100%">${icon('alert', 12)}处理 ${conflictCount} 条同步冲突</button>` : ''}`
+  const moreBtn = host.querySelector('#iam-conn-more')
+  if (moreBtn) moreBtn.onclick = () => { jumpTab('connectors') }
+  const conflictBtn = host.querySelector('#iam-conn-conflicts')
+  if (conflictBtn) conflictBtn.onclick = () => { jumpTab('conflicts') }
 }
 

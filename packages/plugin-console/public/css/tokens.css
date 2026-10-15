@@ -15,25 +15,26 @@
 
    取值原则：token 值 = 三端现值的众数/主值，本次是收敛声明源，不改任何视觉。
 
-   ── 主题（元冰可品牌 · 科技蓝 + 微信绿） ─────────────────────────
-   品牌主色 = 元冰蓝 #0052D9（品牌规范 v1.0，占比 60%），点缀色 = 冰湖青
-   #00A3FF/#00C8FF（数据高亮/渐变端点），辅色 = 微信绿 #07C160（语义「通过/
-   安全/验证」，原语见 --wx-*）。深海军蓝 #0A2A6B/#0B1A33 用于深色底（原语见 --ink-*）。
+   ── 主题（CIO 仪表盘 · 暖纸 + 深青蓝，2026-10-14 设计适配） ────────
+   品牌主色 = 深青蓝 #0a5f87（hsl(201 88% 31%)，设计稿 --primary），点缀色 =
+   青/湖青 #38a8c8/#22b8cf（数据高亮/渐变端点，承接 sky-700→cyan-500 渐变语汇），
+   辅色 = 微信绿 #07C160（语义「通过/安全/验证」，原语见 --wx-*，保留）。
+   中性系切暖纸（hsl 30-45 低饱和）；侧栏深色→浅暖色（--sidebar-* 组）。
    定制轨覆写示例：:root { --brand-primary: #1E3A5F; --brand-accent: #07C160; }
    覆写只动别名层，不动原语层——控制台五平台主题 data-platform 覆写仍优先生效。
    ============================================================ */
 
 :root {
-  /* ---------- 品牌色（元冰蓝阶，品牌规范 v1.0：主色 #0052D9） ---------- */
-  --brand-50: #eef6ff;
-  --brand-100: #dcecff;
-  --brand-200: #b6d7ff;
-  --brand-300: #85b8ff;
-  --brand-400: #4d94ff;
-  --brand-500: #0052D9;
-  --brand-600: #0046bd;
-  --brand-700: #003a9e;
-  --brand-gradient: linear-gradient(135deg, #0052D9 0%, #00A3FF 62%, #00C8FF 100%);
+  /* ---------- 品牌色（深青蓝阶，主色 #0a5f87 = hsl(201 88% 31%)） ---------- */
+  --brand-50: #f0f7fa;
+  --brand-100: #dceef5;
+  --brand-200: #b6e0ee;
+  --brand-300: #7fcbe0;
+  --brand-400: #38a8c8;
+  --brand-500: #0a5f87;
+  --brand-600: #084d70;
+  --brand-700: #063d59;
+  --brand-gradient: linear-gradient(135deg, #075985 0%, #0e7490 55%, #22b8cf 100%);
 
   /* ---------- 品牌别名层（定制轨换肤的唯一切入点） ----------
      --brand-primary 承接高频主色（链接/主按钮/选中态）：默认指向主品牌阶，
@@ -63,17 +64,17 @@
   --wx-soft: rgba(7, 193, 96, 0.10);
   --wx-border: rgba(7, 193, 96, 0.30);
 
-  /* ---------- 功能/语义色（success / info / warn / danger，三端现值主值） ---------- */
-  --ok: #10b981;
+  /* ---------- 功能/语义色（success / info / warn / danger，对齐设计稿 emerald/sky/amber/red） ---------- */
+  --ok: #059669;
   --ok-bg: #ecfdf5;
   --ok-border: #a7f3d0;
-  --info: #3b82f6;
-  --info-bg: #eff6ff;
-  --info-border: #bfdbfe;
+  --info: #0284c7;
+  --info-bg: #f0f9ff;
+  --info-border: #bae6fd;
   --warn: #f59e0b;
   --warn-bg: #fffbeb;
   --warn-border: #fde68a;
-  --danger: #ef4444;
+  --danger: #dc2626;
   --danger-bg: #fef2f2;
   --danger-border: #fecaca;
   --purple: #8b5cf6;
@@ -81,27 +82,27 @@
   /* 语义阶扩展（徽章深文字/悬停深色/亮色图标，console+panel 现值） */
   --success-strong: #047857;
   --success-bright: #34d399;
-  --info-strong: #1d4ed8;
+  --info-strong: #0369a1;
   --warn-strong: #b45309;
   --warn-hover: #d97706;
   --danger-strong: #b91c1c;
   --danger-bright: #f87171;
-  --danger-hover: #dc2626;
+  --danger-hover: #b91c1c;
   --purple-strong: #6d28d9;
   --purple-border: #ddd6fe;
 
-  /* ---------- 中性色（控制台面板中性，主值） ---------- */
-  --bg: #f4f5f7;
+  /* ---------- 中性色（暖纸系：hsl(30-45°) 低饱和，对齐设计稿 stone/暖灰） ---------- */
+  --bg: #f8f6f3;
   --surface: #ffffff;
-  --surface-2: #f8f9fb;
+  --surface-2: #f0eeea;
   --surface-dark: #1c1f26;
   --code-fg: #d6dae3;
-  --border: #e7e8ec;
-  --border-strong: #d4d6dd;
-  --text-1: #1f2329;
-  --text-2: #4b5059;
-  --text-3: #8a8f99;
-  --text-4: #b3b8c0;
+  --border: #e0ddd8;
+  --border-strong: #d1cdc6;
+  --text-1: #231f1d;
+  --text-2: #4d4643;
+  --text-3: #706864;
+  --text-4: #a39c96;
   --white: #ffffff;
 
   /* ---------- 中性灰阶（部门面板现值，与面板 --line/--txt 等同源） ---------- */
@@ -115,17 +116,18 @@
   --gray-800: #1f2937;
   --gray-900: #111827;
 
-  /* ---------- 侧边栏（深色） ---------- */
-  --sidebar-bg: var(--surface-dark);
-  --sidebar-bg-2: #232732;
-  --sidebar-text: #a6adbb;
-  --sidebar-text-active: #ffffff;
-  --sidebar-hover: rgba(255, 255, 255, 0.06);
-  --sidebar-active: linear-gradient(90deg, rgba(0, 82, 217, 0.26), rgba(0, 82, 217, 0.08));
+  /* ---------- 侧边栏（浅暖色，2026-10-14 设计适配：深色侧栏→浅色） ---------- */
+  --sidebar-bg: #f2f0ec;
+  --sidebar-bg-2: #eae7e1;
+  --sidebar-text: #706864;
+  --sidebar-text-active: #231f1d;
+  --sidebar-hover: #eae7e1;
+  --sidebar-active: rgba(10, 95, 135, 0.10);
+  --sidebar-border: #e0ddd8;
 
-  /* ---------- 布局尺寸 ---------- */
-  --sidebar-w: 232px;
-  --topbar-h: 60px;
+  /* ---------- 布局尺寸（对齐设计稿 w-[218px] / h-14 顶栏体系） ---------- */
+  --sidebar-w: 218px;
+  --topbar-h: 56px;
 
   /* ---------- 间距（4px 步进） ---------- */
   --space-1: 4px;
@@ -160,9 +162,9 @@
   --fs-26: 26px;
   --fs-34: 34px;
 
-  /* ---------- 圆角 ---------- */
+  /* ---------- 圆角（--radius-md 对齐设计稿 --radius 0.5rem = 8px） ---------- */
   --radius-sm: 6px;
-  --radius-md: 10px;
+  --radius-md: 8px;
   --radius-lg: 14px;
   /* 兼容别名（console 既有 --radius-s/--radius/--radius-l 消费面零改动） */
   --radius-s: var(--radius-sm);
@@ -185,9 +187,9 @@
   --z-toast: 200;
   --z-cmdk: 300;
 
-  /* ---------- 字体 ---------- */
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Consolas, monospace;
+  /* ---------- 字体（Inter 前缀：系统无该字体时自然回退，不引外部字体文件） ---------- */
+  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
 
   /* ---------- rq-card 内联变量（单源对照表） ----------
      rq-card 浏览器半渲染在 dsh 宿主文档内，加载不到本文件——其内联样式用

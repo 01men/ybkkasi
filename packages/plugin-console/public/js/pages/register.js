@@ -40,8 +40,9 @@ export function renderRegister(content) {
   content.innerHTML = `
     <div class="page-head">
       <div>
-        <div class="page-title">登记新资产</div>
-        <div class="page-desc">五类资产一套登记纪律：登记 → 审批 → 上架 → 授权 → 调用 → 回传，全链路留痕。先完成登记前自检，再进入对应入口。</div>
+        <div class="micro-label">ASSET REGISTER</div>
+        <div class="page-title">资产登记</div>
+        <div class="page-sub">五类资产一套登记纪律：登记 → 审批 → 上架 → 授权 → 调用 → 回传，全链路留痕。先完成登记前自检，再进入对应入口。</div>
       </div>
     </div>
 

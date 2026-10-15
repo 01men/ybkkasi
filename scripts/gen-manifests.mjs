@@ -314,6 +314,9 @@ const PLUGINS = [
       'GET /api/assets/inventory（资产台账） · POST /api/assets/healthcheck（健康巡检） · GET /api/assets/report（成本报表）',
       'GET /api/assets/benefit（成本穿透：内部成本参考 + 单位 DAU 成本，零价快照口径） · GET /api/assets/retire-reasons（下架分析：弃用/下线原因聚合）',
       'GET /api/skills/usage-heatmap（技能热力图：skill × 日 使用矩阵）',
+      'GET /api/fleet/ledger?type=&search=（usage.read；设计适配 5.2 六类资产统一台账：health/lifecycle/grayPercent/calls30d/tokens30d/cost30d/trend[14]/dau/autonomy——usage 事件真实聚合，无数据 0/空数组）',
+      'GET /api/usage/report?days=28&dim=tokens|cost（usage.read；设计适配 5.5 用量与成本报表：日序列/部门分摊占比环比/Top 资产/单位 DAU 成本，全部 usage 事件真实聚合）',
+      'GET /api/modelgw/routes-usage（modelgw.read；设计适配 5.4 模型路由 30 天消耗：tokens30d/share/cost30d 按 model 聚合，零消耗路由诚实列 0）',
       'GET /api/usage/report/monthly（J4 月度用量报表：部门/Agent/Skill tokens 三维聚合；format=csv 自助导出）',
       'POST /api/usage/retention/purge（usage.admin；保留策略手动巡检，body.days 可临时收紧窗口，0=跳过）',
       'GET /api/usage/summary?window=today|month&org=&subject=（panel.read；IAW 4-1 成本摘要+预算进度，非 usage.read 主体强制收敛自身组织）',
@@ -448,7 +451,7 @@ const PLUGINS = [
   },
   {
     dir: 'exec-hub', id: 'dsh-plugin-exec-hub', label: '执行中枢（目标血缘/任务执行锁/心跳唤醒/例行调度）',
-    depends: ['dsh-plugin-platform-core', 'dsh-plugin-iam', 'dsh-plugin-authn', 'dsh-plugin-audit', 'dsh-plugin-modelgw', 'dsh-plugin-agent', 'dsh-plugin-flow-core'],
+    depends: ['dsh-plugin-platform-core', 'dsh-plugin-iam', 'dsh-plugin-authn', 'dsh-plugin-audit', 'dsh-plugin-modelgw', 'dsh-plugin-agent', 'dsh-plugin-flow-core', 'dsh-plugin-usage', 'dsh-plugin-mcp', 'dsh-plugin-skillhub', 'dsh-plugin-nas'],
     permissions: ['exec.read', 'exec.write', 'exec.admin'],
     services: [
       ['execHub', 'ctx.execHub', '执行中枢：目标/项目/任务三层血缘 + CAS 任务执行锁 + 心跳唤醒队列（预算前置/权限校验/P0 审批门禁）+ 例行调度（interval/cron/webhook）+ Agent 健康度（R8/R9/R10，2026-10-14）'],
@@ -464,7 +467,7 @@ const PLUGINS = [
       ['agent.frozen', 'subscribe', 'Agent 冻结（预算联动）→ 告警通知'],
     ],
     api: [
-      'GET /api/exec/overview（exec.read；总览：唤醒/锁/健康度）· GET /api/exec/goals · POST /api/exec/goals · PATCH /api/exec/goals/:id · DELETE /api/exec/goals/:id（exec.write；有子目标/项目 409）',
+      'GET /api/exec/overview（exec.read；总览：唤醒、锁、健康度；设计适配 5.1 增量并入工作台驾驶舱字段 insight 与 kpis——洞察文案由 goals 完成度加告警真实派生、异常清单、六类资产计数、今日调用与消耗、风险分级，2026-10-14 additive）· GET /api/exec/goals · POST /api/exec/goals · PATCH /api/exec/goals/:id · DELETE /api/exec/goals/:id（exec.write；有子目标/项目 409）',
       'GET /api/exec/projects（issueProgress 随行）· POST /api/exec/projects · PATCH /api/exec/projects/:id · DELETE /api/exec/projects/:id（exec.write；有任务 409）',
       'GET /api/exec/issues?status=&agentId=&projectId= · POST /api/exec/issues（assign 触发唤醒）· PATCH /api/exec/issues/:id（改派触发唤醒+血缘重物化）· POST /api/exec/issues/:id/transition · POST /api/exec/issues/:id/wake · DELETE /api/exec/issues/:id（exec.write）· GET /api/exec/lineage/:issueId（exec.read）',
       'GET /api/exec/wakes?status=（exec.read）· GET /api/exec/runs?status= · POST /api/exec/wakeup（exec.write；API 触发源）',

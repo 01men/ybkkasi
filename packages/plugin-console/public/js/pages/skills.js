@@ -1,4 +1,10 @@
-/** Skill 市场：卡片市场 + 详情（版本历史/审批时间线/安装）+ 提交/审批流。 */
+/**
+ * AI 市场（规格 docs/design-adaptation-spec-20261014.md §5.3，布局照设计稿 Market.tsx）：
+ * 卡片网格（名称+验签盾+状态+发布者+简介+30 天热力条+版本/安装数/风险徽标）+ 分类/搜索/排序
+ * + 详情抽屉（状态/验签/版本/描述/热力大图/版本审批时间线/安装与审批动作）。
+ * 数据：既有 /api/skills/*（列表/详情/安装/审批/提交）；热力 = /api/skills/usage-heatmap（真实计量）。
+ * 旧市场全部功能保留：上架/安装/两级审批/提交/编辑/资源包/弃用/删除/存储配置/我的提交/待审批。
+ */
 import { api, session, downloadBlob } from '../api.js'
 import { icon } from '../icons.js'
 import {
@@ -7,9 +13,8 @@ import {
   fmtNum, timeAgo, emptyState, maybeShowConceptCard,
   searchableSelectField, mountSearchableSelects,
 } from '../ui.js'
+import { sectionHead, chipRow, heatStrip, emptyHint } from '../components/asset-drawer.js'
 
-const COVERS = ['linear-gradient(135deg,#0052D9,#00A3FF)', 'linear-gradient(135deg,#10b981,#34d399)', 'linear-gradient(135deg,#f59e0b,#fbbf24)', 'linear-gradient(135deg,#8b5cf6,#a78bfa)', 'linear-gradient(135deg,#3b82f6,#60a5fa)', 'linear-gradient(135deg,#ef4444,#f87171)']
-const COVER_ICONS = { '办公提效': 'file', '研发效能': 'terminal', '客户服务': 'ticket', '数据分析': 'chart', '人事行政': 'users', '市场情报': 'globe', '法务合规': 'shield', '通用': 'sparkles' }
 /** Agent 状态枚举（协议值 ASCII）→ 选择器选项中文伴随（option 纯文本不能用 statusBadge） */
 const AGENT_STATUS_LABEL = { online: '已上线', offline: '已下线', draft: '开发中', archived: '已归档' }
 
@@ -28,34 +33,85 @@ export async function renderSkills(content, params, ctx) {
   })
 
   content.innerHTML = `
-    <div class="page-head">
-      <div>
-        <div class="page-title">Skill 市场</div>
-        <div class="page-desc">提交 → 静态扫描 → 两级审批 → 版本化上架。高风险 Skill 需安全团队加签，下载安装即登记依赖。</div>
-      </div>
-      <div class="page-actions">
+    ${sectionHead({
+      label: 'SKILL MARKET',
+      title: 'AI 市场',
+      extra: '提交 → 静态扫描 → 两级审批 → 版本化上架 · 契约五面 Ed25519 验签 · 卡片色深 = 当日使用次数（30 天热力）',
+      actions: `
         <button class="btn btn-default" id="skill-storage">${icon('server', 14)}存储配置</button>
         <button class="btn btn-default" id="skill-mine">${icon('user', 14)}我的提交</button>
         ${session.can('skill.approve') ? `<button class="btn btn-default" id="skill-review">${icon('checkSquare', 14)}待审批<span class="badge badge-danger no-dot" id="skill-review-count" style="margin-left:6px;display:none">0</span></button>` : ''}
-        <button class="btn btn-primary" id="skill-submit">${icon('plus', 14)}提交 Skill</button>
-      </div>
-    </div>
+        <button class="btn btn-primary" id="skill-submit">${icon('plus', 14)}提交新技能</button>`,
+    })}
     <div id="skill-heatmap" class="mb-20"></div>
     <div class="filter-bar">
-      <div class="search-input">${icon('search')}<input class="input" id="skill-q" placeholder="搜索名称 / 标签 / 简介"></div>
-      <div class="chips" id="skill-cats">
-        <span class="chip active" data-cat="">全部分类</span>
-        ${(data.categories ?? []).map((cat) => `<span class="chip" data-cat="${esc(cat)}">${esc(cat)}</span>`).join('')}
-      </div>
+      <div id="skill-cats"></div>
+      <div class="search-input">${icon('search')}<input class="input" id="skill-q" placeholder="搜索技能 / 发布者" style="width:200px"></div>
       <div class="segmented" style="margin-left:auto" id="skill-sort">
         <span class="segmented-item active" data-sort="downloads">按下载</span>
         <span class="segmented-item" data-sort="rating">按评分</span>
         <span class="segmented-item" data-sort="updated">按更新</span>
       </div>
     </div>
-    <div class="card-grid" id="skill-cards"></div>`
+    <div class="grid-cards g3" id="skill-cards"></div>`
 
   let state = { q: '', cat: '', sort: 'downloads', mode: 'market' }
+  // 30 天热力数据：卡片热力条与全局热力图共用一次拉取（usage 计量 + 下载流水回填，真实数据）
+  const heatState = { byId: new Map() }
+  let lastSkills = []
+
+  const refresh = async () => {
+    const query = api.qs(state.mode === 'mine' ? { mine: 1 } : state.mode === 'review' ? { pending: 1 } : { q: state.q || undefined, category: state.cat || undefined, sort: state.sort })
+    const result = await api.get('/api/skills' + query)
+    renderCards(result.skills ?? [])
+    void updateReviewBadge()
+  }
+
+  function renderCards(skills) {
+    lastSkills = skills
+    const holder = $('#skill-cards')
+    if (!holder) return
+    holder.innerHTML = ''
+    if (!skills.length) {
+      holder.appendChild(emptyState({
+        title: state.mode === 'review' ? '没有待审批的 Skill' : state.mode === 'mine' ? '你还没有提交过 Skill' : '没有匹配的 Skill',
+        desc: state.mode === 'market' ? '换个关键字或分类试试' : '提交第一个 Skill 到市场，让能力复用起来',
+        actionText: state.mode === 'market' ? undefined : '提交 Skill',
+        onAction: () => $('#skill-submit').click(),
+        icon: 'sparkles',
+      }))
+      return
+    }
+    for (const skill of skills) {
+      const heat = Array.isArray(skill.heat) ? skill.heat : heatState.byId.get(skill.id)
+      const riskCls = skill.riskLevel === 'high' ? 'risk-crit' : skill.riskLevel === 'medium' ? 'risk-high' : 'risk-normal'
+      const riskText = skill.riskLevel === 'high' ? '高风险' : skill.riskLevel === 'medium' ? '中风险' : '低风险'
+      const card = h(`
+        <div class="res-card fade-up" data-id="${esc(skill.id)}" style="cursor:pointer">
+          <div class="res-card-top">
+            <div class="grow" style="min-width:0">
+              <div class="res-name">
+                <span class="ellipsis" style="min-width:0" title="${esc(skill.name)}">${esc(skill.name)}</span>
+                ${skill.verified ? `<span style="color:var(--ok);display:inline-flex;flex-shrink:0" title="Ed25519 验签通过">${icon('shieldCheck', 14)}</span>` : ''}
+              </div>
+              <div class="fs-12 text-4 ellipsis" style="margin-top:2px">${esc(skill.authorName)}${skill.category ? ` · ${esc(skill.category)}` : ''}</div>
+            </div>
+            ${statusBadge(skill.status)}
+          </div>
+          <div class="res-desc" title="${esc(skill.summary)}">${esc(skill.summary)}</div>
+          <div style="margin-top:10px">${heat ? heatStrip(heat) : '<span class="fs-11 text-4">近 30 天暂无使用记录</span>'}</div>
+          <div class="res-foot">
+            <span class="metric mono">v${esc(skill.currentVersion)}</span>
+            <span class="metric" title="安装量">${icon('download', 13)}${fmtNum(skill.stats.installs)} 安装</span>
+            <span class="metric" title="评分">${icon('star', 13)}${skill.stats.rating || '—'}</span>
+            <span class="risk-pill ${riskCls}">${riskText}</span>
+            <span style="margin-left:auto;color:var(--brand-500)">详情 →</span>
+          </div>
+        </div>`)
+      card.onclick = () => openSkillDetail(skill.id, ctx, refresh, heatState)
+      holder.appendChild(card)
+    }
+  }
 
   // 待审批徽标：在途项计数（驳回不算待办），让审批人在市场页第一眼看到待办
   const updateReviewBadge = async () => {
@@ -69,68 +125,24 @@ export async function renderSkills(content, params, ctx) {
     } catch { /* 静默 */ }
   }
 
-  const refresh = async () => {
-    const query = api.qs(state.mode === 'mine' ? { mine: 1 } : state.mode === 'review' ? { pending: 1 } : { q: state.q || undefined, category: state.cat || undefined, sort: state.sort })
-    const result = await api.get('/api/skills' + query)
-    renderCards(result.skills ?? [])
-    void updateReviewBadge()
-  }
-
-  function renderCards(skills) {
-    const holder = $('#skill-cards')
-    holder.innerHTML = ''
-    if (!skills.length) {
-      holder.appendChild(emptyState({
-        title: state.mode === 'review' ? '没有待审批的 Skill' : state.mode === 'mine' ? '你还没有提交过 Skill' : '没有匹配的 Skill',
-        desc: state.mode === 'market' ? '换个关键字或分类试试' : '提交第一个 Skill 到市场，让能力复用起来',
-        actionText: state.mode === 'market' ? undefined : '提交 Skill',
-        onAction: () => $('#skill-submit').click(),
-        icon: 'sparkles',
-      }))
-      return
-    }
-    for (const [index, skill] of skills.entries()) {
-      const cover = COVERS[index % COVERS.length]
-      const card = h(`
-        <div class="res-card" data-id="${esc(skill.id)}">
-          <div style="height:86px;border-radius:9px;background:${skill.status === 'deprecated' ? 'linear-gradient(135deg,#9ca3af,#d1d5db)' : cover};display:grid;place-items:center;color:#fff;position:relative">
-            <span style="filter:drop-shadow(0 2px 6px rgba(0,0,0,.25))">${icon(COVER_ICONS[skill.category] ?? 'sparkles', 34)}</span>
-            ${skill.riskLevel !== 'low' ? `<span class="badge ${skill.riskLevel === 'high' ? 'badge-danger' : 'badge-warn'} no-dot" style="position:absolute;top:8px;right:8px;background:rgba(255,255,255,.92)">${skill.riskLevel === 'high' ? '高风险' : '中风险'}</span>` : ''}
-          </div>
-          <div class="res-card-top" style="margin-top:2px">
-            <div class="grow">
-              <div class="res-name">${esc(skill.name)} ${statusBadge(skill.status)}</div>
-              <div class="res-slug">v${esc(skill.currentVersion)} · ${esc(skill.category)}${skill.tags.length ? ' · ' + skill.tags.slice(0, 2).map(esc).join(' / ') : ''}</div>
-            </div>
-          </div>
-          <div class="res-desc">${esc(skill.summary)}</div>
-          <div class="res-foot">
-            <span class="metric">${icon('user', 13)}${esc(skill.authorName)}</span>
-            <span class="metric">${icon('download', 13)}${fmtNum(skill.stats.downloads)}</span>
-            <span class="metric">${icon('star', 13)}${skill.stats.rating || '—'}</span>
-            <span style="margin-left:auto" class="text-4">${timeAgo(skill.updatedAt)}</span>
-          </div>
-        </div>`)
-      card.onclick = () => openSkillDetail(skill.id, ctx, refresh)
-      holder.appendChild(card)
-    }
-  }
-
-  $('#skill-q').oninput = debounce(() => { state.q = $('#skill-q').value.trim(); state.mode = 'market'; void refresh() }, 250)
-
   // 技能热力图：skill × 日 使用矩阵（usage 计量为主、历史下载流水回填）；无数据不占位
   api.get('/api/skills/usage-heatmap?days=30')
-    .then((hm) => { if (hm.skills?.length) $('#skill-heatmap').innerHTML = heatCard(hm) })
+    .then((hm) => {
+      for (const s of hm.skills ?? []) heatState.byId.set(s.id, s.cells)
+      const heatmapHolder = $('#skill-heatmap')
+      if (hm.skills?.length && heatmapHolder) heatmapHolder.innerHTML = heatCard(hm)
+      renderCards(lastSkills) // 热力数据到位后重绘卡片色深
+    })
     .catch(() => undefined)
-  $$('#skill-cats .chip').forEach((chip) => {
-    chip.onclick = () => {
-      $$('#skill-cats .chip').forEach((c) => c.classList.remove('active'))
-      chip.classList.add('active')
-      state.cat = chip.dataset.cat
-      state.mode = 'market'
-      void refresh()
-    }
-  })
+
+  // 分类 chipRow（全部 + 服务端分类；无分类数据则只有「全部」）
+  $('#skill-cats').appendChild(chipRow(
+    [{ value: '', label: '全部' }, ...(data.categories ?? []).map((cat) => ({ value: cat, label: cat }))],
+    state.cat,
+    (value) => { state.cat = value; state.mode = 'market'; void refresh() },
+  ))
+
+  $('#skill-q').oninput = debounce(() => { state.q = $('#skill-q').value.trim(); state.mode = 'market'; void refresh() }, 300)
   $$('#skill-sort .segmented-item').forEach((el) => {
     el.onclick = () => {
       $$('#skill-sort .segmented-item').forEach((i) => i.classList.remove('active'))
@@ -147,10 +159,10 @@ export async function renderSkills(content, params, ctx) {
 
   await refresh()
   if (params.get('action') === 'submit') openSubmitModal(ctx, refresh)
-  if (params.get('focus')) void openSkillDetail(params.get('focus'), ctx, refresh)
+  if (params.get('focus')) void openSkillDetail(params.get('focus'), ctx, refresh, heatState)
 }
 
-async function openSkillDetail(id, ctx, refresh) {
+async function openSkillDetail(id, ctx, refresh, heatState) {
   const [skill, agentData] = await Promise.all([
     api.get(`/api/skills/${id}`),
     api.get('/api/agents').catch(() => ({ agents: [] })),
@@ -158,27 +170,41 @@ async function openSkillDetail(id, ctx, refresh) {
   const versions = [...skill.versions].reverse()
   const current = versions[0]
 
+  // 30 天热力：优先列表已带回的字段/页面级缓存，缺省时单独补拉（focus 直达场景）
+  let heat = Array.isArray(skill.heat) ? skill.heat : heatState?.byId?.get(skill.id)
+  if (!heat) {
+    const hm = await api.get('/api/skills/usage-heatmap?days=30').catch(() => null)
+    heat = hm?.skills?.find((s) => s.id === skill.id)?.cells
+  }
+
   const drawer = openDrawer({
-    title: skill.name,
-    sub: `${skill.category} · v${skill.currentVersion} · 作者 ${skill.authorName}`,
+    title: esc(skill.name),
+    sub: `${esc(skill.category)} · v${esc(skill.currentVersion)} · 发布者 ${esc(skill.authorName)}`,
     wide: true,
     body: `
-      <div class="flex mb-8" style="gap:8px;flex-wrap:wrap">
+      <div class="flex mb-8" style="gap:8px;flex-wrap:wrap;align-items:center">
         ${statusBadge(skill.status)}
-        <span class="badge ${skill.riskLevel === 'high' ? 'badge-danger' : skill.riskLevel === 'medium' ? 'badge-warn' : 'badge-ok'} no-dot">${skill.riskLevel === 'high' ? '高风险（需安全加签）' : skill.riskLevel === 'medium' ? '中风险' : '低风险'}</span>
+        <span class="risk-pill ${skill.riskLevel === 'high' ? 'risk-crit' : skill.riskLevel === 'medium' ? 'risk-high' : 'risk-normal'}">${skill.riskLevel === 'high' ? '高风险（需安全加签）' : skill.riskLevel === 'medium' ? '中风险' : '低风险'}</span>
+        ${skill.verified ? `<span class="flex" style="gap:4px;align-items:center;color:var(--ok);font-size:12px">${icon('shieldCheck', 14)} Ed25519 验签通过</span>` : ''}
         ${skill.tags.map((tag) => `<span class="badge badge-muted no-dot">${esc(tag)}</span>`).join('')}
       </div>
-      <div class="fs-13 mt-14" style="line-height:1.7;color:var(--text-2)">${esc(skill.description || skill.summary)}</div>
+      <div class="fs-13" style="line-height:1.7;color:var(--text-2)">${esc(skill.description || skill.summary)}</div>
       ${skill.deprecatedReason ? `
         <div class="muted-box mt-8" style="display:flex;gap:8px;border-color:var(--warn-border);background:var(--warn-bg)">
           ${icon('alert', 15)}<span><b>弃用原因</b>：${esc(skill.deprecatedReason)}${skill.deprecatedAt ? `（${timeAgo(skill.deprecatedAt)}）` : ''}</span>
         </div>` : ''}
 
-      <div class="stat-grid mt-14 mb-20" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat-grid mt-14 mb-14" style="grid-template-columns:repeat(4,1fr)">
         ${miniStat('download', '下载量', fmtNum(skill.stats.downloads))}
         ${miniStat('box', '安装量', fmtNum(skill.stats.installs))}
         ${miniStat('star', '评分', `${skill.stats.rating || '—'}（${skill.stats.ratingCount} 人）`)}
         ${miniStat('layers', '版本数', versions.length)}
+      </div>
+
+      <div class="mb-14">
+        <div class="micro-label mb-8">30 天使用热力</div>
+        ${heat ? heatStrip(heat, { big: true }) : emptyHint('近 30 天暂无使用记录')}
+        <p class="fs-11 text-4" style="margin-top:6px">usage 计量事件为主、计量接入前下载流水按日回填去重；色深 = 当日使用次数</p>
       </div>
 
       <div class="tabs" id="sk-tabs">
@@ -188,7 +214,7 @@ async function openSkillDetail(id, ctx, refresh) {
       <div id="sk-tab-body"></div>`,
     foot: `
       ${skill.status === 'published' ? `<button class="btn btn-default" id="sk-download">${icon('download', 14)}下载</button>` : ''}
-      ${skill.status === 'published' && session.can('skill.install') ? `<button class="btn btn-primary" id="sk-install">${icon('plus', 14)}安装到 Agent</button>` : ''}
+      ${skill.status === 'published' && session.can('skill.install') ? `<button class="btn btn-primary" id="sk-install">${icon('plus', 14)}安装到团队</button>` : ''}
       ${canManage(skill) ? `<button class="btn btn-default" id="sk-edit">${icon('edit', 14)}编辑信息</button>` : ''}
       ${canManage(skill) && skill.versions.some((v) => v.status === 'published') ? `<button class="btn btn-default" id="sk-repkg">${icon('refresh', 14)}更新资源包</button>` : ''}
       ${session.can('skill.approve') && (current?.status === 'pending_domain' || current?.status === 'pending_security') ? `<button class="btn btn-primary" id="sk-approve">${icon('check', 14)}审批</button>` : ''}
@@ -474,7 +500,7 @@ function openEditModal(skill, ctx, refresh) {
         visibility: data.visibility, authorName: data.authorName,
         ...(data.visibility === 'orgs' ? { targetOrgs: toList(data.targetOrgs) } : {}),
       })
-      toast('信息已更新'); modal.close(); drawer.close()
+      toast('信息已更新'); modal.close()
       openSkillDetail(skill.id, ctx, refresh)
       refresh?.()
     } catch (error) {
@@ -514,7 +540,7 @@ function openReplacePackageModal(skill, ctx, refresh) {
       const packageBase64 = await readFileBase64(file)
       const result = await api.put(`/api/skills/${skill.id}/package`, { packageBase64 })
       toast(`资源包已更新（${fmtBytes(result.package?.sizeBytes ?? 0)}${result.package?.storage === 'nas' ? ' · 已上传 NAS' : ''}）`)
-      modal.close(); drawer.close()
+      modal.close()
       openSkillDetail(skill.id, ctx, refresh)
       refresh?.()
     } catch (error) {
@@ -629,7 +655,7 @@ function miniStat(ic, label, value) {
     <div style="background:var(--surface-2);border-radius:10px;padding:12px 14px">
       <div style="color:var(--brand-500)">${icon(ic, 16)}</div>
       <div style="font-size:16px;font-weight:700;margin-top:6px">${value}</div>
-      <div class="stat-label">${esc(label)}</div>
+      <div class="stat-sub">${esc(label)}</div>
     </div>`
 }
 
@@ -648,12 +674,12 @@ function heatCard({ days, skills, maxCell }) {
   const height = rows.length * (cell + gap) + 16
   const cells = rows.map((skill, r) => skill.cells.map((value, c) => {
     const opacity = value > 0 ? 0.1 + 0.9 * (value / maxCell) : 0.04
-    return `<rect x="${labelW + c * (cell + gap)}" y="${r * (cell + gap)}" width="${cell}" height="${cell}" rx="3" fill="#0052D9" fill-opacity="${opacity.toFixed(2)}"><title>${esc(skill.name)} · ${esc(days[c])} · ${value} 次</title></rect>`
+    return `<rect x="${labelW + c * (cell + gap)}" y="${r * (cell + gap)}" width="${cell}" height="${cell}" rx="3" fill="var(--brand-500)" fill-opacity="${opacity.toFixed(2)}"><title>${esc(skill.name)} · ${esc(days[c])} · ${value} 次</title></rect>`
   }).join('')).join('')
   const rowLabels = rows.map((skill, r) =>
-    `<text x="0" y="${r * (cell + gap) + 11}" font-size="11" fill="#6b7280">${esc(skill.name.length > 13 ? skill.name.slice(0, 12) + '…' : skill.name)}</text>`).join('')
+    `<text x="0" y="${r * (cell + gap) + 11}" font-size="11" fill="var(--text-3)">${esc(skill.name.length > 13 ? skill.name.slice(0, 12) + '…' : skill.name)}</text>`).join('')
   const dayTicks = days.map((day, c) => c % 7 === 6
-    ? `<text x="${labelW + c * (cell + gap)}" y="${height - 3}" font-size="10" fill="#9ca3af">${esc(day.slice(5))}</text>` : '').join('')
+    ? `<text x="${labelW + c * (cell + gap)}" y="${height - 3}" font-size="10" fill="var(--text-4)">${esc(day.slice(5))}</text>` : '').join('')
   return `
     <div class="card">
       <div class="card-head"><span class="card-title">${icon('chart', 15)} 技能使用热力图</span><span class="card-sub">近 30 天 · 下载/安装计量（含历史流水回填）</span></div>

@@ -44,8 +44,9 @@ export function renderConnections(content, params, { standalone = false } = {}) 
           <div class="card" style="width:100%;max-width:720px" id="conn-card">` : `
         <div class="page-head">
           <div>
+            <div class="micro-label">HOST CONNECTIONS</div>
             <div class="page-title">宿主服务连接</div>
-            <div class="page-desc">控制台默认连接本机宿主服务；可手动配置其他宿主（如 http://192.168.0.7:7300），配置过即可一键切换，切换后页面自动刷新生效。</div>
+            <div class="page-sub">控制台默认连接本机宿主服务；可手动配置其他宿主（如 http://192.168.0.7:7300），配置过即可一键切换，切换后页面自动刷新生效。</div>
           </div>
         </div>
         <div class="card mb-20" id="conn-card">`}

@@ -1,24 +1,25 @@
 /* ============================================================
    元冰可 · 产品首页（公共营销页）
-   品牌规范 v1.0：元冰蓝 #0052D9 为主（占比 60%），冰湖青 #00A3FF/#00C8FF
-   点缀高亮，微信绿 #07C160 承接「通过/在线/生长」语义，深海军蓝 #0A2A6B/#0B1A33
-   铺深色底。关键色用字面量固定（品牌稳定优先）：本页不消费 --brand-* 别名，
-   避免登录后五平台 data-platform 主题覆写改变首页品牌观感。
+   2026-10-14 设计适配换肤：主色切深青蓝 #0a5f87（暖纸 + 深青蓝主题），
+   点缀青 #38a8c8/#22b8cf（渐变端点），微信绿 #07C160 承接「通过/在线/生长」
+   语义保留。关键色用字面量固定（品牌稳定优先）：本页不消费 --brand-* 别名，
+   避免登录后五平台 data-platform 主题覆写改变首页品牌观感（platform.js 在
+   首页即恢复 localStorage 记忆的平台）。
    ============================================================ */
 
 .home {
-  --hb: #0052D9;        /* 元冰蓝（品牌主色） */
-  --hb-deep: #0046bd;
-  --hnavy: #0A2A6B;     /* 深潭蓝（渐变起点） */
-  --hink: #0B1A33;      /* 夜墨（标题/深色底） */
-  --hx: #00A3FF;        /* 冰湖青（点缀/渐变中点） */
-  --hc: #00C8FF;        /* 冰湖青亮（渐变终点） */
+  --hb: #0a5f87;        /* 深青蓝（品牌主色 = tokens --brand-500） */
+  --hb-deep: #084d70;
+  --hnavy: #063d59;     /* 深海青（渐变起点 = --brand-700） */
+  --hink: #0e2229;      /* 夜墨青（标题/深色底） */
+  --hx: #38a8c8;        /* 青（点缀/渐变中点 = --brand-400） */
+  --hc: #22b8cf;        /* 湖青亮（渐变终点 = 渐变 cyan 端） */
   --hg: #07C160;        /* 微信绿（辅色：在线/生长/CTA 强调） */
   --hg-deep: #06ad56;
-  --hgray: #5B6B85;
-  --hmute: #8A98AC;
-  --hline: #E4EAF2;
-  --hbg: #F5F8FC;
+  --hgray: #5c554f;
+  --hmute: #8b8480;
+  --hline: #e4e1da;
+  --hbg: #F8F6F3;
   min-height: 100vh;
   background: var(--hbg);
   color: var(--hink);
@@ -35,7 +36,7 @@
   transition: background .25s ease, box-shadow .25s ease, backdrop-filter .25s ease;
 }
 .home-nav.scrolled {
-  background: rgba(11, 26, 51, 0.82);
+  background: rgba(14, 34, 41, 0.82);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08);
@@ -46,10 +47,10 @@
 }
 .home-nav-brand img { width: 30px; height: 30px; display: block; }
 .home-nav-brand .cn { font-size: 17px; font-weight: 700; letter-spacing: 2px; }
-.home-nav-brand .en { font-size: 10px; letter-spacing: 2.2px; color: #9FC4FF; margin-top: 1px; }
+.home-nav-brand .en { font-size: 10px; letter-spacing: 2.2px; color: #a3ccd8; margin-top: 1px; }
 .home-nav-links { display: flex; gap: 4px; flex: 1; }
 .home-nav-links a {
-  color: #BBD3FF; font-size: 13.5px; padding: 7px 14px; border-radius: 8px;
+  color: #c6dfe8; font-size: 13.5px; padding: 7px 14px; border-radius: 8px;
   text-decoration: none; transition: color .15s, background .15s;
 }
 .home-nav-links a:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
@@ -59,7 +60,7 @@
 /* ============ Hero ============ */
 .home-hero {
   position: relative; overflow: hidden;
-  background: linear-gradient(135deg, #0A2A6B 0%, #0d3a8f 45%, #0052D9 78%, #0069dd 100%);
+  background: linear-gradient(135deg, #063d59 0%, #075985 45%, #0a5f87 78%, #0e7490 100%);
   color: #fff;
   padding: 132px max(32px, calc(50vw - 560px)) 96px;
   display: flex; align-items: center; gap: 48px;
@@ -86,10 +87,10 @@
 .home-hero-copy { position: relative; z-index: 2; max-width: 600px; flex: 1; }
 .home-hero-eyebrow {
   display: inline-flex; align-items: center; gap: 8px;
-  font-size: 12.5px; letter-spacing: 3px; color: #9FC4FF;
-  border: 1px solid rgba(159, 196, 255, 0.35); border-radius: 999px;
+  font-size: 12.5px; letter-spacing: 3px; color: #a3ccd8;
+  border: 1px solid rgba(163, 204, 216, 0.35); border-radius: 999px;
   padding: 6px 14px; margin-bottom: 26px;
-  background: rgba(159, 196, 255, 0.08);
+  background: rgba(163, 204, 216, 0.08);
 }
 .home-hero-eyebrow .dot {
   width: 7px; height: 7px; border-radius: 50%; background: var(--hg);
@@ -101,30 +102,30 @@
   line-height: 1.28; letter-spacing: 1px; margin: 0 0 18px;
 }
 .home-hero h1 .grad {
-  background: linear-gradient(100deg, #6FD4FF 8%, #00C8FF 46%, #4EE59B 96%);
+  background: linear-gradient(100deg, #7fd4e6 8%, #22b8cf 46%, #4EE59B 96%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .home-hero-sub {
-  color: #BBD3FF; font-size: 15.5px; line-height: 1.9; margin: 0 0 30px; max-width: 540px;
+  color: #c6dfe8; font-size: 15.5px; line-height: 1.9; margin: 0 0 30px; max-width: 540px;
 }
 .home-hero-actions { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
-.home-hero-hint { margin-top: 18px; font-size: 12.5px; color: #7C96C4; display: flex; gap: 8px; align-items: center; }
+.home-hero-hint { margin-top: 18px; font-size: 12.5px; color: #86a0ab; display: flex; gap: 8px; align-items: center; }
 .home-hero-hint svg { width: 14px; height: 14px; }
 
 /* Hero 生态树 */
 .home-hero-visual { position: relative; z-index: 2; flex: none; }
 .home-tree-wrap {
   position: relative; width: 460px; height: 540px; max-width: 44vw;
-  border: 1px solid rgba(159, 196, 255, 0.18);
-  background: linear-gradient(160deg, rgba(11, 26, 51, 0.35), rgba(10, 42, 107, 0.16));
+  border: 1px solid rgba(163, 204, 216, 0.18);
+  background: linear-gradient(160deg, rgba(14, 34, 41, 0.35), rgba(6, 61, 89, 0.18));
   border-radius: 18px;
-  box-shadow: 0 24px 70px rgba(3, 16, 44, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: 0 24px 70px rgba(4, 20, 26, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
 .home-tree-wrap canvas { width: 100%; height: 100%; display: block; }
 .home-tree-caption {
   position: absolute; left: 14px; bottom: 12px; z-index: 2;
-  font-size: 11.5px; color: #9FC4FF; letter-spacing: 1px;
+  font-size: 11.5px; color: #a3ccd8; letter-spacing: 1px;
   display: flex; align-items: center; gap: 7px;
 }
 .home-tree-caption i {
@@ -146,11 +147,11 @@
 }
 .home-btn svg { width: 17px; height: 17px; }
 .home-btn-primary {
-  background: linear-gradient(135deg, #0052D9 0%, #00A3FF 100%);
+  background: linear-gradient(135deg, var(--hb) 0%, var(--hx) 100%);
   color: #fff;
-  box-shadow: 0 10px 26px rgba(0, 92, 225, 0.42);
+  box-shadow: 0 10px 26px rgba(10, 95, 135, 0.4);
 }
-.home-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(0, 110, 240, 0.5); }
+.home-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(14, 116, 144, 0.48); }
 .home-btn-green {
   background: var(--hg); color: #fff;
   box-shadow: 0 10px 26px rgba(7, 193, 96, 0.35);
@@ -158,14 +159,14 @@
 .home-btn-green:hover { background: var(--hg-deep); transform: translateY(-2px); box-shadow: 0 14px 32px rgba(7, 193, 96, 0.42); }
 .home-btn-ghost {
   background: rgba(255, 255, 255, 0.08); color: #fff;
-  border-color: rgba(159, 196, 255, 0.4);
+  border-color: rgba(163, 204, 216, 0.4);
 }
-.home-btn-ghost:hover { background: rgba(255, 255, 255, 0.14); border-color: rgba(159, 196, 255, 0.7); transform: translateY(-2px); }
+.home-btn-ghost:hover { background: rgba(255, 255, 255, 0.14); border-color: rgba(163, 204, 216, 0.7); transform: translateY(-2px); }
 .home-btn-light {
   background: #fff; color: var(--hb); border-color: var(--hline);
   box-shadow: var(--shadow, 0 4px 16px rgba(16, 19, 29, 0.08));
 }
-.home-btn-light:hover { color: var(--hb-deep); border-color: #b6d7ff; transform: translateY(-2px); }
+.home-btn-light:hover { color: var(--hb-deep); border-color: #b6e0ee; transform: translateY(-2px); }
 
 /* ============ 数据条 ============ */
 .home-stats {
@@ -176,7 +177,7 @@
 .home-stat {
   background: #fff; border: 1px solid var(--hline); border-radius: 14px;
   padding: 22px 24px;
-  box-shadow: 0 14px 40px rgba(10, 42, 107, 0.10);
+  box-shadow: 0 14px 40px rgba(6, 61, 89, 0.08);
 }
 .home-stat-num {
   font-size: 34px; font-weight: 700; line-height: 1; letter-spacing: 0.5px;
@@ -226,13 +227,13 @@
   background: linear-gradient(90deg, var(--hb), var(--hx));
   transition: width .3s ease;
 }
-.home-card:hover { transform: translateY(-4px); box-shadow: 0 16px 36px rgba(10, 42, 107, 0.12); border-color: #cfe0f8; }
+.home-card:hover { transform: translateY(-4px); box-shadow: 0 16px 36px rgba(6, 61, 89, 0.10); border-color: #cfe4ec; }
 .home-card:hover::before { width: 100%; }
 .home-card-ic {
   width: 38px; height: 38px; border-radius: 10px;
   display: grid; place-items: center; margin-bottom: 13px;
-  background: linear-gradient(135deg, #eef6ff, #dcecff);
-  border: 1px solid #d6e6ff; color: var(--hb);
+  background: linear-gradient(135deg, #f0f7fa, #dceef5);
+  border: 1px solid #cfe6f0; color: var(--hb);
 }
 .home-card-ic svg { width: 18px; height: 18px; }
 .home-card.green .home-card-ic {
@@ -245,7 +246,7 @@
 /* ============ 架构理念 ============ */
 .home-arch {
   display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center;
-  background: linear-gradient(135deg, #0B1A33 0%, #0A2A6B 70%, #0d3a8f 100%);
+  background: linear-gradient(135deg, #0e2229 0%, #063d59 70%, #075985 100%);
   border-radius: 20px; color: #fff;
   padding: 52px 52px; position: relative; overflow: hidden;
 }
@@ -259,19 +260,19 @@
 .home-point-ic {
   width: 42px; height: 42px; border-radius: 11px; flex: none;
   display: grid; place-items: center;
-  background: rgba(0, 163, 255, 0.14); border: 1px solid rgba(0, 163, 255, 0.35); color: #6FD4FF;
+  background: rgba(56, 168, 200, 0.14); border: 1px solid rgba(56, 168, 200, 0.35); color: #7fd4e6;
 }
 .home-point:nth-child(2) .home-point-ic { background: rgba(7, 193, 96, 0.12); border-color: rgba(7, 193, 96, 0.38); color: #4EE59B; }
-.home-point:nth-child(3) .home-point-ic { background: rgba(0, 200, 255, 0.10); border-color: rgba(0, 200, 255, 0.32); color: #00C8FF; }
+.home-point:nth-child(3) .home-point-ic { background: rgba(34, 184, 207, 0.10); border-color: rgba(34, 184, 207, 0.32); color: #22b8cf; }
 .home-point-ic svg { width: 19px; height: 19px; }
 .home-point b { display: block; font-size: 16px; font-weight: 600; margin-bottom: 5px; letter-spacing: 0.5px; }
-.home-point span { font-size: 13px; color: #BBD3FF; line-height: 1.8; }
+.home-point span { font-size: 13px; color: #c6dfe8; line-height: 1.8; }
 .home-topo {
   position: relative; z-index: 1;
-  background: rgba(6, 18, 43, 0.5); border: 1px solid rgba(159, 196, 255, 0.16);
+  background: rgba(8, 26, 32, 0.5); border: 1px solid rgba(163, 204, 216, 0.16);
   border-radius: 16px; padding: 18px;
 }
-.home-topo-cap { font-size: 11.5px; color: #9FC4FF; letter-spacing: 1px; margin-top: 10px; text-align: center; }
+.home-topo-cap { font-size: 11.5px; color: #a3ccd8; letter-spacing: 1px; margin-top: 10px; text-align: center; }
 @media (max-width: 980px) { .home-arch { grid-template-columns: 1fr; padding: 36px 28px; } }
 
 /* 拓扑连线流动动画 */
@@ -302,7 +303,7 @@
 /* ============ 页脚 ============ */
 .home-footer {
   margin-top: 96px;
-  background: var(--hink); color: #BBD3FF;
+  background: var(--hink); color: #c6dfe8;
   padding: 44px max(32px, calc(50vw - 560px)) 36px;
 }
 .home-footer-inner {
@@ -312,16 +313,16 @@
 .home-footer-brand { display: flex; align-items: center; gap: 14px; color: #fff; }
 .home-footer-brand img { width: 40px; height: 40px; }
 .home-footer-brand .cn { font-size: 20px; font-weight: 700; letter-spacing: 2px; }
-.home-footer-brand .en { font-size: 10.5px; letter-spacing: 2.6px; color: #7C96C4; margin-top: 3px; }
-.home-footer-brand .tag { font-size: 12px; color: #8FA9D6; margin-top: 6px; }
+.home-footer-brand .en { font-size: 10.5px; letter-spacing: 2.6px; color: #86a0ab; margin-top: 3px; }
+.home-footer-brand .tag { font-size: 12px; color: #93b1ba; margin-top: 6px; }
 .home-footer-links { display: flex; gap: 26px; }
-.home-footer-links a { color: #BBD3FF; font-size: 13px; text-decoration: none; }
+.home-footer-links a { color: #c6dfe8; font-size: 13px; text-decoration: none; }
 .home-footer-links a:hover { color: #fff; }
 .home-footer-meta {
   max-width: 1120px; margin: 26px auto 0;
-  border-top: 1px solid rgba(159, 196, 255, 0.14); padding-top: 20px;
+  border-top: 1px solid rgba(163, 204, 216, 0.14); padding-top: 20px;
   display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-  font-size: 12.5px; color: #7C96C4;
+  font-size: 12.5px; color: #86a0ab;
 }
 .home-footer-meta .grow-dot { display: inline-flex; align-items: center; gap: 7px; }
 .home-footer-meta .grow-dot i { width: 6px; height: 6px; border-radius: 50%; background: var(--hg); box-shadow: 0 0 6px rgba(7, 193, 96, 0.8); }
@@ -340,7 +341,7 @@
 .home-nav-toggle {
   display: none;
   width: 38px; height: 38px; border-radius: 9px; flex: none;
-  border: 1px solid rgba(159, 196, 255, 0.35);
+  border: 1px solid rgba(163, 204, 216, 0.35);
   background: rgba(255, 255, 255, 0.06); color: #fff;
   align-items: center; justify-content: center; cursor: pointer;
   transition: background .15s ease;
@@ -354,11 +355,11 @@
   .home-nav.open .home-nav-links {
     display: flex; flex-direction: column; gap: 2px;
     position: absolute; top: 100%; left: 0; right: 0;
-    background: rgba(11, 26, 51, 0.96);
+    background: rgba(14, 34, 41, 0.96);
     backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
     padding: 10px 16px 14px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 18px 40px rgba(3, 16, 44, 0.45);
+    box-shadow: 0 18px 40px rgba(4, 20, 26, 0.45);
   }
   .home-nav.open .home-nav-links a { padding: 12px; font-size: 14.5px; }
 }

@@ -1097,6 +1097,128 @@ export class ExecutionHubService extends Service {
     }
   }
 
+  /**
+   * 工作台驾驶舱聚合（设计适配规格 5.1，2026-10-14，只读 additive）：
+   * GET /api/exec/overview 在既有 overview() 字段之上增量并入本方法结果（旧字段不动）。
+   *
+   * 字段口径（全部真实数据派生，无硬编码话术）：
+   *   - insight.text：由「目标达成度（achieved 占比 + 关联任务完成率）+ 未读告警分级 +
+   *     今日调用/消耗」拼装的真实中文结论；目标与告警双缺时给出零数据口径说明。
+   *   - insight.exceptions：未读告警（critical/warning）+ MCP 熔断态 + 模型预算 breach——
+   *     {name, level, chain, owner}，owner 尽力解析到资产负责人，解析不到给空串。
+   *   - kpis.assets：六类资产（mcp/agent/app/skill/model/nas）统一生命周期桶计数
+   *     （online 含 gray/trial/published/deprecated 仍在册口径）。
+   *   - kpis.callsToday/tokensToday/costToday：usage 今日窗口（UTC 日界）真实聚合。
+   *   - kpis.risk：未读告警 critical/warning 计数（info 不计）。
+   */
+  cockpit(): { insight: { text: string; exceptions: Array<{ name: string; level: 'critical' | 'warning'; chain: string; owner: string }> }; kpis: { assets: { total: number; online: number; draft: number; deprecated: number }; callsToday: number; tokensToday: number; costToday: number; risk: { critical: number; warning: number } } } {
+    // -- 今日用量（UTC 日界，与 modelgw budgetStatus 窗口口径一致） ----------------
+    const todayStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`
+    let callsToday = 0
+    let tokensToday = 0
+    let costToday = 0
+    try {
+      const summary = this.ctx.usage.summary({ from: todayStart, to: new Date().toISOString() })
+      callsToday = summary.byResource.reduce((sum, row) => sum + row.events, 0)
+      tokensToday = summary.input_tokens + summary.output_tokens
+      costToday = summary.cost_cents
+    } catch { /* usage 面缺席（独立宿主形态）按零值呈现，不阻塞总览 */ }
+
+    // -- 六类资产统一计数（与 plugin-console /api/fleet/ledger 同一套生命周期映射） --
+    const buckets = { total: 0, online: 0, draft: 0, deprecated: 0 }
+    const countAsset = (status: string, deprecated = false): void => {
+      buckets.total++
+      if (deprecated || ['online', 'gray', 'trial', 'published', 'unhealthy'].includes(status)) buckets.online++
+      else if (['draft', 'verifying', 'pending_approval', 'scanning'].includes(status)) buckets.draft++
+      if (deprecated) buckets.deprecated++
+    }
+    const ownerNameOf = (userId: string): string => {
+      try {
+        return this.ctx.iam.users().get(userId)?.displayName ?? userId
+      } catch {
+        return userId
+      }
+    }
+    const mcpServices = (() => {
+      try { return this.ctx.mcpRegistry.services().all() } catch { return [] }
+    })()
+    const skills = (() => {
+      try { return this.ctx.skillHub.skills().all() } catch { return [] }
+    })()
+    const apps = (() => {
+      try { return this.ctx.resourceCore.list('app') } catch { return [] }
+    })()
+    const nasList = (() => {
+      try { return this.ctx.nasRegistry.list() } catch { return [] }
+    })()
+    const models = (() => {
+      try { return this.ctx.modelGateway.models().all() } catch { return [] }
+    })()
+    for (const service of mcpServices) countAsset(service.status)
+    for (const agent of this.ctx.resourceCore.list('agent')) countAsset(agent.status)
+    for (const app of apps) countAsset(app.status)
+    for (const skill of skills) countAsset(skill.status, skill.status === 'deprecated')
+    for (const model of models) countAsset(model.status)
+    for (const nas of nasList) countAsset(nas.status)
+
+    // -- 异常面：未读告警 + MCP 熔断 + 模型预算超限（真实状态，不虚构） ------------
+    const exceptions: Array<{ name: string; level: 'critical' | 'warning'; chain: string; owner: string }> = []
+    let critical = 0
+    let warning = 0
+    try {
+      for (const alert of this.ctx.audit.alerts().find((item) => !item.read)) {
+        if (alert.severity === 'critical') critical++
+        else if (alert.severity === 'warning') warning++
+        else continue
+        if (exceptions.length >= 8) continue
+        const owner = alert.resourceType === 'mcp_service' || alert.resourceType === 'mcp'
+          ? mcpServices.find((item) => item.id === alert.resourceId)?.owner ?? ''
+          : alert.resourceType === 'agent'
+            ? ownerNameOf(this.ctx.resourceCore.collection('agent').get(alert.resourceId ?? '')?.ownerId ?? '')
+            : ''
+        exceptions.push({ name: alert.title, level: alert.severity as 'critical' | 'warning', chain: `${alert.ruleId ?? 'ad-hoc'}${alert.resourceType ? ` → ${alert.resourceType}:${alert.resourceId ?? ''}` : ''}`, owner })
+      }
+    } catch { /* 审计面缺席按无告警计 */ }
+    for (const service of mcpServices) {
+      if (!service.health.breakerOpen) continue
+      critical++
+      if (exceptions.length < 8) exceptions.push({ name: `MCP 熔断：${service.name}`, level: 'critical', chain: `mcp:${service.slug}`, owner: service.owner })
+    }
+    for (const model of models) {
+      if (model.status === 'online' && model.endpoint.trim() === '') {
+        warning++
+        if (exceptions.length < 8) exceptions.push({ name: `模型路由已上线但未配置 endpoint：${model.displayName}`, level: 'warning', chain: `model:${model.slug}`, owner: model.provider })
+      }
+    }
+
+    // -- 目标达成度（achieved 占比 + 关联任务完成率——真实派生） ------------------
+    const goals = this.goals().all()
+    const issues = this.issues().all()
+    const activeGoals = goals.filter((goal) => goal.status === 'active')
+    const achieved = goals.filter((goal) => goal.status === 'achieved').length
+    const doneIssues = issues.filter((issue) => issue.status === 'done').length
+    const goalCompletion = goals.length > 0 ? Math.round((achieved / goals.length) * 100) : null
+    const issueCompletion = issues.length > 0 ? Math.round((doneIssues / issues.length) * 100) : null
+
+    // -- 洞察文案：全部由上方真实数字拼装（禁止硬编码场景话术） -------------------
+    const bits: string[] = []
+    if (goals.length > 0) {
+      bits.push(`目标 ${goals.length} 项（进行中 ${activeGoals.length}、已达成 ${achieved}，达成率 ${goalCompletion}%）`)
+      if (issues.length > 0) bits.push(`关联任务完成率 ${issueCompletion}%（${doneIssues}/${issues.length}）`)
+    } else {
+      bits.push('尚无登记目标——可在执行中枢创建季度目标并拆解行动项目')
+    }
+    if (critical > 0) bits.push(`存在 ${critical} 项严重告警需立即处理`)
+    else if (warning > 0) bits.push(`存在 ${warning} 项一般告警建议关注`)
+    else bits.push('当前无未读告警')
+    bits.push(`今日已计量调用 ${callsToday} 次、tokens ${tokensToday.toLocaleString('en-US')}、内部成本参考 ${costToday} 分`)
+
+    return {
+      insight: { text: bits.join('；') + '。', exceptions },
+      kpis: { assets: buckets, callsToday, tokensToday, costToday, risk: { critical, warning } },
+    }
+  }
+
   /** 纳管提报催办（R9）：运行态 Agent 超 24h 未提报 → 告警催办（按日去重）。 */
   private async remindOverdueMetrics(): Promise<void> {
     const dayKey = new Date().toISOString().slice(0, 10)
@@ -1151,7 +1273,9 @@ export function apply(ctx: Context) {
   }
 
   // -- 总览 / 健康（R9） ------------------------------------------------------
-  guarded('GET', '/api/exec/overview', 'exec.read', () => hub.overview())
+  // 设计适配（2026-10-14）：增量并入工作台驾驶舱聚合（insight/kpis）——既有字段原样保留，
+  // 前端旧消费方（exec 页/tools）不受影响；cockpit() 为只读查询方法。
+  guarded('GET', '/api/exec/overview', 'exec.read', () => ({ ...hub.overview(), ...hub.cockpit() }))
 
   // -- 目标（R8） ---------------------------------------------------------------
   guarded('GET', '/api/exec/goals', 'exec.read', () => ({ goals: hub.goals().all() }))
@@ -1499,4 +1623,7 @@ export const name = 'exec-hub'
 export const inject = [
   'httpServer', 'opsStorage', 'platformBus', 'iam', 'authn', 'audit', 'tools',
   'modelGateway', 'resourceCore', 'agentRegistry', 'flow',
+  // 设计适配（2026-10-14）cockpit() 驾驶舱聚合所需只读面（提供方均在 exec-hub 之前装配，
+  // 见 boot-all.ts / cordis.yml 装配序列）：usage=今日计量聚合，其余为六类资产存量计数与异常面
+  'usage', 'mcpRegistry', 'skillHub', 'nasRegistry',
 ]

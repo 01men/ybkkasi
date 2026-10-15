@@ -1009,9 +1009,10 @@ async function showBind() {
         const authorize = await api.post('/api/auth/sso/bind/authorize', { provider: 'dingtalk' })
         const url = authorize.redirectUrl ?? authorize.url ?? authorize.redirect_uri
         if (url) {
-          window.open(url, '_blank', 'width=520,height=640')
-          void toast('已打开钉钉授权页，完成后回到本页自动刷新状态')
-          setTimeout(() => { void refreshDingtalk().then(() => { hideModal(); void showBind() }) }, 4000)
+          // dsh 完整页面体验（design-adaptation-spec §6）：不再 520x640 子窗口，同窗口整页跳转授权，
+          // 完成后由服务商 redirect 回跳承接，回来重新打开绑定向导自动刷新状态。
+          void toast('即将跳转钉钉授权页，完成后将自动返回')
+          setTimeout(() => { location.assign(url) }, 600)
         } else {
           void toast('平台未返回授权地址，请检查钉钉连接器登录配置', 'error')
         }

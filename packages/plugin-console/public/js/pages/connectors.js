@@ -50,8 +50,9 @@ export async function renderConnectors(content, params, ctx) {
   content.innerHTML = `
     <div class="page-head">
       <div>
+        <div class="micro-label">CONNECTOR / SAAS</div>
         <div class="page-title">连接器</div>
-        <div class="page-desc">1,000+ SaaS Provider 的数据面纳管：目录 / 连接（OAuth · API Key · 免凭证）/ 双层授权（权限组 ↔ oct_ 令牌镜像）/ 计量对账。凭证托管在连接器网关侧，平台零密钥落盘。</div>
+        <div class="page-sub">1,000+ SaaS Provider 的数据面纳管：目录 / 连接（OAuth · API Key · 免凭证）/ 双层授权（权限组 ↔ oct_ 令牌镜像）/ 计量对账。凭证托管在连接器网关侧，平台零密钥落盘。</div>
       </div>
       <div class="page-actions" id="cn-head-actions"></div>
     </div>
@@ -536,11 +537,12 @@ export async function renderConnectors(content, params, ctx) {
         return
       }
       if (type === 'oauth' && created.authorizationUrl) {
-        window.open(created.authorizationUrl, '_blank', 'noopener')
-        toast('已打开授权页；完成授权后回到本列表查看状态')
-      } else {
-        toast('连接已创建（凭证只存于连接器网关）')
+        // dsh 完整页面体验（§6）：OAuth 同窗口整页跳转，服务商回跳由 callback 承接
+        toast('即将跳转授权页；完成授权后回跳本平台查看状态')
+        location.assign(created.authorizationUrl)
+        return
       }
+      toast('连接已创建（凭证只存于连接器网关）')
       await renderTab()
     })
   }

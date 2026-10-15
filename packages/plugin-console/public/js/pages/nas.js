@@ -23,8 +23,9 @@ export async function renderNas(content, params, ctx) {
   content.innerHTML = `
     <div class="page-head">
       <div>
+        <div class="micro-label">NAS / FILES</div>
         <div class="page-title">NAS 存储</div>
-        <div class="page-desc">FS 文件存储类资产：经 MCP 文件网关（地址 + Bearer 令牌 + X-NAS-IP 路由头）统一纳管，探活 → 上线 → 工具发现，文件操作全程审计留痕。</div>
+        <div class="page-sub">FS 文件存储类资产：经 MCP 文件网关（地址 + Bearer 令牌 + X-NAS-IP 路由头）统一纳管，探活 → 上线 → 工具发现，文件操作全程审计留痕。</div>
       </div>
       <div class="page-actions">
         <button class="btn btn-default" id="nas-import">${icon('plug', 14)}导入 mcpServers JSON</button>

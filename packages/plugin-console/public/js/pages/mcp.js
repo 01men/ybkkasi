@@ -29,8 +29,9 @@ export async function renderMcp(content, params, ctx) {
   content.innerHTML = `
     <div class="page-head">
       <div>
-        <div class="page-title">MCP 部署服务</div>
-        <div class="page-desc">工具的供给链路：注册登记 → 安全审核 → 测试验证 → 灰度发布 → 运行监控。网关统一鉴权、限流熔断。</div>
+        <div class="micro-label">MCP SERVICES</div>
+        <div class="page-title">MCP 服务</div>
+        <div class="page-sub">工具的供给链路：注册登记 → 安全审核 → 测试验证 → 灰度发布 → 运行监控。网关统一鉴权、限流熔断。</div>
       </div>
       <div class="page-actions">
         <button class="btn btn-default" id="mcp-permgroups">${icon('shield', 14)}权限组管理</button>

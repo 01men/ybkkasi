@@ -9,12 +9,12 @@ import {
 } from '../ui.js'
 import { buildAgentOnboardingText, openOnboardingModal } from '../onboarding.js'
 
-/** 平台授权直达：签发一次性入场票据后带 #entry_ticket 打开交互界面（裸跳转已下线）。 */
+/** 平台授权直达：签发一次性入场票据后带 #entry_ticket 同窗口整页跳转交互界面
+ *  （裸跳转已下线；弹窗子窗口已消灭——dsh 挂载形态下落到 /rq/panel/ 或目标页完整页面，§6）。 */
 export async function openAgentEntry(agent) {
   try {
     const issued = await api.post(`/api/agents/${agent.id}/entry-ticket`)
-    window.open(`${agent.attrs['entryUrl']}#entry_ticket=${encodeURIComponent(issued.ticket)}`, '_blank', 'noopener')
-    toast(`已带平台身份打开（票据 ${issued.ttlSeconds}s 内有效，已留痕审计）`)
+    location.assign(`${agent.attrs['entryUrl']}#entry_ticket=${encodeURIComponent(issued.ticket)}`)
   } catch (error) { toast(error.message, 'error') }
 }
 
@@ -39,8 +39,9 @@ export async function renderAgents(content, params, ctx) {
   content.innerHTML = `
     <div class="page-head">
       <div>
-        <div class="page-title">Agent 本体管理</div>
-        <div class="page-desc">注册即纳管：颁发唯一 ID 与机器身份凭证；上线走审批，下线联动吊销凭证并通知绑定用户。</div>
+        <div class="micro-label">AGENT FLEET</div>
+        <div class="page-title">Agent 本体</div>
+        <div class="page-sub">注册即纳管：颁发唯一 ID 与机器身份凭证；上线走审批，下线联动吊销凭证并通知绑定用户。</div>
       </div>
       <div class="page-actions">
         <div class="segmented" id="agent-view">

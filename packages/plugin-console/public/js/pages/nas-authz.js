@@ -29,8 +29,9 @@ export async function renderNasAuthz(content) {
   content.innerHTML = `
     <div class="page-head">
       <div>
+        <div class="micro-label">NAS AUTHZ</div>
         <div class="page-title">NAS 数据权限</div>
-        <div class="page-desc">组织位置 + 角色层级 RBAC（P/D/T/M + C 叠加）：五步判定序，显式例外优先于角色矩阵；网关与 hermes 双强制点共用同一套规则，全链 fail-closed。</div>
+        <div class="page-sub">组织位置 + 角色层级 RBAC（P/D/T/M + C 叠加）：五步判定序，显式例外优先于角色矩阵；网关与 hermes 双强制点共用同一套规则，全链 fail-closed。</div>
       </div>
       <div class="page-actions">
         <button class="btn btn-default" id="az-reconcile">${icon('refresh', 14)}组织目录对账</button>
@@ -577,6 +578,8 @@ async function renderDecisions() {
   $('#az-dec-refresh').onclick = () => { void renderDecisions() }
   const data = await api.get('/api/nas/authz/decisions?limit=50').catch(() => ({ items: [] }))
   const table = $('#az-dec-table')
+  // 异步回来时视图可能已被切走（测试容器重建/快速路由切换）：节点不在即放弃本次落表
+  if (!table) return
   table.innerHTML = ''
   const items = data.items ?? []
   if (!items.length) {

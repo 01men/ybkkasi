@@ -1070,7 +1070,11 @@ try {
       return delta_pct === expected
     })(), JSON.stringify(pen?.totals))
     check('部门维度含两个探针组织（byOrg 按成本降序）', pen && pen.byOrg.some((r) => r.dimension === tenantOrg.data.id) && pen.byOrg.some((r) => r.dimension === finOrg2.data.id), JSON.stringify(pen?.byOrg?.map((r) => r.dimension)))
-    check('模型维度精确两条（selftest-a 90 分 / selftest-b 80 分）', pen && JSON.stringify(pen.byModel.map((r) => `${r.dimension}:${r.cost_cents}`)) === JSON.stringify(['selftest-a:90', 'selftest-b:80']), JSON.stringify(pen?.byModel))
+    // 演示种子（DEMO_SEED=1，设计适配 2026-10-14 起 model:deepseek-chat/qwen-plus 亦带用量）与本节
+    // 探针事件同库：原先「全库 model 域=本节 4 条」的排他前提不再成立，排他断言改为
+    // 「探针条目精确 + 份额与全库复算自洽」的鲁棒等价形式（校验意图不变）。
+    const modelRow = (slug) => pen?.byModel?.find((r) => r.dimension === slug)
+    check('模型维度探针精确（selftest-a 90 分 / selftest-b 80 分）', modelRow('selftest-a')?.cost_cents === 90 && modelRow('selftest-b')?.cost_cents === 80, JSON.stringify(pen?.byModel))
     check('org×model 矩阵行列齐备（Top orgs/models + 「其他」行列）', pen && pen.matrix.orgs.length >= 2 && pen.matrix.models.length >= 2 && pen.matrix.cells.length === pen.matrix.orgs.length + 1 && pen.matrix.cells[0].length === pen.matrix.models.length + 1, JSON.stringify(pen?.matrix))
     check('矩阵总计守恒（全格之和 = model 域成本合计 170 分）', pen && (() => {
       const sumCells = pen.matrix.cells.flat().reduce((s, v) => s + v, 0)
@@ -1079,9 +1083,14 @@ try {
     check('Top 消耗主体（探针主体在列）', pen && pen.topSubjects.some((r) => r.subject === probeSubject), JSON.stringify(pen?.topSubjects))
     const idle1 = finOverview.data?.idle
     check('空转判定：恰好 2 条疑似空转（无后续动作的 model 调用）', idle1 && idle1.idle.events === 2, JSON.stringify(idle1))
-    check('空转成本精确（50+20=70 分，占 model 域 41.2%）', idle1 && idle1.idle.cost_cents === 70 && idle1.idle.share_pct === 41.2, JSON.stringify(idle1?.idle))
-    check('空转分模型拆分（selftest-a/b 各 1 条）', idle1 && idle1.byModel.length === 2 && idle1.byModel.every((r) => r.idle_events === 1), JSON.stringify(idle1?.byModel))
-    check('空转分部门拆分（两部门各 1 条）', idle1 && idle1.byOrg.length === 2 && idle1.byOrg.every((r) => r.idle_events === 1), JSON.stringify(idle1?.byOrg))
+    check('空转成本精确（探针 50+20=70 分；份额与全库 model 域复算自洽）', idle1 && idle1.idle.cost_cents === 70 && idle1.idle.share_pct === (() => {
+      const modelTotal = pen.byModel.reduce((s, r) => s + r.cost_cents, 0)
+      return modelTotal === 0 ? 0 : Math.round((idle1.idle.cost_cents / modelTotal) * 1000) / 10
+    })(), JSON.stringify({ idle: idle1?.idle, byModelTotal: pen?.byModel?.reduce((s, r) => s + r.cost_cents, 0) }))
+    const idleModelRow = (slug) => idle1?.byModel?.find((r) => r.model === slug)
+    const idleOrgRow = (orgId) => idle1?.byOrg?.find((r) => r.org === orgId)
+    check('空转分模型拆分（探针 selftest-a/b 各 1 条）', idleModelRow('selftest-a')?.idle_events === 1 && idleModelRow('selftest-b')?.idle_events === 1, JSON.stringify(idle1?.byModel))
+    check('空转分部门拆分（两探针部门各 1 条）', idleOrgRow(tenantOrg.data.id)?.idle_events === 1 && idleOrgRow(finOrg2.data.id)?.idle_events === 1, JSON.stringify(idle1?.byOrg))
     check('空转样本可复核（samples 含两条 + 时间/主体/模型齐备）', idle1 && idle1.samples.length === 2 && idle1.samples.every((s) => s.occurred_at && s.subject && s.resource), JSON.stringify(idle1?.samples))
     const idleTight = await api('GET', `/api/finops/idle?month=${finMonth}&window=5`, { token: admin })
     check('空转窗口参数生效（窗口收窄 5 分钟 → evFollow 亦成疑似，空转数上升）', idleTight.ok && idleTight.data.idleWindowMinutes === 5 && idleTight.data.idle.events >= 3, JSON.stringify({ w: idleTight.data?.idleWindowMinutes, idle: idleTight.data?.idle }))
@@ -1223,6 +1232,20 @@ try {
     }
     check('走查不变量：console 前端除 api.js（与协议页豁免）外零裸 fetch/XHR/SSE',
       bareFetch.length === 0, JSON.stringify(bareFetch))
+    // dsh 完整页面体验（design-adaptation-spec §6，2026-10-14）：控制台与面板前端
+    // 禁止 window.open/alert/confirm/prompt 弹窗子窗口——新视图一律抽屉或同窗口整页跳转。
+    const popupHits = []
+    for (const root of ['packages/plugin-console/public', 'packages/plugin-panel-core/public']) {
+      const walkPopup = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory() ? walkPopup(join(dir, entry.name)) : [join(dir, entry.name)])
+      for (const file of walkPopup(join(process.cwd(), root))) {
+        if (!file.endsWith('.js') || file.endsWith('.test.mjs')) continue
+        const text = readFileSync(file, 'utf8')
+        if (/window\.open\(|(?<![.\w])alert\(|(?<![.\w])confirm\(|(?<![.\w])prompt\(/.test(text.replace(/\/\/[^\n]*/g, ''))) popupHits.push(file.split(/[\\/]/).pop())
+      }
+    }
+    check('走查不变量：console+panel 前端零 window.open/alert/confirm/prompt 弹窗（dsh 完整页面）',
+      popupHits.length === 0, JSON.stringify(popupHits))
   }
   section('usage 最近调用（WP-04/A3：工作台自见 ≤5）')
   {

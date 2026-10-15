@@ -252,6 +252,20 @@ async function seedDemo(ctx: Context): Promise<void> {
     },
     ownerId: opsAdmin.id, orgId: aiDept.id,
   })
+  // 第二台 NAS（设计适配 2026-10-14：六类资产各≥2 条的演示覆盖要求；同草稿态诚实降级）
+  ctx.nasRegistry.register({
+    name: '档案冷存储（机房 B）', slug: 'archive-dc-b',
+    attrs: {
+      description: '历史归档与合规留存的冷存储网关（演示草稿：接入真实网关后探活上线）',
+      vendor: 'QNAP TS-873A', capacity: '8×8TB',
+      tags: ['归档存储', '演示'],
+      gatewayUrl: 'http://192.168.1.9:3000/mcp', accessToken: 'demo-token-replace-me', nasIp: '192.168.1.9',
+      rootPath: '/archive', stagingDir: '/archive/dsh-staging',
+      dataClass: 'internal',
+    },
+    ownerId: opsAdmin.id, orgId: beDept.id,
+  })
+  const nasAssets = ctx.nasRegistry.list()
 
   // -- Skill 市场 ------------------------------------------------------------
   const mkSkill = async (input: Parameters<typeof ctx.skillHub.submit>[0]) => {
@@ -471,7 +485,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   const appUsage = ctx.appRegistry.usage()
   const costs = ctx.audit.costs()
   const today = new Date()
-  for (let day = 27; day >= 0; day--) {
+  for (let day = 29; day >= 0; day--) {
     const date = new Date(today.getTime() - day * 86400_000).toISOString().slice(0, 10)
     for (const agent of [agentFinance, agentCoder, agentCs, agentHr, agentAnalyst]) {
       const calls = 40 + Math.floor(rand() * 160)
@@ -480,6 +494,8 @@ async function seedDemo(ctx: Context): Promise<void> {
       usage.insert({
         id: newId('agu'), agentId: agent.id, date,
         sessions: Math.floor(calls / 4), calls, okCalls, tokens,
+        // DAU 提报（设计适配 2026-10-14）：台账/单位 DAU 成本的运营口径数据源
+        dau: Math.max(8, Math.floor(calls / 6)),
         totalLatencyMs: calls * (200 + Math.floor(rand() * 600)),
       })
       costs.insert({
@@ -520,27 +536,89 @@ async function seedDemo(ctx: Context): Promise<void> {
   }
 
   // -- 演示计量历史（经真实 usage 管道：可对账/可报表；零价快照口径，M0-2 起无钱包） ----
-  for (let day = 27; day >= 0; day--) {
+  // 设计适配（2026-10-14，规格 5.x 演示覆盖要求）：近 30 天 × 六类资产 × 多部门 的计量事件——
+  // 台账 calls30d/tokens30d/cost30d、trend/heat、用量报表、模型网关 30d 消耗全部由此真实聚合。
+  // 确定性原则：所有数值由「资产:日期」锚定的 mulberry32 派生（同款防幂等键跨日重种冲突的写法），
+  // 幂等键 seed:<resource>:<date> 绑定内容，重种 = 幂等重放；不使用裸随机。
+
+  // 模型路由台账须先登记（upsertModel 同时播种价格簿 model:<slug>，计量事件才有计价规则）；
+  // 演示形态 offline 待接入——诚实降级不伪装可调用，但内部采购成本参考费率照配（成本穿透口径）
+  ctx.modelGateway.upsertModel({ slug: 'deepseek-chat', displayName: 'DeepSeek Chat（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 8, status: 'offline' })
+  ctx.modelGateway.upsertModel({ slug: 'qwen-plus', displayName: 'Qwen Plus（待接入）', provider: 'qwen', endpoint: '', apiKey: '', costCentsPerKTokens: 12, status: 'offline' })
+
+  /** 「键:日期」锚定的确定性数值（0-1），幂等键内容稳定跨重种。 */
+  const dayRandom = (anchor: string): number => mulberry32([...anchor].reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) >>> 0, 0))()
+  const seedUsage = (input: { resource: string; orgId: string; date: string; meters: Array<{ key: string; value: number; unit: string }> }) => {
+    ctx.usage.record({
+      org: input.orgId,
+      subject: 'agent:seed-demo',
+      principal: `org:${input.orgId}`,
+      resource: input.resource,
+      meters: input.meters,
+      occurred_at: `${input.date}T12:00:00.000Z`,
+      idempotency_key: `seed:${input.resource}:${input.date}`,
+    })
+  }
+  const seedAgents = [agentFinance, agentCoder, agentCs, agentHr, agentAnalyst]
+  const seedSkills = [skillWeekly, skillSql, skillCs, skillData, skillOnboard]
+  const seedApps = [[appCs, prodDept.id], [appBi, aiDept.id], [appHr, prodDept.id]] as const
+  for (let day = 29; day >= 0; day--) {
     const date = new Date(today.getTime() - day * 86400_000).toISOString().slice(0, 10)
+    // MCP：tokens 计价（价格簿 mcp:* meter=tokens），calls 米随事件携带（台账调用数口径）
     for (const service of [kb, dw, ticket, hrSvc]) {
-      // 确定性派生（slug:date 锚定）：日期窗口随启动日滑动，tokens 若按循环位置取值，
-      // 同一幂等键跨日重种会绑到不同内容 → 冲突 fatal。键锚定内容后重种 = 幂等重放。
-      const tokens = 20_000 + Math.floor(mulberry32([...`${service.slug}:${date}`].reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) >>> 0, 0))() * 160_000)
-      ctx.usage.record({
-        org: service.orgId,
-        subject: 'agent:seed-demo',
-        principal: `org:${service.orgId}`,
-        resource: `mcp:${service.slug}`,
-        meters: [{ key: 'tokens', value: tokens, unit: 'token' }],
-        occurred_at: `${date}T12:00:00.000Z`,
-        idempotency_key: `seed:${service.slug}:${date}`,
+      const tokens = 20_000 + Math.floor(dayRandom(`${service.slug}:${date}`) * 160_000)
+      const calls = 30 + Math.floor(dayRandom(`calls:${service.slug}:${date}`) * 150)
+      seedUsage({
+        resource: `mcp:${service.slug}`, orgId: service.orgId, date,
+        meters: [
+          { key: 'tokens', value: tokens, unit: 'token' },
+          { key: 'calls', value: calls, unit: 'call' },
+        ],
+      })
+    }
+    // 模型路由：output_tokens 计价（价格簿 model:<slug>），归口组织轮转多部门
+    for (const slug of ['deepseek-chat', 'qwen-plus'] as const) {
+      const orgId = [aiDept.id, beDept.id, prodDept.id][Math.floor(dayRandom(`org:${slug}:${date}`) * 3)]!
+      const inputTokens = 8_000 + Math.floor(dayRandom(`in:${slug}:${date}`) * 60_000)
+      const outputTokens = 2_000 + Math.floor(dayRandom(`out:${slug}:${date}`) * 24_000)
+      seedUsage({
+        resource: `model:${slug}`, orgId, date,
+        meters: [
+          { key: 'input_tokens', value: inputTokens, unit: 'token' },
+          { key: 'output_tokens', value: outputTokens, unit: 'token' },
+          { key: 'calls', value: 10 + Math.floor(dayRandom(`calls:${slug}:${date}`) * 90), unit: 'call' },
+        ],
+      })
+    }
+    // Skill：calls 计价（skill:*），resource 用 skill ID（slug 含非 ASCII，见 skillhub 计量注释）
+    for (const skill of seedSkills) {
+      seedUsage({
+        resource: `skill:${skill.id}`, orgId: skill.orgId, date,
+        meters: [{ key: 'calls', value: 3 + Math.floor(dayRandom(`skill:${skill.id}:${date}`) * 25), unit: 'call' }],
+      })
+    }
+    // AI 应用：calls 计价（app:*，零费率观测口径）
+    for (const [app, orgId] of seedApps) {
+      seedUsage({
+        resource: `app:${app.slug}`, orgId, date,
+        meters: [{ key: 'calls', value: 120 + Math.floor(dayRandom(`app:${app.slug}:${date}`) * 600), unit: 'call' }],
+      })
+    }
+    // Agent 本体：calls 计价（agent:*，宿主数字员工可观测资源）
+    for (const agent of seedAgents) {
+      seedUsage({
+        resource: `agent:${agent.id}`, orgId: agent.orgId, date,
+        meters: [{ key: 'calls', value: 60 + Math.floor(dayRandom(`agent:${agent.id}:${date}`) * 240), unit: 'call' }],
+      })
+    }
+    // NAS：calls 计价（nas:*，resource 用 NAS ID——与既有 nas 计量/台账口径一致）
+    for (const nas of nasAssets) {
+      seedUsage({
+        resource: `nas:${nas.id}`, orgId: nas.orgId, date,
+        meters: [{ key: 'calls', value: 15 + Math.floor(dayRandom(`nas:${nas.id}:${date}`) * 90), unit: 'call' }],
       })
     }
   }
-
-  // 模型路由台账（演示：未配置真实凭据，offline 待接入——诚实降级，不伪装可调用）
-  ctx.modelGateway.upsertModel({ slug: 'deepseek-chat', displayName: 'DeepSeek Chat（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 0, status: 'offline' })
-  ctx.modelGateway.upsertModel({ slug: 'qwen-plus', displayName: 'Qwen Plus（待接入）', provider: 'qwen', endpoint: '', apiKey: '', costCentsPerKTokens: 0, status: 'offline' })
 
   // -- 告警规则与告警 ----------------------------------------------------------
   ctx.audit.createAlertRule({ name: 'MCP 服务熔断', metric: 'mcp_unhealthy', operator: 'gt', threshold: 2, windowMinutes: 5, severity: 'critical', channels: ['dingtalk', 'email'], enabled: true, description: '健康探活连续失败超过阈值' })

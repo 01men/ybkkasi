@@ -466,6 +466,58 @@ export class UsageService extends Service {
   }
 
   /**
+   * 资产台账/用量报表聚合（设计适配 2026-10-14，只读 additive）：
+   * 窗口 [from, to) 内按 资源/部门/日 三维分组的 调用数+tokens+内部成本 聚合。
+   *
+   * calls 口径：事件 meters 中键为 calls 的米值求和（批量计量一事件可代表多次调用），
+   * 无 calls 米的事件（如 mcp:/model: 按 tokens 计价的历史事件）按 1 次计——
+   * 「一次登记 = 一次调用批次」。tokens 口径与 summary/monthlyReport 一致（键名含 tokens 全累加）。
+   */
+  usageReport(fromIso: string, toIso?: string): {
+    byResource: Array<{ resource: string; events: number; calls: number; tokens: number; cost_cents: number }>
+    byOrg: Array<{ org: string; events: number; calls: number; tokens: number; cost_cents: number }>
+    byDay: Array<{ day: string; events: number; calls: number; tokens: number; cost_cents: number }>
+  } {
+    const tokensExpr = "COALESCE(SUM((SELECT SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)) FROM json_each(e.meters_json) m WHERE json_extract(m.value, '$.key') LIKE '%tokens%')), 0)"
+    const callsExpr = "COALESCE(SUM(COALESCE((SELECT SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)) FROM json_each(e.meters_json) m WHERE json_extract(m.value, '$.key') = 'calls'), 1)), 0)"
+    const costExpr = "COALESCE(SUM(CAST(json_extract(e.pricing_json, '$.cost_cents') AS INTEGER)), 0)"
+    const window = toIso === undefined ? ' WHERE e.occurred_at >= ?' : ' WHERE e.occurred_at >= ? AND e.occurred_at < ?'
+    const params = toIso === undefined ? [fromIso] : [fromIso, toIso]
+    const run = <T extends Record<string, unknown>>(dimension: string): T[] =>
+      this.ctx.txnStore.sql<T>(`SELECT ${dimension} AS dimension, COUNT(*) AS events, ${callsExpr} AS calls, ${tokensExpr} AS tokens, ${costExpr} AS cost_cents FROM usage_events e${window} GROUP BY ${dimension}`, params)
+    const num = (value: unknown): number => Number(value) || 0
+    return {
+      byResource: run<{ dimension: string; events: number; calls: number; tokens: number; cost_cents: number }>('e.resource')
+        .map((row) => ({ resource: String(row.dimension), events: num(row.events), calls: num(row.calls), tokens: num(row.tokens), cost_cents: num(row.cost_cents) }))
+        .sort((a, b) => b.cost_cents - a.cost_cents || b.calls - a.calls),
+      byOrg: run<{ dimension: string; events: number; calls: number; tokens: number; cost_cents: number }>('e.org')
+        .map((row) => ({ org: String(row.dimension), events: num(row.events), calls: num(row.calls), tokens: num(row.tokens), cost_cents: num(row.cost_cents) }))
+        .sort((a, b) => b.cost_cents - a.cost_cents || b.calls - a.calls),
+      byDay: run<{ dimension: string; events: number; calls: number; tokens: number; cost_cents: number }>("substr(e.occurred_at, 1, 10)")
+        .map((row) => ({ day: String(row.dimension), events: num(row.events), calls: num(row.calls), tokens: num(row.tokens), cost_cents: num(row.cost_cents) }))
+        .sort((a, b) => a.day.localeCompare(b.day)),
+    }
+  }
+
+  /**
+   * 资源×日 调用数趋势（设计适配 2026-10-14，只读 additive）：
+   * 台账 trend[14] / 市场热力 heat[30] 的数据源；calls 口径与 usageReport 一致
+   * （calls 米求和，无该米的事件按 1 计）。prefix 由调用方以代码字面量传入（同 matrix），
+   * 缺省全资源。
+   */
+  callsTrend(fromIso: string, prefix?: string): Array<{ resource: string; day: string; calls: number }> {
+    const conditions = ['e.occurred_at >= ?']
+    const params: Array<string | number> = [fromIso]
+    if (prefix !== undefined) { conditions.push('e.resource LIKE ?'); params.push(`${prefix}%`) }
+    return this.ctx.txnStore.sql<{ resource: string; day: string; calls: number }>(
+      "SELECT e.resource AS resource, substr(e.occurred_at, 1, 10) AS day," +
+      " COALESCE(SUM(COALESCE((SELECT SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)) FROM json_each(e.meters_json) m WHERE json_extract(m.value, '$.key') = 'calls'), 1)), 0) AS calls" +
+      ` FROM usage_events e WHERE ${conditions.join(' AND ')} GROUP BY e.resource, substr(e.occurred_at, 1, 10)`,
+      params,
+    ).map((row) => ({ resource: String(row.resource), day: String(row.day), calls: Number(row.calls) || 0 }))
+  }
+
+  /**
    * 成本/用量摘要（IAW 交接 4-1：面板侧成本查询的最小接口）。
    * 窗口 [from, to) 内按 org / subject 过滤的聚合：事件数、内部成本（cost_cents 口径，
    * charge_cents 零价快照恒 0）、tokens 三分（input/output/其他）与按资源分项。

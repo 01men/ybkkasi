@@ -52,7 +52,7 @@ export async function renderExec(content, params, ctx) {
   const tab = params.get('tab') ?? 'overview'
   if (!session.can('exec.read')) {
     content.innerHTML = `
-      <div class="page-head"><div><div class="page-title">执行中枢</div></div></div>
+      <div class="page-head"><div><div class="micro-label">EXEC HUB</div><div class="page-title">执行中枢</div></div></div>
       <div class="card card-pad" style="text-align:center;padding:44px 24px">
         <div style="font-size:30px;margin-bottom:10px">🔒</div>
         <div style="font-weight:600;margin-bottom:6px">无访问权限</div>
@@ -64,8 +64,9 @@ export async function renderExec(content, params, ctx) {
   content.innerHTML = `
     <div class="page-head">
       <div>
+        <div class="micro-label">EXEC HUB</div>
         <div class="page-title">执行中枢</div>
-        <div class="page-desc">目标 → 项目 → 任务 → Agent 执行：唤醒队列驱动的心跳式调度，人机共用的执行视图。</div>
+        <div class="page-sub">目标 → 项目 → 任务 → Agent 执行：唤醒队列驱动的心跳式调度，人机共用的执行视图。</div>
       </div>
       <div class="page-actions" id="exec-actions"></div>
     </div>

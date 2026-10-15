@@ -5,18 +5,49 @@
  * 处理器逐字搬运（行为与迁出前一致）。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import type { SkillRecord } from '../../../plugin-skillhub/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { guarded, body, changeLog, caller } = deps
+
+  /**
+   * 市场卡片热力（设计适配规格 5.3，2026-10-14）：每个 Skill 近 30 日每日调用次数 heat[30]。
+   * 数据源=usage 真实聚合（callsTrend 只读方法，calls 口径=calls 米求和、无该米事件按 1 计）；
+   * 计量管道接入前的下载流水不回填（与 /api/skills/usage-heatmap 的回填口径不同——
+   * 台账口径只认计量事件，避免同一次使用在两处重复计）；无数据全 0 数组。
+   */
+  const heatBySkill = (): { axis: string[]; bySkill: Map<string, number[]> } => {
+    const axis: string[] = []
+    for (let i = 29; i >= 0; i--) axis.push(new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10))
+    const from = new Date(Date.now() - 30 * 86_400_000).toISOString()
+    const bySkill = new Map<string, number[]>()
+    for (const row of ctx.usage.callsTrend(from, 'skill:')) {
+      const skillId = row.resource.slice('skill:'.length)
+      const dayIndex = axis.indexOf(row.day)
+      if (dayIndex < 0) continue
+      const cells = bySkill.get(skillId) ?? Array<number>(30).fill(0)
+      cells[dayIndex]! += row.calls
+      bySkill.set(skillId, cells)
+    }
+    return { axis, bySkill }
+  }
+
   // -- Skill 市场 ---------------------------------------------------------
   guarded('GET', '/api/skills', 'skill.read', (exchange) => {
+    // heat[30] 只在默认市场列表（无 mine/pending 收敛）时附带——两个子视图不渲染热力，省一次聚合
+    const withHeat = exchange.query.get('mine') !== '1' && exchange.query.get('pending') !== '1'
+    const heat = withHeat ? heatBySkill() : undefined
+    const enrich = (skill: SkillRecord) => ({
+      ...skill,
+      ...(heat ? { heat: heat.bySkill.get(skill.id) ?? Array<number>(30).fill(0) } : {}),
+    })
     if (exchange.query.get('mine') === '1') {
       const info = caller(exchange)
-      return { skills: ctx.skillHub.skills().find((skill) => skill.authorId === (info.userId ?? info.principalId)) }
+      return { skills: ctx.skillHub.skills().find((skill) => skill.authorId === (info.userId ?? info.principalId)).map(enrich) }
     }
     if (exchange.query.get('pending') === '1') {
-      return { skills: ctx.skillHub.skills().find((skill) => ['pending_approval', 'scanning', 'rejected'].includes(skill.status)) }
+      return { skills: ctx.skillHub.skills().find((skill) => ['pending_approval', 'scanning', 'rejected'].includes(skill.status)).map(enrich) }
     }
     // 市场列表含在途项（待审批/扫描中，排最前带状态徽标）：审批人无需切页即可看到待办
     const skills = ctx.skillHub.search({
@@ -26,7 +57,7 @@ export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
       sort: (exchange.query.get('sort') ?? 'downloads') as 'downloads' | 'rating' | 'updated',
       includePending: true,
     })
-    return { skills, categories: ctx.skillHub.categories() }
+    return { skills: skills.map(enrich), categories: ctx.skillHub.categories(), ...(heat ? { heatAxis: heat.axis } : {}) }
   })
 
   guarded('GET', '/api/skills/:id', 'skill.read', (exchange) => {

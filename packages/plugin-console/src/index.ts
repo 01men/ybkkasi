@@ -35,6 +35,7 @@ import { registerAppRoutes } from './routes/apps.ts'
 import { registerAuditRoutes } from './routes/audit.ts'
 import { registerOpsRoutes } from './routes/ops.ts'
 import { registerUsageRoutes } from './routes/usage.ts'
+import { registerFleetRoutes } from './routes/fleet.ts'
 import { registerBridgeRoutes } from './routes/bridge.ts'
 
 export const name = 'console'
@@ -218,6 +219,9 @@ export function apply(ctx: Context) {
   registerAuditRoutes(ctx, { http, guarded, body, changeLog, caller })
   registerOpsRoutes(ctx, { http, guarded, body, changeLog, caller })
   registerUsageRoutes(ctx, { http, guarded, body, changeLog, caller })
+
+  // -- Fleet 六类资产统一台账（设计适配规格 5.2，2026-10-14） --------------------
+  registerFleetRoutes(ctx, { http, guarded, body, changeLog, caller })
   registerBridgeRoutes(ctx, { http, guarded, body, changeLog, caller })
 
   // -- 第三方插件市场（v1.2）：已迁移 routes/market.ts（OPT-P1-01 首段） ------

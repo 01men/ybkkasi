@@ -15,8 +15,9 @@ export async function renderIam(content, params, ctx) {
   content.innerHTML = `
     <div class="page-head">
       <div>
+        <div class="micro-label">IAM / ORG</div>
         <div class="page-title">组织与账号</div>
-        <div class="page-desc">组织架构、账号生命周期、角色权限与三方同步——人是一切授权的主体。</div>
+        <div class="page-sub">一套身份贯穿 MCP / Agent / 应用 / Skill / 模型 / NAS——组织架构、账号生命周期、角色权限与三方同步，人是一切授权的主体。</div>
       </div>
       <div class="page-actions" id="iam-actions"></div>
     </div>

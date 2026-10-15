@@ -245,15 +245,15 @@ function gradientIll(ic) {
     <svg viewBox="0 0 128 96" width="128" height="96">
       <defs>
         <linearGradient id="eg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#b6d7ff"/><stop offset="1" stop-color="#dcecff"/>
+          <stop offset="0" stop-color="#b6e0ee"/><stop offset="1" stop-color="#dceef5"/>
         </linearGradient>
       </defs>
       <rect x="14" y="18" width="100" height="62" rx="10" fill="url(#eg)"/>
       <rect x="24" y="30" width="44" height="7" rx="3.5" fill="#fff" opacity=".9"/>
       <rect x="24" y="43" width="64" height="7" rx="3.5" fill="#fff" opacity=".75"/>
       <rect x="24" y="56" width="52" height="7" rx="3.5" fill="#fff" opacity=".6"/>
-      <circle cx="97" cy="61" r="15" fill="#0052D9" opacity=".14"/>
-      <g transform="translate(89,53)" stroke="#0052D9" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="97" cy="61" r="15" fill="#0a5f87" opacity=".14"/>
+      <g transform="translate(89,53)" stroke="#0a5f87" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
         ${iconRaw(ic, 16)}
       </g>
     </svg>`
@@ -265,7 +265,7 @@ function iconRaw(name, size) {
 const PATH_CACHE = PATHS
 
 // ---------- SVG 图表 ----------
-export function sparkline(values, { width = 220, height = 48, color = '#0052D9', fill = true } = {}) {
+export function sparkline(values, { width = 220, height = 48, color = '#0a5f87', fill = true } = {}) {
   if (!values?.length) return '<span class="text-4 fs-12">暂无数据</span>'
   const max = Math.max(...values, 1)
   const min = Math.min(...values, 0)
@@ -286,7 +286,7 @@ export function sparkline(values, { width = 220, height = 48, color = '#0052D9',
     </svg>`
 }
 
-export function barChart(items, { width = 560, height = 170, color = '#0052D9', format = (v) => v } = {}) {
+export function barChart(items, { width = 560, height = 170, color = '#0a5f87', format = (v) => v } = {}) {
   if (!items?.length) return '<div class="text-4 fs-12" style="padding:20px">暂无数据</div>'
   const max = Math.max(...items.map((i) => i.value), 1)
   const gap = 6
@@ -305,7 +305,7 @@ export function barChart(items, { width = 560, height = 170, color = '#0052D9', 
   return `<svg width="100%" viewBox="0 0 ${width} ${height}" style="display:block">${bars}</svg>`
 }
 
-export function lineChart(series, { width = 560, height = 170, colors = ['#0052D9', '#10b981', '#f59e0b'], labels = [] } = {}) {
+export function lineChart(series, { width = 560, height = 170, colors = ['#0a5f87', '#059669', '#f59e0b'], labels = [] } = {}) {
   const all = series.flat()
   if (!all.length) return '<div class="text-4 fs-12" style="padding:20px">暂无数据</div>'
   const max = Math.max(...all, 1)
@@ -331,6 +331,256 @@ export function donut(segments, size = 120) {
     return arc
   }).join('')
   return `<svg width="${size}" height="${size}">${arcs}</svg>`
+}
+
+// ---------- CIO 仪表盘组件（2026-10-14 设计适配 · 暖纸 + 深青蓝，规格 §3） ----------
+// 全部为返回 HTML 字符串的纯函数（chipRow/tabRow 除外，返回带事件绑定的 Element）。
+// 图表算法移植自设计稿 components/shared.tsx（坐标/渐变/虚线网格/末点圆点）；
+// 中文数字格式沿用上方 fmtNum/fmtCost。SVG 属性不吃 var()，主色用字面量单源：
+
+const BRAND = '#0a5f87'   // --brand-500 深青蓝（换肤双处同步：tokens.css / 本常量）
+const GRID_C = '#e0ddd8'  // 虚线网格线（--border）
+const TEXT_C = '#706864'  // 坐标轴文字（--text-3）
+
+/** 空态块：虚线边框 + 弱化底。 */
+export function emptyHint(text) {
+  return `<div class="empty-hint">${esc(text ?? '暂无数据')}</div>`
+}
+
+/** 区块标题：{ label, title, extra, actions } → .page-head 结构；actions/title/extra 为 HTML 字符串。 */
+export function sectionHead({ label, title, extra, actions } = {}) {
+  return `
+    <div class="page-head">
+      <div class="grow">
+        ${label ? `<div class="micro-label" style="margin-bottom:4px">${esc(label)}</div>` : ''}
+        <h2 class="page-title">${title ?? ''}</h2>
+        ${extra ? `<div class="page-sub">${extra}</div>` : ''}
+      </div>
+      ${actions ? `<div class="page-head-actions">${actions}</div>` : ''}
+    </div>`
+}
+
+/** 指标卡：{ label, value, sub, tone }，tone: ''|'warn'|'crit'；value/sub 为 HTML 字符串。 */
+export function statCard({ label, value, sub, tone = '' } = {}) {
+  return `
+    <div class="stat-card">
+      <div class="micro-label">${esc(label ?? '')}</div>
+      <div class="stat-value${tone ? ' ' + tone : ''}" style="margin-top:6px">${value ?? '—'}</div>
+      ${sub ? `<div class="stat-sub">${sub}</div>` : ''}
+    </div>`
+}
+
+const HEALTH_MAP = {
+  healthy: ['dot-ok', '健康'],
+  warning: ['dot-warn', '关注'],
+  critical: ['dot-crit', '熔断'],
+  offline: ['dot-off', '离线'],
+}
+/** 健康红绿灯：health 'healthy'|'warning'|'critical'|'offline' → .dot 组合 + 中文标签。 */
+export function healthDot(health, { pulse = false } = {}) {
+  const [cls, label] = HEALTH_MAP[health] ?? ['dot-off', health ?? '未知']
+  const pulsing = pulse && health === 'critical'
+  return `<span style="display:inline-flex;align-items:center;gap:6px">` +
+    `<span class="dot ${cls}${pulsing ? ' pulse' : ''}"></span>` +
+    `<span class="fs-12 text-3">${esc(label)}</span></span>`
+}
+
+const LIFECYCLE_MAP = {
+  draft: ['pill-draft', '草稿'],
+  online: ['pill-online', '已上线'],
+  offline: ['pill-offline', '已下线'],
+  archived: ['pill-archived', '已归档'],
+  deprecated: ['pill-deprecated', '已弃用'],
+}
+/** 生命周期徽章：s 'draft'|'online'|'offline'|'archived'|'deprecated'。 */
+export function lifecycleBadge(s) {
+  const [cls, label] = LIFECYCLE_MAP[s] ?? ['pill', s ?? '未知']
+  return `<span class="pill ${cls}">${esc(label)}</span>`
+}
+
+const TYPE_MAP = {
+  mcp: ['tbadge-mcp', 'MCP 服务'],
+  agent: ['tbadge-agent', 'Agent'],
+  app: ['tbadge-app', 'AI 应用'],
+  skill: ['tbadge-skill', 'Skill'],
+  model: ['tbadge-model', '模型路由'],
+  nas: ['tbadge-nas', 'NAS 存储'],
+}
+/** 资产类型徽章：type 'mcp'|'agent'|'app'|'skill'|'model'|'nas'。 */
+export function typeBadge(type) {
+  const [cls, label] = TYPE_MAP[String(type ?? '').toLowerCase()] ?? ['tbadge', type ?? '未知']
+  return `<span class="tbadge ${cls}">${esc(label)}</span>`
+}
+
+/** 进度条：percent 0-100；tone ''|'warn'|'ok'；width CSS 宽度；label 单行尾注（如「灰度 40%」）。 */
+export function progressBar(percent, { tone = '', width = '80px', label = '' } = {}) {
+  const pct = Math.max(0, Math.min(100, Math.round(Number(percent ?? 0))))
+  return `<span style="display:inline-flex;align-items:center;gap:8px">` +
+    `<span class="bar" style="width:${esc(width)}"><span class="bar-fill${tone ? ' ' + tone : ''}" style="width:${pct}%"></span></span>` +
+    (label ? `<span class="mono tnum text-3" style="font-size:11px">${esc(label)}</span>` : '') +
+    `</span>`
+}
+
+/** 面积趋势图（带 Y 轴刻度/虚线网格/渐变填充/末点圆点）：{ series, labels, unit, color, height }。 */
+export function areaChart({ series, labels = [], unit = '', color = BRAND, height = 180 } = {}) {
+  if (!series?.length) return emptyHint('暂无数据')
+  const w = 720, h = height, padL = 42, padB = 22, padT = 10, ticks = 4
+  const max = Math.max(...series) * 1.12 || 1
+  const x = (i) => padL + (i / Math.max(1, series.length - 1)) * (w - padL - 8)
+  const y = (v) => padT + (1 - v / max) * (h - padT - padB)
+  const d = series.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
+  const area = `${d} L${x(series.length - 1).toFixed(1)},${(h - padB).toFixed(1)} L${x(0).toFixed(1)},${(h - padB).toFixed(1)} Z`
+  const gid = 'ac' + Math.random().toString(36).slice(2, 8)
+  const grid = Array.from({ length: ticks + 1 }, (_, i) => {
+    const v = (max / ticks) * i
+    return `<line x1="${padL}" x2="${w - 8}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID_C}" stroke-width="1"${i === 0 ? '' : ' stroke-dasharray="2 4"'}/>` +
+      `<text x="${padL - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end" fill="${TEXT_C}" font-size="9.5">${esc(fmtNum(Math.round(v)))}</text>`
+  }).join('')
+  const every = Math.max(1, Math.ceil(labels.length / 7))
+  const xLabels = labels.map((l, i) =>
+    i % every === 0 ? `<text x="${x(i).toFixed(1)}" y="${h - 6}" text-anchor="middle" fill="${TEXT_C}" font-size="9.5">${esc(String(l))}</text>` : ''
+  ).join('')
+  const last = series.length - 1
+  return `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;display:block" role="img" aria-label="趋势图">
+      <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.16"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0.01"/>
+      </linearGradient></defs>
+      ${grid}
+      <path d="${area}" fill="url(#${gid})"/>
+      <path d="${d}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"/>
+      <circle cx="${x(last).toFixed(1)}" cy="${y(series[last]).toFixed(1)}" r="3" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+      ${xLabels}
+      ${unit ? `<text x="${w - 8}" y="12" text-anchor="end" fill="${TEXT_C}" font-size="9.5">${esc(unit)}</text>` : ''}
+    </svg>`
+}
+
+/** 双序列趋势（实线实际 + 虚线目标）：{ actual, target, labels, unit, color, height }。 */
+export function dualTrendChart({ actual = [], target = [], labels = [], unit = '', color = BRAND, height = 200 } = {}) {
+  if (!actual.length || !target.length) return emptyHint('暂无数据')
+  const w = 720, h = height, padL = 40, padB = 22, padT = 12, ticks = 4
+  const max = Math.max(...target, ...actual) * 1.15 || 1
+  const x = (i) => padL + (i / Math.max(1, actual.length - 1)) * (w - padL - 10)
+  const y = (v) => padT + (1 - v / max) * (h - padT - padB)
+  const path = (arr) => arr.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
+  const gid = 'dg' + Math.random().toString(36).slice(2, 8)
+  const grid = Array.from({ length: ticks + 1 }, (_, i) => {
+    const v = (max / ticks) * i
+    return `<line x1="${padL}" x2="${w - 10}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${GRID_C}" stroke-width="1"${i === 0 ? '' : ' stroke-dasharray="2 4"'}/>` +
+      `<text x="${padL - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end" fill="${TEXT_C}" font-size="9.5">${esc(fmtNum(Math.round(v)))}</text>`
+  }).join('')
+  const xLabels = labels.map((l, i) =>
+    i % 2 === 0 ? `<text x="${x(i).toFixed(1)}" y="${h - 6}" text-anchor="middle" fill="${TEXT_C}" font-size="9.5">${esc(String(l))}</text>` : ''
+  ).join('')
+  const last = actual.length - 1
+  return `
+    <svg viewBox="0 0 ${w} ${h}" style="width:100%;display:block" role="img" aria-label="双序列趋势图">
+      <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.14"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0.01"/>
+      </linearGradient></defs>
+      ${grid}
+      <path d="${path(actual)} L${x(last).toFixed(1)},${(h - padB).toFixed(1)} L${x(0).toFixed(1)},${(h - padB).toFixed(1)} Z" fill="url(#${gid})"/>
+      <path d="${path(target)}" fill="none" stroke="#938c88" stroke-width="1.4" stroke-dasharray="5 4"/>
+      <path d="${path(actual)}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="${x(last).toFixed(1)}" cy="${y(actual[last]).toFixed(1)}" r="3.2" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+      ${xLabels}
+      ${unit ? `<text x="${w - 10}" y="13" text-anchor="end" fill="${TEXT_C}" font-size="9.5">${esc(unit)}</text>` : ''}
+    </svg>`
+}
+
+/** 横条排行：items [{ name, value, hint }]，format 默认 fmtNum（中文数字）。 */
+export function hBarList(items, { format } = {}) {
+  const list = items ?? []
+  if (!list.length) return emptyHint('暂无数据')
+  const fmt = format ?? ((v) => fmtNum(v))
+  const max = Math.max(...list.map((i) => Number(i.value) || 0), 1)
+  return `<div style="display:flex;flex-direction:column;gap:10px">` + list.map((it, idx) => `
+    <div>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px">
+        <span class="ellipsis fs-13" style="min-width:0">
+          <span class="mono tnum text-3" style="font-size:11px;margin-right:8px">${String(idx + 1).padStart(2, '0')}</span>${esc(it.name ?? '')}
+        </span>
+        <span class="tnum mono" style="font-size:12px;white-space:nowrap">${esc(String(fmt(it.value)))}${it.hint != null && it.hint !== '' ? ` <span class="text-4" style="font-size:11px;font-family:var(--font)">${esc(it.hint)}</span>` : ''}</span>
+      </div>
+      <div class="bar"><span class="bar-fill" style="width:${((Number(it.value) || 0) / max * 100).toFixed(1)}%"></span></div>
+    </div>`).join('') + `</div>`
+}
+
+/** 带中心数值甜甜圈（区别于上方 donut）：parts [{ label, value, color }]。centerValue 为 HTML 字符串。 */
+export function donutCenter(parts, { centerLabel = '', centerValue = '', size = 120 } = {}) {
+  const segs = parts ?? []
+  if (!segs.length) return emptyHint('暂无数据')
+  const total = segs.reduce((s, p) => s + (Number(p.value) || 0), 0) || 1
+  const r = 44, c = 2 * Math.PI * r
+  let acc = 0
+  const arcs = segs.map((p) => {
+    const frac = (Number(p.value) || 0) / total
+    const arc = `<circle cx="60" cy="60" r="${r}" fill="none" stroke="${p.color}" stroke-width="13" stroke-dasharray="${(frac * c).toFixed(2)} ${c.toFixed(2)}" stroke-dashoffset="${(-acc * c).toFixed(2)}"/>`
+    acc += frac
+    return arc
+  }).join('')
+  const legend = segs.map((p) => `
+    <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+      <span style="width:8px;height:8px;border-radius:2px;background:${p.color};flex-shrink:0"></span>
+      <span class="text-3 ellipsis" style="flex:1;min-width:0">${esc(p.label)}</span>
+      <span class="tnum mono">${(((Number(p.value) || 0) / total) * 100).toFixed(1)}%</span>
+    </div>`).join('')
+  return `
+    <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+      <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0">
+        <svg viewBox="0 0 120 120" width="${size}" height="${size}" style="transform:rotate(-90deg)">
+          <circle cx="60" cy="60" r="${r}" fill="none" stroke="#f0eeea" stroke-width="13"/>
+          ${arcs}
+        </svg>
+        <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+          <div class="tnum" style="font-size:18px;font-weight:600;line-height:1.2">${centerValue}</div>
+          <div class="text-3" style="font-size:10.5px">${esc(centerLabel)}</div>
+        </div>
+      </div>
+      <div style="min-width:140px;flex:1;display:flex;flex-direction:column;gap:6px">${legend}</div>
+    </div>`
+}
+
+/** 30 天热力条：values 每日次数（色深 = 当日用量），big 用于详情抽屉大图。 */
+export function heatStrip(values, { big = false } = {}) {
+  const vals = (values ?? []).map((v) => Number(v) || 0)
+  if (!vals.length) return emptyHint('暂无数据')
+  const max = Math.max(...vals, 1)
+  const cells = vals.map((v, i) => {
+    const bg = v === 0 ? '#eae7e1' : `hsl(201 88% ${Math.round(68 - (v / max) * 40)}%)`
+    return `<span class="heat-cell" style="background:${bg}" title="第 ${i + 1} 天 · ${v} 次"></span>`
+  }).join('')
+  return `<span class="heat-strip${big ? ' big' : ''}">${cells}</span>`
+}
+
+/** 过滤胶囊行（返回 Element）：options [{ value, label, count }]，onPick(value)。 */
+export function chipRow(options, activeValue, onPick) {
+  const el = h('<div class="chips"></div>')
+  ;(options ?? []).forEach((opt) => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'chip' + (opt.value === activeValue ? ' active' : '')
+    btn.innerHTML = `${esc(opt.label ?? '')}${opt.count != null ? `<span class="chip-count tnum">${esc(String(opt.count))}</span>` : ''}`
+    btn.onclick = () => onPick?.(opt.value)
+    el.appendChild(btn)
+  })
+  return el
+}
+
+/** 分段标签行（返回 Element）：options [{ key, label, badge, badgeTone }]，onPick(key)。 */
+export function tabRow(options, activeKey, onPick) {
+  const el = h('<div class="tabbar"></div>')
+  ;(options ?? []).forEach((opt) => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'tab' + (opt.key === activeKey ? ' active' : '')
+    btn.innerHTML = `${esc(opt.label ?? '')}${opt.badge != null ? `<span class="tab-badge${opt.badgeTone === 'warn' ? ' warn' : ''}">${esc(String(opt.badge))}</span>` : ''}`
+    btn.onclick = () => onPick?.(opt.key)
+    el.appendChild(btn)
+  })
+  return el
 }
 
 // ---------- 表格 ----------

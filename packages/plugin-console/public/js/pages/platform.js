@@ -24,8 +24,9 @@ export async function renderPlatform(content) {
   content.innerHTML = `
     <div class="page-head">
       <div>
+        <div class="micro-label">PLUGINS / RUNTIME</div>
         <div class="page-title">插件与工具</div>
-        <div class="page-desc">运行中的平台 = 一棵 cordis 插件树。每个业务域都是可独立启停的插件，工具契约与 dsh 原生 ToolRuntime 对齐。</div>
+        <div class="page-sub">运行中的平台 = 一棵 cordis 插件树。每个业务域都是可独立启停的插件，工具契约与 dsh 原生 ToolRuntime 对齐。</div>
       </div>
       <div class="page-actions">
         <button class="badge badge-brand no-dot" id="btn-platform-version" title="查看平台更新" style="cursor:pointer;border:0">版本 v${esc(info.version)}${info.installMode === 'bundle' ? '（市场安装）' : ''}</button>

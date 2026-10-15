@@ -20,8 +20,9 @@ export async function renderAuthn(content, params, ctx) {
   content.innerHTML = `
     <div class="page-head">
       <div>
-        <div class="page-title">统一认证中心</div>
-        <div class="page-desc">人与机器双轨身份；令牌统一签发 / 校验 / 吊销，密钥 KMS 托管，支持轮换。外部应用经 OIDC 协议接入（RS256 / JWKS）。</div>
+        <div class="micro-label">AUTHN / TOKENS</div>
+        <div class="page-title">认证与令牌</div>
+        <div class="page-sub">人与机器双轨身份；令牌统一签发 / 校验 / 吊销，密钥 KMS 托管，支持轮换。外部应用经 OIDC 协议接入（RS256 / JWKS）。</div>
       </div>
       <div class="page-actions">
         <button class="btn btn-default" id="authn-rotate">${icon('refresh', 14)}轮换签名密钥</button>
