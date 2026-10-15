@@ -148,6 +148,8 @@ export interface DatasetRecord extends RecordBase {
   /** 关联场景编号（ScenegraphScene.code）。 */
   sceneCodes: string[]
   quality?: DatasetQualityScore
+  /** 质量分版本号（C-11）：每次登记自增；expectedVersion 条件更新据此判冲突。 */
+  qualityRevision?: number
   note?: string
 }
 
@@ -544,14 +546,30 @@ export class ResourceCoreService extends Service {
       .sort((a, b) => a.code.localeCompare(b.code))
   }
 
-  /** 质量分登记（2-2）：四维 0-100，overall 等权均值；登记快照不回写历史引用。 */
-  scoreDataset(code: string, score: { completeness: number; accuracy: number; timeliness: number; consistency: number; note?: string }): DatasetRecord {
+  /**
+   * 质量分登记（2-2）：四维 0-100，overall 等权均值；登记快照不回写历史引用。
+   * 并发语义（C-11）：score.expectedVersion 缺省=最后写入（存量调用方不受影响）；
+   * 携带时与当前 qualityRevision 比对，不一致即拒绝（防并发登记互相覆盖）。
+   */
+  scoreDataset(code: string, score: {
+    completeness: number
+    accuracy: number
+    timeliness: number
+    consistency: number
+    note?: string
+    /** 乐观锁：携带时必须等于当前 qualityRevision，否则拒绝。 */
+    expectedVersion?: number
+  }): DatasetRecord {
     const dataset = this.datasets().findOne((item) => item.code === code)
     if (!dataset) throw new Error(`数据集不存在：${code}（请先登记）`)
     const dims = ['completeness', 'accuracy', 'timeliness', 'consistency'] as const
     for (const dim of dims) {
       const value = score[dim]
       if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`质量分 ${dim} 应为 0-100，收到 ${value}`)
+    }
+    const currentRevision = dataset.qualityRevision ?? 0
+    if (score.expectedVersion !== undefined && score.expectedVersion !== currentRevision) {
+      throw new Error(`质量分版本冲突：当前 revision=${currentRevision}，请求基于 revision=${score.expectedVersion}（已被并发登记更新，请读取最新分后重试）`)
     }
     const overall = Math.round(((score.completeness + score.accuracy + score.timeliness + score.consistency) / 4) * 10) / 10
     const quality: DatasetQualityScore = {
@@ -560,8 +578,8 @@ export class ResourceCoreService extends Service {
       overall, scoredAt: new Date().toISOString(),
       ...(score.note ? { note: score.note } : {}),
     }
-    const updated = this.datasets().update(dataset.id, { quality })
-    this.ctx.platformBus.emit('resource.dataset.changed', { code, action: 'quality_scored', overall })
+    const updated = this.datasets().update(dataset.id, { quality, qualityRevision: currentRevision + 1 })
+    this.ctx.platformBus.emit('resource.dataset.changed', { code, action: 'quality_scored', overall, revision: currentRevision + 1 })
     return updated
   }
 
@@ -584,13 +602,33 @@ export class ResourceCoreService extends Service {
     return { dataset: code, upstream: collect(true), downstream: collect(false) }
   }
 
-  /** 登记血缘边（派生集 derived 依赖源集 source）。 */
+  /** 登记血缘边（派生集 derived 依赖源集 source）。成环拒绝（C-08）：沿既有 dataset 血缘边 DFS，source 已可达 derived 即环。 */
   addLineage(derived: string, source: string, kind = 'lineage'): DependencyRecord {
     if (derived === source) throw new Error('血缘边两端不能是同一数据集')
     for (const code of [derived, source]) {
       if (!this.datasets().findOne((item) => item.code === code)) throw new Error(`数据集未登记：${code}（请先登记再建血缘）`)
     }
+    if (this.lineageReaches(source, derived)) {
+      throw new Error(`血缘成环拒绝：${source} 经既有血缘已可达 ${derived}，再登记 ${derived}→${source} 将形成循环依赖`)
+    }
     return this.addDependency({ fromType: 'dataset', fromId: derived, toType: 'dataset', toId: source, kind })
+  }
+
+  /** 沿 dataset 依赖边（from→to）向下 DFS：判断 from 是否可达 target（成环判定的可达性查询）。 */
+  private lineageReaches(from: string, target: string): boolean {
+    const seen = new Set<string>([from])
+    const stack = [from]
+    while (stack.length > 0) {
+      const current = stack.pop()!
+      for (const edge of this.dependencies().find((item) => item.fromType === 'dataset' && item.fromId === current)) {
+        if (edge.toId === target) return true
+        if (!seen.has(edge.toId)) {
+          seen.add(edge.toId)
+          stack.push(edge.toId)
+        }
+      }
+    }
+    return false
   }
 
   metricDefinitions(): Collection<MetricDefinitionRecord> {
@@ -600,6 +638,7 @@ export class ResourceCoreService extends Service {
   /**
    * 指标口径登记（2-4）：同码不覆盖不合并——内容相同的重复登记幂等返回既有条目；
    * 内容不同即新定义并存（口径冲突按记录人/时间全量留账），仲裁决定 active。
+   * 指纹键序归一（C-09）：payload 递归排序键后序列化，同内容不同键序不再误判为口径冲突。
    */
   putMetricDefinition(input: {
     code: string
@@ -612,9 +651,9 @@ export class ResourceCoreService extends Service {
     if (!input.code?.trim()) throw new Error('指标码 code 必填（如 gm_revenue）')
     if (!input.name?.trim()) throw new Error('指标名称必填')
     if (!input.recordedBy?.trim()) throw new Error('记录人 recordedBy 必填（口径问责）')
-    const fingerprint = JSON.stringify([input.name, input.unit ?? '', input.description ?? '', input.payload ?? {}])
+    const fingerprint = stableStringify([input.name, input.unit ?? '', input.description ?? '', input.payload ?? {}])
     const existing = this.metricDefinitions().all().filter((item) => item.code === input.code)
-    const same = existing.find((item) => JSON.stringify([item.name, item.unit ?? '', item.description ?? '', item.payload ?? {}]) === fingerprint)
+    const same = existing.find((item) => stableStringify([item.name, item.unit ?? '', item.description ?? '', item.payload ?? {}]) === fingerprint)
     if (same) return { definition: same, conflict: false }
     const activeCount = existing.filter((item) => item.status === 'active').length
     const definition = this.metricDefinitions().insert({
@@ -646,16 +685,14 @@ export class ResourceCoreService extends Service {
     if (!target) throw new Error(`指标定义不存在：${definitionId}（code=${code}）`)
     let superseded = 0
     for (const item of all) {
-      if (item.id === definitionId) {
-        if (item.status !== 'active') this.metricDefinitions().update(item.id, { status: 'active', supersedes: undefined })
-        continue
-      }
-      if (item.status === 'active') {
+      if (item.id === definitionId) continue
+      // C-09：非目标的同码定义统一把 supersedes 指向本次赢家（含此前已 superseded 的陈旧指针）
+      if (item.status !== 'superseded' || item.supersedes !== definitionId) {
         this.metricDefinitions().update(item.id, { status: 'superseded', supersedes: definitionId })
-        superseded++
+        if (item.status === 'active') superseded++
       }
     }
-    this.metricDefinitions().update(definitionId, { status: 'active' })
+    this.metricDefinitions().update(definitionId, { status: 'active', supersedes: undefined })
     this.ctx.platformBus.emit('resource.metric.changed', { code, definitionId, action: 'arbitrated', actor, superseded })
     return { active: this.metricDefinitions().get(definitionId)!, superseded }
   }
@@ -668,6 +705,19 @@ export interface TopologyNode {
   status: string
   statusLabel: string
   children: TopologyNode[]
+}
+
+/**
+ * 键序归一化序列化（C-09）：对象键递归排序后再序列化——同一口径 payload 因键插入顺序不同
+ * 不再被判为口径冲突（伪冲突）。数组保持原序（元素顺序通常有语义），仅对象键无序。
+ */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value ?? null)
 }
 
 /**

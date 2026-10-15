@@ -13,6 +13,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'agent_list',
     description: '列出 Agent 本体（支持状态/组织/关键字过滤，含健康与调用量）。',
+    permission: 'agent.read',
     parameters: {
       status: { type: 'string', enum: ['draft', 'trial', 'online', 'offline', 'archived'], description: '状态' },
       q: { type: 'string', description: '名称/标识关键字' },
@@ -37,6 +38,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'agent_get',
     description: '查看 Agent 详情（属性、生命周期历史、绑定用户、监测指标、可用操作）。',
+    permission: 'agent.read',
     parameters: {
       agentId: { type: 'string', required: true, description: 'Agent ID' },
     },
@@ -77,6 +79,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'agent_metrics',
     description: '查看 Agent 运行监测：会话量、调用量、成功率、Token 消耗与成本、平均响应时长（近 14 天序列）。',
+    permission: 'agent.read',
     parameters: {
       agentId: { type: 'string', required: true, description: 'Agent ID' },
     },

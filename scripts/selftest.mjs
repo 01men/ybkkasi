@@ -15,7 +15,7 @@ const NAS_AUTHZ_SEED = JSON.parse(__readFileSyncSeed(new URL('../packages/plugin
 import { createServer, request as httpRequest } from 'node:http'
 import { createHash } from 'node:crypto'
 import { rm, mkdir } from 'node:fs/promises'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 // 进程内插件树（dsh 宿主挂载分节：伪造 webServer 模拟 dsh 前缀分发，不经子进程）
 import { Context } from '@deepseek-ai/cordis'
@@ -740,6 +740,20 @@ try {
   check('分配角色', assign.ok && assign.data.roleIds.length === 1)
   check('开发者角色默认含 agent.write（与 app.write 对称，注册/提报更新闭环）', devRole.permissions.includes('agent.write'))
 
+  // 权限点卫生（组1 E-06）：三个全仓无消费死点从目录摘除；org_admin 迁移批次同步摘除 scenegraph.activate
+  const permCatalog = await api('GET', '/api/iam/permissions', { token: admin })
+  const catalogPoints = new Set((permCatalog.data?.catalog ?? []).map((item) => item.point))
+  check('权限目录：三个无消费死点已摘除（market.submit / connector.market.publish / scenegraph.activate）',
+    permCatalog.ok && catalogPoints.size >= 60
+    && !catalogPoints.has('market.submit') && !catalogPoints.has('connector.market.publish') && !catalogPoints.has('scenegraph.activate'),
+    JSON.stringify([...catalogPoints].filter((p) => ['market.submit', 'connector.market.publish', 'scenegraph.activate'].includes(p))))
+  const orgAdminRoleE6 = roleList.data.roles.find((role) => role.code === 'org_admin')
+  const memberRoleE6 = roleList.data.roles.find((role) => role.code === 'member')
+  check('权限目录：org_admin 迁移批次不再含 scenegraph.activate（member/auditor 同查）',
+    Boolean(orgAdminRoleE6) && !orgAdminRoleE6.permissions.includes('scenegraph.activate')
+    && Boolean(memberRoleE6) && !memberRoleE6.permissions.includes('scenegraph.activate'),
+    JSON.stringify({ org_admin: orgAdminRoleE6?.permissions, member: memberRoleE6?.permissions }))
+
   // 第二审批人账号（与发起人不同账号）：供异人审批/复核类断言使用（同人审批放开后非必需，保留覆盖双人路径）
   const superRole = roleList.data.roles.find((role) => role.code === 'super_admin')
   const approverCreate = await api('POST', '/api/iam/users', { token: admin, body: { username: 'approver02', displayName: '第二审批人', orgId: newOrg.data.id, password: 'Ybk@2026', roleIds: [superRole.id] } })
@@ -1102,6 +1116,13 @@ try {
     check('FinOps CSV 导出（text/csv + BOM + 穿透/空转区块表头）', finCsv.status === 200 && (finCsv.headers['content-type'] ?? '').includes('text/csv') && finCsv.body.startsWith('\ufeff') && finCsv.body.includes('部门穿透') && finCsv.body.includes('空转检测'), JSON.stringify({ status: finCsv.status, head: finCsv.body.slice(0, 80) }))
     const finBadMonth = await api('GET', '/api/finops/overview?month=2026-13', { token: admin })
     check('非法月份参数被拒（400）', finBadMonth.status === 400, String(finBadMonth.status))
+    // 组4：成本管道同源（seed 不再 audit:costs 直写）——演示计量经 usage 管道入账，
+    // 幂等键 seed:<resource>:<date> 可反查，audit:costs 由价格簿费率派生（FinOps 鲁棒断言即其消费面）
+    const seedEvents = await api('GET', '/api/usage/events?limit=200', { token: admin })
+    const seedDerived = (seedEvents.data?.items ?? []).filter((item) => String(item.idempotency_key ?? '').startsWith('seed:'))
+    check('成本管道：demo 种子计量经 usage 管道入账（seed: 幂等键可反查且带定价，成本经管道派生非直写）',
+      seedEvents.ok && seedDerived.length >= 10 && seedDerived.every((item) => item.pricing && Number.isFinite(item.pricing.cost_cents)),
+      JSON.stringify({ total: seedEvents.data?.total, seedHits: seedDerived.length, sample: seedDerived[0]?.idempotency_key }))
   }
   section('首启 bootstrap 状态（M2 部署产品化：上线三步走数据源）')
   {
@@ -1280,6 +1301,15 @@ try {
     check('feedback：事件主体归因正确（dev 本人 + OBO 归因均在列）', subjects.has(`user:${devUserId}`), JSON.stringify([...subjects]))
     const fbBad = await api('POST', '/api/usage/feedback', { token: dev, body: { resource: 'agent:dev-coder', score: 'meh' } })
     check('feedback：非法评分被拒 400', fbBad.status === 400, String(fbBad.status))
+    // 组4+主控：幂等键去掉 score 段——同 messageId 改评分（改评）不再双计，仍归并到首条事件
+    const fbRescore = await api('POST', '/api/usage/feedback', { token: dev, body: { resource: 'agent:dev-coder', messageId: 'msg-drill-1', score: 'down', note: '改评：复看后认为不准确' } })
+    check('feedback：同 messageId 改评分幂等（不再双计，event_id 归并首条）',
+      fbRescore.ok && fbRescore.data.event_id === fb.data.event_id, JSON.stringify({ replay: fbRescore.data?.event_id, first: fb.data?.event_id, err: fbRescore.error }))
+    const fbStatsRescore = await api('GET', '/api/usage/feedback-stats?days=7', { token: admin })
+    const rescoreRow = (fbStatsRescore.data?.byResource ?? []).find((row) => row.resource === 'agent:dev-coder')
+    check('feedback：改评不产生第二条聚合（agent:dev-coder 行 up=1/down=1，down 仅 OBO msg-drill-2 一条）',
+      fbStatsRescore.ok && rescoreRow && rescoreRow.up === 1 && rescoreRow.down === 1,
+      JSON.stringify({ row: rescoreRow, err: fbStatsRescore.error }))
   }
   section('错误文案映射完整性（WP-06/C3：枚举全部对外原因码，漏配即红）')
   {
@@ -1349,6 +1379,27 @@ try {
     check('四态：rq-card 随包单测全绿（node --test）', stateTest.exitCode === 0, `exit=${stateTest.exitCode}`)
   }
 
+  // ================================================================ 组5 内核：yaml 序列项 + 前端命令面板路由索引
+  section('yaml 序列解析（组5 E-05：冒号后无空白的序列项保持标量）')
+  {
+    const parsedTimeSeq = platformCore.parseYaml('- 12:34:56\n- 08:30:00\n- 普通标量\n')
+    check('yaml：parseSeq 时间串「12:34:56」保持标量（不再误判映射后 [object Object]）',
+      Array.isArray(parsedTimeSeq) && parsedTimeSeq[0] === '12:34:56' && parsedTimeSeq[1] === '08:30:00' && parsedTimeSeq[2] === '普通标量',
+      JSON.stringify(parsedTimeSeq))
+    const parsedMapSeq = platformCore.parseYaml('- name: 现场复核\n  actorType: human\n')
+    check('yaml：序列内映射项解析不受影响（冒号后带空白仍为键）',
+      Array.isArray(parsedMapSeq) && parsedMapSeq[0]?.name === '现场复核' && parsedMapSeq[0]?.actorType === 'human',
+      JSON.stringify(parsedMapSeq))
+  }
+  section('前端命令面板路由索引（组6：cmdk 页面索引补六路由）')
+  {
+    const cmdkSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'cmdk.js'), 'utf8')
+    const requiredHashes = ['#/nas', '#/nas-authz', '#/finops', '#/connectors', '#/register', '#/connections']
+    const missingHashes = requiredHashes.filter((hash) => !cmdkSrc.includes(`hash: '${hash}'`))
+    check('前端：cmdk 静态索引含 NAS/数据权限/财务视图/连接器/资产登记/宿主连接六路由（缺一即红）',
+      missingHashes.length === 0, `缺失：${missingHashes.join(', ')}`)
+  }
+
   // ================================================================ 交接 F 清单 M 节：scenegraph 校验器口径对齐原文
   section('场景图谱校验器（F 清单 M 节：8 类价值标签 / tags 可空 / links 可选，既有包零改动兼容）')
   {
@@ -1398,6 +1449,13 @@ try {
   const devToken2 = devPortalLogin.data.token
   const devBadLogin = await api('POST', '/api/market/developers/login', { body: { username: 'acme-dev', password: 'wrong-pass' } })
   check('开发者密码错误被拒', devBadLogin.status === 401)
+  // 组3：registerDeveloper 前置校验补齐——缺 password/displayName 落 400 中文文案（非 500/裸 TypeError）
+  const regNoPassword = await api('POST', '/api/market/developers/register', { body: { username: 'pwless-dev', displayName: '缺口令开发者', email: 'pwless@acme.com', publicKey: devPub } })
+  check('开发者注册缺 password → 400 中文文案（密码至少 8 位）',
+    regNoPassword.status === 400 && /密码/.test(regNoPassword.error?.message ?? ''), `${regNoPassword.status} ${JSON.stringify(regNoPassword.error)}`)
+  const regNoDisplayName = await api('POST', '/api/market/developers/register', { body: { username: 'noname-dev', email: 'noname@acme.com', password: 'Acme@20260', publicKey: devPub } })
+  check('开发者注册缺 displayName → 400 中文文案（显示名必填）',
+    regNoDisplayName.status === 400 && /显示名/.test(regNoDisplayName.error?.message ?? ''), `${regNoDisplayName.status} ${JSON.stringify(regNoDisplayName.error)}`)
 
   const pluginYaml = (opts = {}) => [
     `id: ${opts.id ?? 'com.acme.hello'}`,
@@ -1441,6 +1499,15 @@ try {
   const hijackFiles = buildFiles({ publisher: 'someone-else' })
   const submitHijack = await api('POST', '/api/market/submit', { token: devToken2, body: { files: hijackFiles, signature: signed(hijackFiles) } })
   check('publisher 必须为提交者本人', !submitHijack.ok && JSON.stringify(submitHijack.error).includes('publisher'))
+  // 组3 NEW-E-01：com.<x>.* 归属段必须与开发者命名空间一致（acme-dev 注册时缺省绑定 namespace=acme）
+  const nsHijackFiles = buildFiles({ id: 'com.other.brand.hello' })
+  const submitNsHijack = await api('POST', '/api/market/submit', { token: devToken2, body: { files: nsHijackFiles, signature: signed(nsHijackFiles) } })
+  check('市场门禁：com.y.* 与开发者命名空间不一致被拒（400 含「命名空间」，防品牌段冒认）',
+    !submitNsHijack.ok && /命名空间/.test(submitNsHijack.error?.message ?? ''), `${submitNsHijack.status} ${JSON.stringify(submitNsHijack.error)}`)
+  const nsOwnFiles = buildFiles({ id: 'com.acme.world' })
+  const submitNsOwn = await api('POST', '/api/market/submit', { token: devToken2, body: { files: nsOwnFiles, signature: signed(nsOwnFiles) } })
+  check('市场门禁：com.x.*（自有命名空间）提交正常受理（pending_approval）',
+    submitNsOwn.ok && submitNsOwn.data.status === 'pending_approval', JSON.stringify(submitNsOwn.error ?? submitNsOwn.data))
 
   const approvePlugin = await api('POST', `/api/market/submissions/${submitOk.data.id}/approve`, { token: admin, body: { opinion: '符合上架条件' } })
   check('审批上架', approvePlugin.ok && approvePlugin.data.status === 'listed')
@@ -1459,6 +1526,17 @@ try {
   check('L0 计量：提示词取用产生 usage 事件（L3）', usePrompt.ok)
   const pluginUsage = await api('GET', '/api/usage/events?principal=' + encodeURIComponent('plugin:com.acme.hello'), { token: admin })
   check('插件计量入账（meter key 来自 billing.yaml 声明，金额零价快照）', pluginUsage.ok && pluginUsage.data.total >= 1 && pluginUsage.data.items[0].pricing.charge_cents === 0 && pluginUsage.data.items[0].pricing.rate?.nonbillable === true && pluginUsage.data.items[0].tenant_id === newTenant.data.id)
+  // 组3：meterPromptUse 幂等键 plugin-use:installId:subject:promptName:UTC分钟窗——同分钟重放不重复计量
+  {
+    const useTotalBefore = (await api('GET', '/api/usage/events?resource=' + encodeURIComponent('plugin:com.acme.hello') + '&limit=1', { token: admin })).data.total
+    const useReplay1 = await api('POST', '/api/market/prompts/use', { token: admin, body: { orgId: tenantOrg.data.id, pluginId: 'com.acme.hello', promptName: 'hello' } })
+    const useTotalMid = (await api('GET', '/api/usage/events?resource=' + encodeURIComponent('plugin:com.acme.hello') + '&limit=1', { token: admin })).data.total
+    const useReplay2 = await api('POST', '/api/market/prompts/use', { token: admin, body: { orgId: tenantOrg.data.id, pluginId: 'com.acme.hello', promptName: 'hello' } })
+    const useTotalAfter = (await api('GET', '/api/usage/events?resource=' + encodeURIComponent('plugin:com.acme.hello') + '&limit=1', { token: admin })).data.total
+    check('L0 计量：同 UTC 分钟内重放取用两次 → 该主体 usage 事件恒定不增长（幂等键分钟窗去重）',
+      useReplay1.ok && useReplay2.ok && useTotalAfter === useTotalMid && useTotalMid - useTotalBefore <= 1,
+      JSON.stringify({ before: useTotalBefore, mid: useTotalMid, after: useTotalAfter, e1: useReplay1.error, e2: useReplay2.error }))
+  }
 
   // app 复合验收（F5 修正：以覆盖面而非复杂度为由）
   const seededApps = (await api('GET', '/api/apps', { token: admin })).data.apps
@@ -3042,6 +3120,49 @@ try {
   const updDryPin = await api('POST', '/api/update/apply', { token: admin, body: { dryRun: true } })
   check('P2-03 dryRun 透出 pin/签名策略口径', updDryPin.ok && updDryPin.data.requireSignedCommits === false && String(updDryPin.data.pin).includes('pin'), JSON.stringify(updDryPin.data ?? {}).slice(0, 220))
 
+  // 组5 E-05：dryRun 不外呼不落 .git——refs 快照 + FETCH_HEAD 前后一致（pin 解析只走本地既有 refs）
+  {
+    const gitDir = join(process.cwd(), '.git')
+    const refsSnapshot = () => {
+      const snap = {}
+      const walkRefs = (dir) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name)
+          if (entry.isDirectory()) walkRefs(full)
+          else {
+            const stat = statSync(full)
+            snap[join(full)] = `${stat.mtimeMs}:${stat.size}`
+          }
+        }
+      }
+      walkRefs(join(gitDir, 'refs'))
+      for (const name of ['packed-refs', 'FETCH_HEAD']) {
+        const full = join(gitDir, name)
+        snap[name] = existsSync(full) ? `${statSync(full).mtimeMs}:${statSync(full).size}` : 'absent'
+      }
+      return JSON.stringify(snap)
+    }
+    const refsBefore = refsSnapshot()
+    const updDryPinLocal = await api('POST', '/api/update/apply', { token: admin, body: { dryRun: true, pin: 'HEAD', reason: 'selftest：dryRun 零外呼验证' } })
+    check('E-05：dryRun+pin（HEAD）可解析目标（targetResolved 40 位 commit，不依赖外呼）',
+      updDryPinLocal.ok && /^[0-9a-f]{40}$/.test(String(updDryPinLocal.data?.targetResolved ?? '')), JSON.stringify(updDryPinLocal.data ?? updDryPinLocal.error).slice(0, 220))
+    check('E-05：dryRun 前后 refs/FETCH_HEAD 快照一致（git fetch 只在正式执行路径发生）',
+      refsSnapshot() === refsBefore, 'refs 快照发生变化——dryRun 触碰了 .git（E-05 回归）')
+  }
+  // QA E-01 断言欠账（结构断言，不可行真实执行：apply 正式路径会改写本仓 git 状态）：回滚快照写入点
+  // 必须在位且先于 npm install 落库（merge 成功即锚定，依赖同步失败也保留回退锚点）；rollback 读取点在位。
+  {
+    const updateSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-update', 'src', 'index.ts'), 'utf8')
+    const mergeIdx = updateSrc.indexOf("runGit(info.rootDir, ['merge', '--ff-only'")
+    const snapIdx = updateSrc.indexOf('lastApplySnapshot: rollbackTo')
+    const npmIdx = updateSrc.indexOf("runNpm(info.rootDir, ['install'", snapIdx)
+    check('E-01：回滚快照写入点在位且序正确（merge 成功后、npm install 前写 lastApplySnapshot）',
+      mergeIdx > 0 && snapIdx > mergeIdx && npmIdx > snapIdx, `merge=${mergeIdx} snapshot=${snapIdx} npm=${npmIdx}`)
+    check('E-01：rollback 读取点在位（state?.lastApplySnapshot 缺失即拒绝，非死路）',
+      updateSrc.includes('state?.lastApplySnapshot') && updateSrc.includes('无可回滚快照'))
+    // 负向面既有断言兜底：本进程未 apply 过 → POST /api/update/rollback 400「无可回滚快照」（:3039 区段）
+  }
+
   const updDismiss = await api('POST', '/api/update/settings', { token: admin, body: { dismissedVersion: '9.9.9' } })
   check('忽略指定版本（横幅静默）', updDismiss.ok && updDismiss.data.dismissed === true)
   const updRestore = await api('POST', '/api/update/settings', { token: admin, body: { dismissedVersion: null } })
@@ -4083,6 +4204,35 @@ try {
   })
   const mcpToolList = jsonBody(mcpTools).result?.tools ?? []
   check('tools/list 暴露全部运维工具（40+，含 nas_*）', mcpToolList.length >= 40 && mcpToolList.some((t) => t.name === 'nas_fs_upload'), `tools=${mcpToolList.length}`)
+  // 组2：19 工具补 permission 声明 → /mcp tools/list 以 annotations['x-permission'] 透出（非空字符串）
+  {
+    const permOf = (name) => mcpToolList.find((t) => t.name === name)?.annotations?.['x-permission']
+    const batch2Expect = [
+      ['agent_list', 'agent.read'], ['audit_logs', 'audit.read'], ['authn_token_list', 'authn.principal.read'],
+      ['model_list', 'modelgw.read'], ['mcp_service_list', 'mcp.service.read'], ['mcp_deploy', 'mcp.service.deploy'],
+      ['app_list', 'app.read'], ['skill_search', 'skill.read'], ['skill_submit', 'skill.submit'],
+      ['market_plugin_list', 'market.read'], ['connect_code_create', 'connect.manage'],
+    ]
+    const missingPerm = batch2Expect.filter(([name, perm]) => permOf(name) !== perm)
+    const declaredCount = mcpToolList.filter((t) => typeof t.annotations?.['x-permission'] === 'string' && t.annotations['x-permission'].length > 0).length
+    check(`组2：/mcp tools/list 权限注解全覆盖（${declaredCount}/${mcpToolList.length} 工具声明非空 x-permission，console.login 基线仅作漏声明 fail-safe）`,
+      mcpToolList.length >= 60 && declaredCount === mcpToolList.length && missingPerm.length === 0,
+      `缺失/不符：${JSON.stringify(missingPerm)}；未声明：${JSON.stringify(mcpToolList.filter((t) => !t.annotations?.['x-permission']).map((t) => t.name))}`)
+    check('组2：注解不变量——凡携带 annotations 的工具其 x-permission 必为非空字符串',
+      mcpToolList.every((t) => t.annotations === undefined || (typeof t.annotations['x-permission'] === 'string' && t.annotations['x-permission'].length > 0)))
+    // 主控：connect 5 个本地工具（client 形态，host 形态不在册）补 permission:'console.login'——静态源断言
+    const connectSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-connect', 'src', 'index.ts'), 'utf8')
+    const clientTools = ['connect_status', 'connect_setup', 'connect_login', 'connect_test', 'connect_reset']
+    const toolBlock = (name) => {
+      const start = connectSrc.indexOf(`name: '${name}'`)
+      if (start < 0) return ''
+      const next = connectSrc.indexOf('t.register(defineTool({', start)
+      return connectSrc.slice(start, next < 0 ? undefined : next)
+    }
+    const connectMissing = clientTools.filter((name) => !toolBlock(name).includes("permission: 'console.login'"))
+    check('主控：connect 五个本地工具（client 形态）均声明 permission=console.login（静态源断言）',
+      connectMissing.length === 0, `缺失：${JSON.stringify(connectMissing)}`)
+  }
   const mcpCall = await rawReq('POST', '/mcp', {
     headers: { 'content-type': 'application/json', authorization: `Bearer ${admin}` },
     body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'nas_list', arguments: {} } }),
@@ -4100,6 +4250,34 @@ try {
     body: JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'resources/list', params: {} }),
   })
   check('未知方法 -32601', jsonBody(mcpUnknown).error?.code === -32601)
+  // 组2：工具最小权限映射行为面——业务面仅持 agent.read 的机器令牌（console.login 为登录基线）：
+  // agent_list 放行 / audit_logs 双面拦截 + 审计落痕
+  {
+    const a7Cred = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'a7-agent-read-only', refType: 'external', scopes: ['console.login', 'agent.read'] } })
+    const a7Token = (await api('POST', '/api/auth/client-credentials', { body: { clientId: a7Cred.data.clientId, clientSecret: a7Cred.data.clientSecret } })).data?.token
+    check('A7 前置：仅 agent.read scope 的机器令牌就绪', Boolean(a7Token), JSON.stringify(a7Cred.error ?? {}))
+    const a7Allow = await api('POST', '/api/tools/execute', { token: a7Token, body: { name: 'agent_list', args: {} } })
+    check('组2 A7：agent.read 机器令牌 tools/call agent_list 放行',
+      a7Allow.ok && a7Allow.data.isError === false && Number.isFinite(a7Allow.data.value?.total), JSON.stringify(a7Allow.error ?? a7Allow.data?.error))
+    const a7RestDeny = await api('POST', '/api/tools/execute', { token: a7Token, body: { name: 'audit_logs', args: {} } })
+    check('组2 A7：同令牌 REST tools/call audit_logs 被拒（403 FORBIDDEN，缺 audit.read）',
+      a7RestDeny.status === 403 && a7RestDeny.error?.code === 'FORBIDDEN' && /audit\.read/.test(a7RestDeny.error?.message ?? ''), `${a7RestDeny.status} ${JSON.stringify(a7RestDeny.error)}`)
+    const a7McpDeny = await rawReq('POST', '/mcp', {
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${a7Token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 60, method: 'tools/call', params: { name: 'audit_logs', arguments: {} } }),
+    })
+    const a7McpResult = jsonBody(a7McpDeny).result
+    check('组2 A7：同令牌 /mcp tools/call audit_logs → isError（与 REST 桥权限基线对齐）',
+      a7McpDeny.status === 200 && a7McpResult?.isError === true && /audit\.read/.test(JSON.stringify(a7McpResult)), JSON.stringify(a7McpResult).slice(0, 160))
+    let a7AuditHit = null
+    for (let i = 0; i < 20 && !a7AuditHit; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      const logs = await api('GET', '/api/audit/logs?type=authz&limit=50', { token: admin })
+      a7AuditHit = (logs.data?.items ?? []).find((log) => String(log.detail ?? '').includes('缺少权限点 audit.read') && log.resourceId === '/mcp')
+    }
+    check('组2 A7：工具桥拒绝落审计（authz denied：缺少权限点 audit.read，path=/mcp 可反查）',
+      Boolean(a7AuditHit), JSON.stringify(a7AuditHit ?? '未命中'))
+  }
 
   // ================================================================ 连接器纳管（open-connector 融合）
   section('连接器纳管（open-connector 融合）')
@@ -4615,6 +4793,27 @@ try {
     check('终审探针：终审标记审计可追溯（action=approval.final_review 指向本审批单）',
       finalAudit.ok && (finalAudit.data.items ?? []).some((log) => log.action === 'approval.final_review' && log.resourceId === onlineReq.data.approval.id),
       JSON.stringify(finalAudit.data?.total))
+
+    // 组2：approval_decide 工具桥 confirmed/finalReview 透传（服务端 high+approve+非 confirmed 拦截门禁不变）
+    const toolProbe = await api('POST', '/api/agents', { token: admin, body: { name: '工具桥审批探针Agent', attrs: { description: '组2 approval_decide 工具链验证', model: 'deepseek-chat', riskLevel: 'medium', entryUrl: 'http://127.0.0.1:3080/', systemPromptVersion: 'v1.0', dataClass: 'internal', avatar: '🧪' } } })
+    const toolOnlineReq = await api('POST', `/api/agents/${toolProbe.data.agent.id}/transition`, { token: admin, body: { action: 'online', note: '组2 工具桥二次确认验证' } })
+    check('组2 前置：工具桥审批探针 L4 高风险审批单就绪',
+      toolOnlineReq.ok && toolOnlineReq.data.approval?.status === 'pending' && toolOnlineReq.data.approval.riskLevel === 'high', JSON.stringify(toolOnlineReq.error ?? toolOnlineReq.data?.approval?.id))
+    const approverId2 = (await api('GET', '/api/iam/users?q=' + encodeURIComponent('approver02'), { token: admin })).data.users[0]?.id
+    const toolNoConfirm = await api('POST', '/api/tools/execute', { token: approver, body: { name: 'approval_decide', args: { approvalId: toolOnlineReq.data.approval.id, decision: 'approve', approverId: approverId2, approverName: '第二审批人', opinion: '工具桥未带 confirmed' } } })
+    check('组2 A8：approval_decide 工具 approve 缺 confirmed → isError（文案含二次确认语义，门禁不因工具桥旁路）',
+      toolNoConfirm.ok && toolNoConfirm.data.isError === true && /二次确认|confirmed/.test(toolNoConfirm.data.error?.message ?? ''), JSON.stringify(toolNoConfirm.data ?? toolNoConfirm.error))
+    const toolWithConfirm = await api('POST', '/api/tools/execute', { token: approver, body: { name: 'approval_decide', args: { approvalId: toolOnlineReq.data.approval.id, decision: 'approve', approverId: approverId2, approverName: '第二审批人', opinion: '工具桥已复核（confirmed）', confirmed: true, finalReview: true } } })
+    check('组2 A8：approval_decide 带 confirmed:true → 通过并自动执行（executed）',
+      toolWithConfirm.ok && toolWithConfirm.data.isError === false && toolWithConfirm.data.value?.status === 'executed', JSON.stringify(toolWithConfirm.data ?? toolWithConfirm.error))
+    let toolFinalAudit = null
+    for (let i = 0; i < 20 && !toolFinalAudit; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      const logs = await api('GET', '/api/audit/logs?q=' + encodeURIComponent('approval.final_review') + '&limit=50', { token: admin })
+      toolFinalAudit = (logs.data?.items ?? []).find((log) => log.action === 'approval.final_review' && log.resourceId === toolOnlineReq.data.approval.id)
+    }
+    check('组2 A8：finalReview:true 经工具桥透传 → 终审痕迹审计可见（approval.final_review 指向本单）',
+      Boolean(toolFinalAudit), JSON.stringify(toolFinalAudit ?? '未命中'))
     // MCP 服务终审 → 调用水印（hosted 演示服务 + 临时权限组授权 admin，确定性不依赖真实传输 stub 存活）
     const mcpsAll = await api('GET', '/api/mcp/services', { token: admin })
     const wmSvc = (mcpsAll.data.services ?? []).find((item) => item.status === 'online' && (item.tools ?? []).some((tool) => tool.riskLevel === 'read'))
@@ -4733,6 +4932,40 @@ try {
   check('/docs 编码 %2e%2e 穿越 → SPA 兜底页（不泄露文件）', docTraverseEncoded.status === 200 && String(docTraverseEncoded.headers['content-type']).startsWith('text/html') && !docTraverseEncoded.body.includes('"name": "dsh-enterprise-ops"'))
   const spaStillOk = await rawReq('GET', '/')
   check('SPA 静态兜底不受影响（/ 仍返回控制台首页）', spaStillOk.status === 200 && String(spaStillOk.headers['content-type']).startsWith('text/html') && spaStillOk.body.includes('元冰可'))
+
+  // 组4：/docs 白名单（PUBLIC_DOCS 默认拒绝）——内部协作面文档一律 404，不做存在性探测
+  const docWhitelisted = await rawReq('GET', '/docs/app-onboarding.md')
+  check('/docs 白名单内 app-onboarding.md 可读（200 markdown）', docWhitelisted.status === 200 && String(docWhitelisted.headers['content-type']).startsWith('text/markdown'), `status=${docWhitelisted.status}`)
+  const docDeployRunbook = await rawReq('GET', '/docs/deploy-enterprise.md')
+  check('/docs 白名单外 deploy-enterprise.md → 404（内部 runbook 不随服务发布）', docDeployRunbook.status === 404, `status=${docDeployRunbook.status}`)
+  const docQaReport = await rawReq('GET', '/docs/qa-report-20261013-overview.md')
+  check('/docs 白名单外 qa-report → 404（QA 报告走仓库私有分发）', docQaReport.status === 404, `status=${docQaReport.status}`)
+  const docDevLog = await rawReq('GET', `/docs/dev-log-connector/${encodeURIComponent('任意.md')}`)
+  check('/docs 子路径形态（dev-log-connector/任意）→ 404（白名单键为单文件名，无目录伺服面）', docDevLog.status === 404, `status=${docDevLog.status}`)
+  const docSlashTraverse = await rawReq('GET', `/docs/%2F${encodeURIComponent('..')}/package.json`)
+  check('/docs %2F 编码穿越形态 → 404（越界/畸形编码落不进白名单集合）', docSlashTraverse.status === 404, `status=${docSlashTraverse.status}`)
+  const docIndexAfter = await rawReq('GET', '/docs')
+  check('/docs 索引只列白名单（200 且不含 deploy-enterprise 字样）',
+    docIndexAfter.status === 200 && docIndexAfter.body.includes('app-onboarding.md') && !docIndexAfter.body.includes('deploy-enterprise'),
+    docIndexAfter.body.slice(0, 200))
+
+  // 组5 C-10：协议/集成保留前缀无处理器 → 404 JSON（不被 SPA 兜底吞成 200 HTML）
+  const reservedProbes = ['/rq/panel/', '/dsh-bridge/status', '/auth/entry']
+  const reservedResults = []
+  for (const probePath of reservedProbes) {
+    const probe = await rawReq('GET', probePath)
+    reservedResults.push({ path: probePath, status: probe.status, contentType: probe.headers['content-type'] })
+  }
+  check('保留前缀：/rq/panel/、/dsh-bridge/status、/auth/entry 无处理器 → 404 JSON（非 SPA HTML，集成方可诊断）',
+    reservedResults.every((r) => r.status === 404 && !String(r.contentType).startsWith('text/html')),
+    JSON.stringify(reservedResults))
+  {
+    const reservedBody = jsonBody(await rawReq('GET', '/rq/api/definitely-missing'))
+    check('保留前缀：404 信封为 NOT_FOUND JSON（与 DEF-01 同口径）', reservedBody?.error?.code === 'NOT_FOUND', JSON.stringify(reservedBody).slice(0, 120))
+  }
+  const spaUnknownRoute = await rawReq('GET', '/some/unknown/spa/route')
+  check('非保留前缀未知路径仍回落 SPA（控制台 hash 路由不受 C-10 影响）',
+    spaUnknownRoute.status === 200 && String(spaUnknownRoute.headers['content-type']).startsWith('text/html'), `status=${spaUnknownRoute.status}`)
 
   // ================================================================ 门户数据通道（plugin-portal：外部拉取端点）
   section('统一入口：/panel 无尾斜杠 302 归一（相对资源解析防御）')
@@ -5323,6 +5556,16 @@ try {
     check('安全响应头：401 API 响应同样携带（鉴权面不豁免）',
       secApi.status === 401 && secApi.headers['x-content-type-options'] === 'nosniff' && secApi.headers['x-frame-options'] === 'SAMEORIGIN',
       JSON.stringify(secApi.headers['x-content-type-options']))
+    // 组1 G1-F2：基线 CSP 随 SECURITY_HEADERS 开关启停；/api/* 数据面一律 no-store（处理器 writeHead 自带优先）
+    const secCsp = await rawReq('GET', '/api/overview', { headers: { authorization: `Bearer ${admin}` } })
+    check('安全响应头：/api/overview 携带基线 CSP（default-src \'self\' 在位）',
+      secCsp.status === 200 && String(secCsp.headers['content-security-policy'] ?? '').includes("default-src 'self'")
+      && String(secCsp.headers['content-security-policy'] ?? '').includes("script-src 'self' 'unsafe-inline'"),
+      JSON.stringify({ csp: secCsp.headers['content-security-policy'], status: secCsp.status }))
+    check('安全响应头：/api/* 数据面 cache-control no-store（鉴权/业务响应不进缓存层）',
+      secCsp.headers['cache-control'] === 'no-store', JSON.stringify(secCsp.headers['cache-control']))
+    const secStaticCsp = await rawReq('GET', '/')
+    check('安全响应头：静态页同样携带基线 CSP', String(secStaticCsp.headers['content-security-policy'] ?? '').includes("default-src 'self'"), JSON.stringify(secStaticCsp.headers['content-security-policy']))
   }
 
   section('usage 保留策略（USAGE_RETENTION_DAYS 默认 730d；POST /api/usage/retention/purge 手动巡检）')
@@ -5524,6 +5767,30 @@ try {
     const projectionAfterReplay = mountCtx.opsStorage.collection('usage:projection:selftest-drill').all().reduce((sum, row) => sum + row.count, 0)
     check('M0-1 死信重投后 replay 不双计（消费水位幂等）', projectionAfterReplay === 1, String(projectionAfterReplay))
 
+    // -- 组5 C-05/死信 source：plugin: 来源事件失败入死信带 source，结构性重投成功 -------------
+    {
+      let d19Fail = true
+      let d19Handled = 0
+      mountCtx.platformBus.on('plugin:com.selftest.demo:tick', () => {
+        d19Handled++
+        if (d19Fail) throw new Error('d19 注入失败')
+      })
+      mountCtx.platformBus.emit('plugin:com.selftest.demo:tick', { n: 1 }, { source: 'plugin:com.selftest.demo' })
+      let d19Letter
+      for (let i = 0; i < 40 && !d19Letter; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        d19Letter = mountCtx.platformBus.deadLetters().find((letter) => letter.eventName === 'plugin:com.selftest.demo:tick')
+      }
+      check('组5 死信：plugin: 来源事件 3 次重试失败入死信', Boolean(d19Letter), JSON.stringify(mountCtx.platformBus.deadLetters().map((l) => l.eventName)))
+      check('组5 死信：死信记录携带 source（plugin: 前缀，结构性重投依据）',
+        typeof d19Letter?.source === 'string' && d19Letter.source.startsWith('plugin:'), JSON.stringify(d19Letter ?? {}))
+      d19Fail = false
+      const d19Retry = mountCtx.platformBus.retryDeadLetters()
+      check('组5 死信：按原来源重投成功（redelivered≥1，监听器第 4 次消费成功，死信清空）',
+        d19Retry.redelivered >= 1 && d19Handled === 4 && !mountCtx.platformBus.deadLetters().some((letter) => letter.eventName === 'plugin:com.selftest.demo:tick'),
+        JSON.stringify({ retry: d19Retry, handled: d19Handled }))
+    }
+
     // -- H3 白盒回归：宽限窗口外旧 token 重放 = 硬重放，整链吊销（含宽限兄弟对） ----------
     const gracePrincipal = mountCtx.authn.ensureHumanPrincipal('selftest-grace-user', '宽限窗口自测')
     const gracePairA = mountCtx.authn.issueSessionPair(gracePrincipal.id, { issuedBy: 'selftest-grace' })
@@ -5675,6 +5942,39 @@ try {
     const oidcCallbackBad = await fetch(`${simOrigin}/auth/oidc/callback?code=x&state=bogus`, { redirect: 'manual' })
     check('/auth/oidc/callback 坏 state 被拒 400（防 CSRF/重放）', oidcCallbackBad.status === 400)
     await new Promise((resolve) => sim.close(resolve))
+  }
+
+  // ================================================================ 组1 A-09：口令 scrypt KDF 与旧 sha256 透明升级（白盒）
+  section('口令 KDF 升级（组1 A-09：scrypt 格式 / 旧 sha256 登录透明升级 / timingSafeEqual）')
+  {
+    const kdfCtx = new Context()
+    await kdfCtx.plugin(platformCore, { dataDir: join(DATA_DIR, 'kdf-upgrade'), startHttp: false })
+    await kdfCtx.plugin(resourceCore)
+    await kdfCtx.plugin(iam)
+    const kdfOrg = kdfCtx.iam.createOrg({ name: 'KDF 自测部' }, iam.SYSTEM_ACTOR)
+    const kdfUser = kdfCtx.iam.createUser({ username: 'legacykdf', displayName: '旧哈希账号', orgId: kdfOrg.id, password: 'LegacyKdf@2026' }, iam.SYSTEM_ACTOR).user
+    kdfCtx.iam.users().update(kdfUser.id, { status: 'active', passwordSalt: 'legacy-salt-01', passwordHash: platformCore.sha256Hex('legacy-salt-01:LegacyKdf@2026') })
+    const before = kdfCtx.iam.users().get(kdfUser.id)
+    check('KDF 前置：预置旧 sha256 存储记录（裸 hex，无 scrypt$ 前缀）',
+      !before.passwordHash.startsWith('scrypt$') && before.passwordSalt === 'legacy-salt-01', JSON.stringify({ hash: before.passwordHash.slice(0, 16), salt: before.passwordSalt }))
+    let legacyLoginOk = false
+    try { kdfCtx.iam.verifyPassword('legacykdf', 'LegacyKdf@2026'); legacyLoginOk = true } catch (error) { check('KDF：旧哈希登录（异常）', false, String(error)) }
+    check('KDF：旧 sha256 口令登录成功', legacyLoginOk)
+    const after = kdfCtx.iam.users().get(kdfUser.id)
+    const scryptParts = String(after.passwordHash).split('$')
+    check('KDF：登录后存储透明升级为 scrypt$（前缀 + passwordSalt 清空）',
+      after.passwordHash.startsWith('scrypt$') && scryptParts.length === 6 && after.passwordSalt === '',
+      JSON.stringify({ hash: after.passwordHash.slice(0, 24), salt: after.passwordSalt, parts: scryptParts.length }))
+    check('KDF：scrypt 参数自描述（N=16384/r=8/p=1，OWASP 下限档；盐与哈希均为 base64）',
+      Number(scryptParts[1]) === 16384 && Number(scryptParts[2]) === 8 && Number(scryptParts[3]) === 1
+      && Buffer.from(scryptParts[4] ?? '', 'base64').length === 16 && Buffer.from(scryptParts[5] ?? '', 'base64').length === 64,
+      JSON.stringify(scryptParts.slice(1, 4)))
+    let scryptReloginOk = false
+    try { kdfCtx.iam.verifyPassword('legacykdf', 'LegacyKdf@2026'); scryptReloginOk = true } catch { /* ignore */ }
+    check('KDF：升级后同口令再登录成功（scrypt 复算路径）', scryptReloginOk)
+    let wrongPwRejected = false
+    try { kdfCtx.iam.verifyPassword('legacykdf', 'WrongPass@2026') } catch (error) { wrongPwRejected = /用户名或密码错误/.test(String(error)) }
+    check('KDF：错误口令拒绝（timingSafeEqual 常数时间比较路径）', wrongPwRejected)
   }
 
   // ================================================================ IAW 交接批次（docs/handoff-iaw-gaps-to-main.md 2026-09-11）
@@ -5867,6 +6167,23 @@ try {
       // 放宽预算（action=warn + 大额），避免影响后续分节
       const budgetRelax = await api('PUT', '/api/modelgw/budgets', { token: admin, body: { orgId: iawRootOrg.id, dailyLimitCents: 100000, monthlyLimitCents: 1000000, warnRatio: 0.99, action: 'warn' } })
       check('1-4：预算放宽（upsert 同键覆盖）', budgetRelax.ok && budgetRelax.data.action === 'warn', JSON.stringify(budgetRelax.error))
+
+      // 组3 BUG-2510-B1：invokeWithFallback 每次真实调用前 enforceBudget 复检——block 态整链熔断，
+      // 不经备用渠道调通上游、不产生新 usage 事件、不发 degraded（错误文案与单渠道路径一致）
+      const budgetBlockAgain = await api('PUT', '/api/modelgw/budgets', { token: admin, body: { orgId: iawRootOrg.id, dailyLimitCents: 0, monthlyLimitCents: 100, warnRatio: 0.5, action: 'block' } })
+      check('1-4b 前置：预算切回 block（日 0 分）', budgetBlockAgain.ok && budgetBlockAgain.data.action === 'block', JSON.stringify(budgetBlockAgain.error))
+      const b1TelBackupBefore = (await api('GET', '/api/modelgw/iaw-bkp/telemetry?window=7d', { token: admin })).data?.invocations ?? 0
+      const b1UsageBefore = (await api('GET', '/api/usage/events?resource=' + encodeURIComponent('model:iaw-bkp') + '&limit=1', { token: admin })).data?.total ?? 0
+      const fbBlocked = await api('POST', '/api/modelgw/channel-groups/iaw-grp/invoke', { token: admin, body: { prompt: '预算熔断复检（降级链）' } })
+      check('组3 B9：block 熔断中降级链调用 → 400 含「预算熔断」（首渠道即终止，不进降级）',
+        fbBlocked.status === 400 && /预算熔断/.test(fbBlocked.error?.message ?? ''), `${fbBlocked.status} ${JSON.stringify(fbBlocked.error)}`)
+      const b1TelBackupAfter = (await api('GET', '/api/modelgw/iaw-bkp/telemetry?window=7d', { token: admin })).data?.invocations ?? 0
+      check('组3 B9：备用渠道遥测 invocations 不增长（未调上游，熔断先于真实调用）',
+        b1TelBackupAfter === b1TelBackupBefore, `before=${b1TelBackupBefore} after=${b1TelBackupAfter}`)
+      const b1UsageAfter = (await api('GET', '/api/usage/events?resource=' + encodeURIComponent('model:iaw-bkp') + '&limit=1', { token: admin })).data?.total ?? 0
+      check('组3 B9：无新 usage 事件（block 态不入账）', b1UsageAfter === b1UsageBefore, `before=${b1UsageBefore} after=${b1UsageAfter}`)
+      const budgetRelaxRestore = await api('PUT', '/api/modelgw/budgets', { token: admin, body: { orgId: iawRootOrg.id, dailyLimitCents: 100000, monthlyLimitCents: 1000000, warnRatio: 0.99, action: 'warn' } })
+      check('1-4b：预算复原 warn（环境清理）', budgetRelaxRestore.ok && budgetRelaxRestore.data.action === 'warn', JSON.stringify(budgetRelaxRestore.error))
     } finally {
       await new Promise((resolve) => gwPrimaryStub.close(resolve))
       await new Promise((resolve) => gwBackupStub.close(resolve))
@@ -5901,6 +6218,38 @@ try {
     check('6-1：策略删除（回滚自测环境）', polDel.ok && polDel.data.deleted === true)
     const afterDel = await api('POST', '/api/iam/scene-authz/check', { token: iawMemberToken, body: { sceneCode: 'QB01-G-4-1', action: 'scene.export' } })
     check('6-1：删除后回落 default（fail-closed 随策略移除）', afterDel.ok && afterDel.data.decision === 'default')
+  }
+
+  section('组5 A-01：panel 任务创建 sceneGuard（场景策略 deny → 403 + audit.authz.denied）')
+  {
+    const sgAdminId = (await api('GET', '/api/iam/users?q=' + encodeURIComponent('admin'), { token: admin })).data.users.find((user) => user.username === 'admin')?.id
+    const sgPolicy = await api('PUT', '/api/iam/scene-policies', { token: admin, body: {
+      sceneCode: 'QB01-DENY-TASK',
+      entries: [{ principalType: 'user', principalId: sgAdminId, actions: ['panel.task.create'], effect: 'deny' }],
+      note: '组5 sceneGuard 自测：禁该管理员在该场景建单',
+    } })
+    check('A-01 前置：场景策略登记（deny admin 的 panel.task.create）', sgPolicy.ok, JSON.stringify(sgPolicy.error))
+    const sgDenied = await api('POST', '/api/panel/mfg/tasks', { token: admin, body: { title: '场景守卫拒绝任务（自测）', lane: 'todo', sceneCode: 'QB01-DENY-TASK' } })
+    check('组5 A-01：带 sceneCode 建单命中 deny → 403 FORBIDDEN（场景授权拒绝）',
+      sgDenied.status === 403 && sgDenied.error?.code === 'FORBIDDEN' && /场景授权拒绝|QB01-DENY-TASK/.test(sgDenied.error?.message ?? ''), `${sgDenied.status} ${JSON.stringify(sgDenied.error)}`)
+    let sgAuditHit = null
+    for (let i = 0; i < 20 && !sgAuditHit; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      const logs = await api('GET', '/api/audit/logs?type=authz&limit=50', { token: admin })
+      sgAuditHit = (logs.data?.items ?? []).find((log) => String(log.detail ?? '').includes('scene:QB01-DENY-TASK#panel.task.create'))
+    }
+    check('组5 A-01：拒绝落审计（audit.authz.denied：scene:QB01-DENY-TASK#panel.task.create 可反查）',
+      Boolean(sgAuditHit), JSON.stringify(sgAuditHit ?? '未命中'))
+    const sgNoScene = await api('POST', '/api/panel/mfg/tasks', { token: admin, body: { title: '无场景码任务放行（自测）', lane: 'todo' } })
+    check('组5 A-01：不带 sceneCode 建单 200（守卫不阻断普通任务）', sgNoScene.ok && sgNoScene.data.task?.id, JSON.stringify(sgNoScene.error))
+    const sgMachineCred = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'sg-machine-task', refType: 'external', scopes: ['panel.task.write'] } })
+    const sgMachineToken = (await api('POST', '/api/auth/client-credentials', { body: { clientId: sgMachineCred.data.clientId, clientSecret: sgMachineCred.data.clientSecret } })).data?.token
+    const sgMachineTask = await api('POST', '/api/panel/mfg/tasks', { token: sgMachineToken, body: { title: '机器主体场景建单（自测）', lane: 'todo', sceneCode: 'QB01-DENY-TASK' } })
+    check('组5 A-01：机器主体不入场景域（带 sceneCode 也放行，RBAC 权限点已覆盖）',
+      sgMachineTask.ok && sgMachineTask.data.task?.id, `${sgMachineTask.status} ${JSON.stringify(sgMachineTask.error)}`)
+    await api('DELETE', `/api/iam/scene-policies/${sgPolicy.data.id}`, { token: admin })
+    const sgCleanupTask = await api('POST', '/api/panel/mfg/tasks', { token: admin, body: { title: '策略删除后同场景建单（自测）', lane: 'todo', sceneCode: 'QB01-DENY-TASK' } })
+    check('组5 A-01：策略删除后同场景建单恢复放行（环境清理即回滚验证）', sgCleanupTask.ok, JSON.stringify(sgCleanupTask.error))
   }
 
   section('IAW 2-1..2-4：数据要素域（数据集登记/质量分/血缘/指标字典仲裁）')
@@ -5939,6 +6288,24 @@ try {
     check('2-4：定义列表双条（按时间倒序）', mList.ok && mList.data.definitions.length === 2 && mList.data.definitions[0].id === mDef2.data.definition.id)
     const mArb = await api('POST', '/api/resource/metrics/gm_selftest/arbitrate', { token: admin, body: { definitionId: mDef2.data.definition.id } })
     check('2-4：仲裁定版（口径二 active，取代 1 条）', mArb.ok && mArb.data.active.status === 'active' && mArb.data.superseded === 1, JSON.stringify(mArb.data))
+    // 组5 C-09：指标指纹 stableStringify（键序归一）——同口径不同键序重复登记不再误判口径冲突
+    const mKeyOrderA = await api('PUT', '/api/resource/metrics/gm_selftest/definitions', { token: admin, body: { name: '毛利额（键序归一）', unit: '元', description: '收入-成本', payload: { 规则: { 乙: 2, 甲: 1 }, 来源: '自测' } } })
+    const mKeyOrderB = await api('PUT', '/api/resource/metrics/gm_selftest/definitions', { token: admin, body: { name: '毛利额（键序归一）', unit: '元', description: '收入-成本', payload: { 来源: '自测', 规则: { 甲: 1, 乙: 2 } } } })
+    check('组5 C-09：同口径不同键序重复登记 → 幂等返回同 id（conflict=false，键序归一）',
+      mKeyOrderA.ok && mKeyOrderB.ok && mKeyOrderB.data.conflict === false && mKeyOrderB.data.definition.id === mKeyOrderA.data.definition.id,
+      JSON.stringify({ a: mKeyOrderA.data?.definition?.id, b: mKeyOrderB.data?.definition?.id, conflict: mKeyOrderB.data?.conflict }))
+    // 组5 C-08：血缘成环检测——b→a 已在库，再登记 a 派生自 b 即循环依赖
+    const lineageCycle = await api('PUT', '/api/resource/lineage', { token: admin, body: { derived: 'ds_selftest_a', source: 'ds_selftest_b' } })
+    check('组5 C-08：血缘成环登记被拒（400 含「成环」，沿既有边 DFS 可达即环）',
+      lineageCycle.status === 400 && /成环/.test(lineageCycle.error?.message ?? ''), `${lineageCycle.status} ${JSON.stringify(lineageCycle.error)}`)
+    // 组5 C-11：质量分 expectedVersion 乐观并发（此前 :5919 区段已登记一次 → revision=1）
+    const qualityStale = await api('PUT', '/api/resource/datasets/ds_selftest_a/quality', { token: admin, body: { completeness: 90, accuracy: 80, timeliness: 100, consistency: 70, expectedVersion: 0 } })
+    check('组5 C-11：质量分过期 expectedVersion → 400 含「版本冲突」',
+      qualityStale.status === 400 && /版本冲突/.test(qualityStale.error?.message ?? ''), `${qualityStale.status} ${JSON.stringify(qualityStale.error)}`)
+    const qualityCurrent = await api('PUT', '/api/resource/datasets/ds_selftest_a/quality', { token: admin, body: { completeness: 91, accuracy: 81, timeliness: 100, consistency: 71, expectedVersion: 1, note: '乐观并发正确版本' } })
+    check('组5 C-11：正确 expectedVersion → 登记成功且 revision 递增到 2',
+      qualityCurrent.ok && qualityCurrent.data.qualityRevision === 2 && qualityCurrent.data.quality?.overall === 85.8,
+      JSON.stringify({ revision: qualityCurrent.data?.qualityRevision, overall: qualityCurrent.data?.quality?.overall, err: qualityCurrent.error }))
     const dsWriteDenied = await api('PUT', '/api/resource/datasets', { token: iawMachine, body: { code: 'ds_x', name: 'x', sourceSystem: 'x', classification: 'public' } })
     check('2-1：无 resource.dataset.write 被拒 403', dsWriteDenied.status === 403, String(dsWriteDenied.status))
   }
@@ -5980,6 +6347,37 @@ try {
       flowGet.ok && flowGet.data.status === 'completed' && Number.isFinite(flowGet.data.elapsedMinutes)
       && flowGet.data.steps.every((step) => Boolean(step.startedAt)) && flowGet.data.steps.every((step) => Boolean(step.finishedAt) || step.status === 'running'),
       JSON.stringify({ status: flowGet.data?.status }))
+
+    // 组5 C-07/C-06：slaMinutes 正数校验 + skip 致 running=0 → stalled 标记 + flow.stalled 事件
+    const tplZeroSla = await api('PUT', '/api/flow/templates', { token: admin, body: { code: 'tpl_zero_sla', name: '零SLA模板', slaMinutes: 0, steps: [{ key: 's1', name: '步骤1', actorType: 'human' }] } })
+    check('组5 C-07：模板 upsert slaMinutes=0 → 400 含「正数」（防出生即逾期）',
+      tplZeroSla.status === 400 && /正数/.test(tplZeroSla.error?.message ?? ''), `${tplZeroSla.status} ${JSON.stringify(tplZeroSla.error)}`)
+    const flowZeroSla = await api('POST', '/api/flow/flows', { token: admin, body: { name: '零SLA自测流', slaMinutes: 0, steps: [{ key: 's1', name: '步骤1', actorType: 'human' }] } })
+    check('组5 C-07：createFlow slaMinutes=0 → 400 含「正数」（入参与模板继承同口径）',
+      flowZeroSla.status === 400 && /正数/.test(flowZeroSla.error?.message ?? ''), `${flowZeroSla.status} ${JSON.stringify(flowZeroSla.error)}`)
+    const flowStall = await api('POST', '/api/flow/flows', { token: admin, body: { name: '停滞自测流（组5 C-06）', steps: [
+      { key: 'a', name: '步骤A', actorType: 'human' },
+      { key: 'b', name: '步骤B', actorType: 'human' },
+      { key: 'c', name: '步骤C', actorType: 'human' },
+    ] } })
+    check('组5 C-06 前置：三步流创建（首步 running）', flowStall.ok && flowStall.data.steps[0].status === 'running', JSON.stringify(flowStall.error))
+    const stallS1 = await api('POST', `/api/flow/flows/${flowStall.data.id}/steps/a/transition`, { token: admin, body: { action: 'complete' } })
+    const stallSkip = await api('POST', `/api/flow/flows/${flowStall.data.id}/steps/b/transition`, { token: admin, body: { action: 'skip', note: '跳过唯一 running 步（c 仍 pending）' } })
+    check('组5 C-06：skip 唯一 running 步 → running 态保留 + stalledAt 落值（不自动重跑）',
+      stallSkip.ok && stallSkip.data.completed === false && stallSkip.data.flow?.status === 'running' && typeof stallSkip.data.flow?.stalledAt === 'string',
+      JSON.stringify({ completed: stallSkip.data?.completed, status: stallSkip.data?.flow?.status, stalledAt: stallSkip.data?.flow?.stalledAt, err: stallSkip.error }))
+    const stallDetail = await api('GET', `/api/flow/flows/${flowStall.data.id}`, { token: admin })
+    check('组5 C-06：详情派生 stalled=true（stalledAt + 派生标记齐备）',
+      stallDetail.ok && stallDetail.data.stalled === true && Boolean(stallDetail.data.stalledAt), JSON.stringify({ stalled: stallDetail.data?.stalled, stalledAt: stallDetail.data?.stalledAt }))
+    let flowStalledEvent = null
+    for (let i = 0; i < 6 && !flowStalledEvent; i++) {
+      const infoProbe = await api('GET', '/api/platform/info', { token: admin })
+      flowStalledEvent = (infoProbe.data?.events ?? []).find((event) => event.name === 'flow.stalled' && event.payload?.flowId === flowStall.data.id)
+      if (!flowStalledEvent) await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+    check('组5 C-06：flow.stalled 事件入总线（事件侧证：flowId/原因可查）',
+      Boolean(flowStalledEvent), JSON.stringify(flowStalledEvent ?? '事件窗口未命中'))
+    await api('POST', `/api/flow/flows/${flowStall.data.id}/cancel`, { token: admin, body: { note: '自测清理' } })
     // 自由编排 + 取消
     const flowAdhoc = await api('POST', '/api/flow/flows', { token: admin, body: { name: 'IAW 自由编排流', steps: [{ key: 'a', name: '步骤A', actorType: 'human' }], sceneCode: 'QB01-G-4-2' } })
     const flowCancel = await api('POST', `/api/flow/flows/${flowAdhoc.data.id}/cancel`, { token: admin, body: { note: '自测取消' } })
@@ -6120,6 +6518,11 @@ try {
     check('R3 前置：登记自测模型', exModel.ok, JSON.stringify(exModel.error ?? {}).slice(0, 100))
     const exWild = await api('PUT', '/api/modelgw/budgets', { token: admin, body: { orgId: newOrg.data.id, modelSlug: '*', dailyLimitCents: 0, action: 'block' } })
     check("R3 前置：登记 '*' 通配预算（QA 组织 0 元 block）", exWild.ok)
+    // 组3：budgetStatusFor 通配 '*' 计入 org 进度——只配通配预算的组织摘要 budget 不再恒 null
+    const wildSummary = await api('GET', `/api/usage/summary?window=today&org=${encodeURIComponent(newOrg.data.id)}`, { token: admin })
+    check("组3 B10：只配 modelSlug='*' block 预算的组织 → summary budget.daily.breached === true（通配计入 org 进度）",
+      wildSummary.ok && wildSummary.data.budget?.daily?.limitCents === 0 && wildSummary.data.budget?.daily?.breached === true,
+      JSON.stringify(wildSummary.data?.budget ?? wildSummary.error))
     const exWildInvoke = await api('POST', '/api/modelgw/invoke', { token: admin, body: { model: 'qa-wildcard-model', orgId: newOrg.data.id, messages: [{ role: 'user', content: '通配验证' }] } })
     check("R3：modelSlug='*' 通配命中任意模型（字面量模型名被通配预算熔断）",
       !exWildInvoke.ok && /预算/.test(exWildInvoke.error?.message ?? ''), JSON.stringify(exWildInvoke.error ?? {}).slice(0, 160))
@@ -6185,6 +6588,43 @@ try {
   const qaOutsideReset = await api('POST', `/api/iam/users/${qaCascadeUser.id}/reset-password`, { token: qaOrgAdmin })
   check('org_admin 跨组织接管被拒（QA A-03：服务层组织隔离）', !qaOutsideReset.ok && /组织隔离|组织子树/.test(qaOutsideReset.error?.message ?? ''), JSON.stringify(qaOutsideReset.error ?? {}))
 
+  // 组1 N4：REST 管理面包扎——跨组织拒绝回写 403 FORBIDDEN（鉴权语义而非 400 请求格式错误）
+  const qaOutsideFreeze = await api('POST', `/api/iam/users/${qaCascadeUser.id}/freeze`, { token: qaOrgAdmin, body: { reason: '组1 N4：跨组织冻结探针' } })
+  check('组1 A2：org_admin REST freeze 他组织 → 403 + error code FORBIDDEN（manageScope 包扎）',
+    qaOutsideFreeze.status === 403 && qaOutsideFreeze.error?.code === 'FORBIDDEN' && /组织隔离|组织子树/.test(qaOutsideFreeze.error?.message ?? ''),
+    `${qaOutsideFreeze.status} ${JSON.stringify(qaOutsideFreeze.error)}`)
+
+  // 组1 N3：GET /api/iam/users 非平台管理员自动收敛管辖组织子树；?orgId= 越子树显式 403
+  const qaScopeList = await api('GET', '/api/iam/users', { token: qaOrgAdmin })
+  const qaScopeOrgIds = new Set((await api('GET', '/api/iam/orgs', { token: qaOrgAdmin })).data.map((org) => org.id))
+  check('组1 A3：org_admin 账号清单全部落在其管辖组织子树内（含子组织收敛）',
+    qaScopeList.ok && qaScopeList.data.users.length >= 1 && qaScopeList.data.users.every((user) => qaScopeOrgIds.has(user.orgId)),
+    JSON.stringify({ total: qaScopeList.data?.total, outside: (qaScopeList.data?.users ?? []).filter((u) => !qaScopeOrgIds.has(u.orgId)).map((u) => u.username).slice(0, 5) }))
+  const qaScopeLeak = qaScopeList.data.users.some((user) => ['linxm', 'admin', 'cascadeu01'].includes(user.username))
+  check('组1 A3：他组织账号不出现在 org_admin 清单（admin/linxm/cascadeu01 零泄漏）', !qaScopeLeak)
+  const qaScopeOutside = await api('GET', `/api/iam/users?orgId=${encodeURIComponent(siblingOrg.data.id)}`, { token: qaOrgAdmin })
+  check('组1 A3：?orgId= 子树外 → 403 FORBIDDEN（越界不静默收窄）',
+    qaScopeOutside.status === 403 && qaScopeOutside.error?.code === 'FORBIDDEN', `${qaScopeOutside.status} ${JSON.stringify(qaScopeOutside.error)}`)
+  const qaScopeInside = await api('GET', `/api/iam/users?orgId=${encodeURIComponent(newOrg.data.id)}`, { token: qaOrgAdmin })
+  check('组1 A3：?orgId= 子树内 → 正常返回（全部命中该组织）',
+    qaScopeInside.ok && qaScopeInside.data.users.length >= 1 && qaScopeInside.data.users.every((user) => user.orgId === newOrg.data.id), JSON.stringify(qaScopeInside.error))
+
+  // 组1 N1/组2 桥 _actor：org_admin 经 POST /api/tools/execute 调 iam_user_freeze——服务端注入身份，
+  // 客户端伪造 _actor/actor 剥离重注入（行为不变），子树内放行
+  const qaBridgeInsideTarget = await api('POST', '/api/iam/users', { token: admin, body: { username: 'qabridgetgt', displayName: '桥冻结靶子', orgId: newOrg.data.id, password: 'Ybk@2026' } })
+  check('组1 A1 前置：桥冻结靶子（org_admin 子树内）建号', qaBridgeInsideTarget.ok, JSON.stringify(qaBridgeInsideTarget.error ?? {}))
+  const qaBridgeInside = await api('POST', '/api/tools/execute', { token: qaOrgAdmin, body: { name: 'iam_user_freeze', args: { userId: qaBridgeInsideTarget.data.id, reason: '组1 A1：子树内冻结' } } })
+  check('组1 A1：org_admin 经工具桥冻结本组织子树内账号成功',
+    qaBridgeInside.ok && qaBridgeInside.data.isError === false && qaBridgeInside.data.value?.status === 'frozen', JSON.stringify(qaBridgeInside.data ?? qaBridgeInside.error))
+  const qaBridgeForged = await api('POST', '/api/tools/execute', { token: qaOrgAdmin, body: { name: 'iam_user_freeze', args: { userId: qaCascadeUser.id, reason: '组1 A1：伪造身份越权冻结', _actor: { platformAdmin: true }, actor: '伪造操作者' } } })
+  check('组1 A1：伪造 args._actor={platformAdmin:true} 被剥离重注入（仍按服务端身份拒绝组织隔离）',
+    qaBridgeForged.ok && qaBridgeForged.data.isError === true && /组织隔离|组织子树/.test(qaBridgeForged.data.error?.message ?? ''),
+    JSON.stringify(qaBridgeForged.data ?? qaBridgeForged.error))
+  const qaBridgeForgedInside = await api('POST', '/api/tools/execute', { token: qaOrgAdmin, body: { name: 'iam_user_reset_password', args: { userId: qaBatch01.id, _actor: { platformAdmin: true } } } })
+  check('组1 A1：伪造 _actor 不改变正常路径行为（子树内重置口令仍成功）',
+    qaBridgeForgedInside.ok && qaBridgeForgedInside.data.isError === false && typeof qaBridgeForgedInside.data.value?.initialPassword === 'string',
+    JSON.stringify(qaBridgeForgedInside.data ?? qaBridgeForgedInside.error))
+
   // A-04：非 owner 开发者不可改写他人应用
   const qaOwnerApp = await api('POST', '/api/apps', { token: admin, body: { name: 'QA回归-Owner校验', attrs: { description: 'QA 修复批次回归用应用（owner=admin）', appType: 'web', riskLevel: 'low' } } })
   check('QA回归应用创建（owner=admin）', qaOwnerApp.ok && Boolean(qaOwnerApp.data.app?.id), JSON.stringify(qaOwnerApp.error ?? {}))
@@ -6198,6 +6638,51 @@ try {
   check('audit/cost days 参数生效（QA B-04：不再被静默丢弃）', qaCostDays.ok && qaCostDays.data.days === 14 && Array.isArray(qaCostDays.data.rows), JSON.stringify(qaCostDays.data ?? qaCostDays.error).slice(0, 160))
   const qaCostBare = await api('GET', '/api/audit/cost', { token: admin })
   check('audit/cost 不带 days 保持全量口径（QA B-04 兼容）', qaCostBare.ok && qaCostBare.data.days === undefined)
+
+  // ================================================================ 组4 控制台安全面：基线口令文件（独立基线实例）
+  section('基线口令文件（组4 N2/N3：mode 0600 + ADMIN_PASSWORD 空串回落随机）')
+  {
+    const pwDataDir = join(process.cwd(), 'data-selftest-pw')
+    await rm(pwDataDir, { recursive: true, force: true })
+    await mkdir(pwDataDir, { recursive: true })
+    const PW_PORT = 7313
+    const pwProc = spawn(process.execPath, ['src/main.ts', '--port', String(PW_PORT), '--data', pwDataDir], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      // 基线形态（无 DEMO_SEED）+ 显式空串 ADMIN_PASSWORD：空串视为未设置 → 随机生成路径
+      env: { ...process.env, ADMIN_PASSWORD: '' },
+    })
+    let pwChunks = ''
+    pwProc.stderr.on('data', (chunk) => { pwChunks += chunk })
+    let pwBooted = false
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      try {
+        const probe = await fetch(`http://127.0.0.1:${PW_PORT}/api/health`)
+        if (probe.ok) { pwBooted = true; break }
+      } catch { /* retry */ }
+    }
+    check('组4 C17：ADMIN_PASSWORD=\'\' 空串首启不抛错（实例健康就绪，随机生成路径）', pwBooted, pwChunks.slice(-400))
+    if (pwBooted) {
+      const pwBootstrapRaw = await fetch(`http://127.0.0.1:${PW_PORT}/api/platform/bootstrap`).then((r) => r.json()).catch(() => null)
+      check('组4 C17：bootstrap 报告初始口令待接管（initialPasswordPending=true，证明走了随机生成）',
+        pwBootstrapRaw?.data?.initialPasswordPending === true, JSON.stringify(pwBootstrapRaw ?? {}))
+      const pwFile = join(pwDataDir, 'admin-initial-password.txt')
+      const pwStat = existsSync(pwFile) ? statSync(pwFile) : undefined
+      check('组4 C16：初始口令文件 mode 0o600（仅属主可读写，macOS APFS/Linux 均生效）',
+        Boolean(pwStat) && (pwStat.mode & 0o777) === 0o600, pwStat ? `mode=${(pwStat.mode & 0o777).toString(8)}` : '文件未生成')
+      const pwText = pwStat ? readFileSync(pwFile, 'utf8') : ''
+      const pwValue = pwText.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('平台管理员'))[0] ?? ''
+      const pwLogin = await fetch(`http://127.0.0.1:${PW_PORT}/api/auth/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: pwValue }),
+      }).then((r) => r.json()).catch(() => null)
+      check('组4 C16：口令文件所载口令可登录 admin（随机路径端到端可用）',
+        pwLogin?.ok === true && typeof pwLogin.data?.token === 'string', JSON.stringify(pwLogin?.error ?? {}).slice(0, 160))
+    }
+    pwProc.kill('SIGKILL')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await rm(pwDataDir, { recursive: true, force: true }).catch(() => {})
+  }
 
   // ================================================================ 收尾终检：凭证零进平台（红线一，T-24）
   section('凭证零进平台（红线一 · T-24 全目录扫描）')

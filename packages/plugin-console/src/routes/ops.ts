@@ -92,7 +92,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   /**
    * 反馈回传（WP-07/D1）：👍/👎 薄端点 —— 落零价快照 usage 事件（D2：charge=0 + nonbillable，
    * 不污染计量口径）。主体经 X-On-Behalf-User 归因（Agent 代用户回传），缺省取登录人；
-   * 幂等键=主体+资源+消息+评分，同键重放不重复计数。
+   * 幂等键=主体+资源+消息（评分随事件内容 meter unit 落账），同 messageId 改评分不双计、同键重放不重复计数。
    */
   guarded('POST', '/api/usage/feedback', 'console.login', (exchange) => {
     const info = caller(exchange)
@@ -108,13 +108,18 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       return
     }
     const orgId = (info.userId ? ctx.iam.users().get(info.userId)?.orgId : undefined) ?? ''
-    const event = ctx.usage.record(nonbillableUsage({
-      org: orgId,
-      subject,
-      principal: orgId ? `org:${orgId}` : 'platform',
-      resource: input.resource,
-      idempotency_key: `feedback:${subject}:${input.resource}:${input.messageId ?? 'anon'}:${input.score}`,
-    }))
+    const event = ctx.usage.record({
+      ...nonbillableUsage({
+        org: orgId,
+        subject,
+        principal: orgId ? `org:${orgId}` : 'platform',
+        resource: input.resource,
+        idempotency_key: `feedback:${subject}:${input.resource}:${input.messageId ?? 'anon'}`,
+      }),
+      // 评分随事件内容（meter unit）落账：幂等键去 score 段后（同 messageId 改评分不双计），
+      // 聚合面 feedbackStats 改从事件内容取分；同键改评由 usage.record 的 feedback 幂等口径承接。
+      meters: [{ key: 'calls', value: 1, unit: input.score }],
+    })
     changeLog(exchange, 'usage.feedback', 'usage_event', event.event_id, input.resource,
       `${input.score}${input.note ? `：${input.note}` : ''}（非计费零价快照，X-On-Behalf-User${onBehalf ? `=${onBehalf}` : '未用'}）`)
     return { event_id: event.event_id, charge_cents: event.pricing.charge_cents, nonbillable: event.pricing.rate?.nonbillable === true }
@@ -145,7 +150,9 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
 
   guarded('POST', '/api/usage/replay', 'usage.admin', (exchange) => {
     const { from } = body<{ from: string }>(exchange)
-    return ctx.usage.replay(from)
+    const result = ctx.usage.replay(from)
+    changeLog(exchange, 'usage.replay', 'usage', 'replay', '', `replayed=${result.replayed}`)
+    return result
   })
 
   guarded('POST', '/api/usage/dead-letters/retry', 'usage.admin', (exchange) => {

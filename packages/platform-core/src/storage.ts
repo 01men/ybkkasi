@@ -335,7 +335,13 @@ export class StorageService extends Service {
           }
           await rename(tmp, file)
         } catch (error) {
-          console.error(`[storage] 集合 ${name} 落盘失败`, error)
+          // rename ENOENT（停机窗口目录/临时文件被外部回收的竞态）降噪：内存态未失，
+          // 下次落盘自然恢复；debug 级留痕即可，不重试不告警（防关停期日志风暴）
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            console.debug(`[storage] 集合 ${name} 落盘 rename 竞态（ENOENT，内存态未失，下次落盘恢复）`)
+          } else {
+            console.error(`[storage] 集合 ${name} 落盘失败`, error)
+          }
         }
       }
       // 落盘期间又有变更（durable 即时触发）：循环直至清空

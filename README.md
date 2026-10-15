@@ -32,7 +32,8 @@
 > **数据要素域**（数据集登记 / 四维质量分 / 血缘反向追溯 / 指标字典口径仲裁）· **模型渠道治理**
 > （分级路由 / 渠道组降级链 / 预算熔断，[contract-c1-modelgw-channel-governance.md](docs/contract-c1-modelgw-channel-governance.md)）·
 > **Agent 自治与 A2A**（autonomy A0-A3 + 点名调用端点，[contract-c3-agent-a2a.md](docs/contract-c3-agent-a2a.md)）·
-> IAM 场景级授权（sceneCode，deny→allow→fail-closed）· 审计证据锚点与场景维度时间线 · 通知中心持久化——
+> IAM 场景级授权（sceneCode，deny→allow→fail-closed，全链路口径含面板任务创建入口——面板任务入口为
+> 2026-10-15 批次接线）· 审计证据锚点与场景维度时间线 · 通知中心持久化——
 > 详见 [docs/release-notes-2026-09-11-iaw-batch.md](docs/release-notes-2026-09-11-iaw-batch.md)。
 >
 > **语言口径（2026-10-13，REFACTOR-2026-10-13 阶段 2）**：本项目为**全中文单语**产品，不维护英文界面版本。
@@ -594,7 +595,7 @@ curl localhost:7300/api/overview -H "authorization: Bearer <token>"
 # 平台即 MCP Server（任意 MCP 客户端可接入）
 curl -X POST localhost:7300/mcp -H "authorization: Bearer <token>" -H 'content-type: application/json' \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-# /docs 静态发布：docs 目录随服务可读（接入指南等，浏览器直接打开）
+# /docs 静态发布：docs 目录随服务可读（白名单公开文档口径，2026-10-15 批次收敛；接入指南等浏览器直接打开）
 curl http://localhost:7300/docs/app-sso-integration.md
 ```
 
@@ -639,8 +640,10 @@ PV 同日累加与 UV/DAU 取最大、成本穿透恒等、技能热力矩阵、
 - 模型网关仅转发 OpenAI 兼容 chat/completions；模型未配置 endpoint 时拒绝调用（不生成假 completion）
 - 钱包/资金面已下线封存（M0-2，见 [docs/billing-archive-register.md](docs/billing-archive-register.md)）；OIDC 私钥存 data 目录，生产建议迁 KMS
 - NAS 文件操作全部经 MCP 文件网关（不直连 DSM 私有 API）；`fs_upload/fs_download` 在网关进程侧读写本地路径——平台与网关需同机部署，或把资产 `stagingDir` 配置为共享挂载点；`/mcp` 端点为无会话纯 JSON 形态（不提供 GET SSE 长流，主流客户端兼容）
+- API 契约口径（G4-01/G1-F3）：`/api/*` 未匹配路由的匿名请求统一返回 401（鉴权中间件在路由分发前拦截，设计内行为），不是 404——不存在以 404/401 差异探测路由存在性的侧信道
+- MCP 工具面口径：全部注册工具（82 个）均已声明最小权限 permission；`/mcp` tools/call 的 `console.login` 基线仅作新工具漏声明 permission 时的 fail-safe 兜底，不替代逐工具最小权限声明
 - Node ≥ 22.6（原生 TypeScript 运行，无需构建步骤；node:sqlite 在 Node 24 下为 Experimental，无害）
 
 ---
 
-> 最近更新：2026-10-15 · 执行中枢 plugin-exec-hub 整体交付 + 六大能力治理收口 R2-R12——目标对齐（exec:goals 目标树+指标三件套→projects→issues）、30s 心跳循环（唤醒队列/治理前置链/健康度五档）、issue 执行锁 CAS、例行调度（interval/cron/webhook）、Agent 组织化、主体预算联动冻结+L4 解冻、模型目录管理面、多公司清单收口与自审批复议（[docs/qa-report-20261014-execution-hub-delivery.md](docs/qa-report-20261014-execution-hub-delivery.md)；selftest 1257/1257）。此前：2026-10-13 · 全局重构 REFACTOR-2026-10-13 七项收敛（对照 paperclip）——R4 console 后端拆分（4,702→300 行 15 域文件）+ R5 鉴权样板收敛 rest-gate 单实现 + R1 汉化收敛（真实残留清零，lint:cjk 门禁）+ R10 协议键中文对照总表（280 键）+ 错误映射全集断言 + R6 连接器风险声明目录（S1/S2 分层）+ R7 设计 token 三端单源（定制轨覆写 :root 即换品牌色）。产品能力口径以 [docs/release-notes-2026-09-09-m0.md](docs/release-notes-2026-09-09-m0.md) 为准。
+> 最近更新：2026-10-15 · 审查反馈整体整改批次——组织隔离 fail-closed、MCP 工具权限最小化（存量工具逐一补声明最小权限 permission，`/mcp` tools/call 的 console.login 基线收敛为漏声明 fail-safe）、模型渠道降级链预算守卫、/docs 白名单公开、内核韧性十项收口；控制台 ⌘K 命令面板页面索引补齐 6 条真实路由（NAS 存储/数据权限/财务视图/连接器/资产登记/宿主服务连接），sceneCode 全链路口径补注面板任务创建入口（本批次接线）。此前：2026-10-15 · 执行中枢 plugin-exec-hub 整体交付 + 六大能力治理收口 R2-R12——目标对齐（exec:goals 目标树+指标三件套→projects→issues）、30s 心跳循环（唤醒队列/治理前置链/健康度五档）、issue 执行锁 CAS、例行调度（interval/cron/webhook）、Agent 组织化、主体预算联动冻结+L4 解冻、模型目录管理面、多公司清单收口与自审批复议（[docs/qa-report-20261014-execution-hub-delivery.md](docs/qa-report-20261014-execution-hub-delivery.md)；selftest 1257/1257）。此前：2026-10-13 · 全局重构 REFACTOR-2026-10-13 七项收敛（对照 paperclip）——R4 console 后端拆分（4,702→300 行 15 域文件）+ R5 鉴权样板收敛 rest-gate 单实现 + R1 汉化收敛（真实残留清零，lint:cjk 门禁）+ R10 协议键中文对照总表（280 键）+ 错误映射全集断言 + R6 连接器风险声明目录（S1/S2 分层）+ R7 设计 token 三端单源（定制轨覆写 :root 即换品牌色）。产品能力口径以 [docs/release-notes-2026-09-09-m0.md](docs/release-notes-2026-09-09-m0.md) 为准。

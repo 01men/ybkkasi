@@ -64,6 +64,25 @@ export function apply(ctx: Context) {
       ?? ''
   }
 
+  /**
+   * 场景级授权执行点（A-01 残余收口，与 plugin-flow-core 同构）：任务创建携带 sceneCode 时
+   * 强制裁决场景策略——deny/fail-closed（有策略无命中）一律 403 并落 audit.authz.denied；
+   * allow 放行；未携带 sceneCode 或场景未配置策略维持存量放行（与 flow 域无策略语义一致，
+   * 守卫不阻断普通任务）。机器主体不入场景域（权限点 RBAC 已覆盖），口径见 release-notes-2026-09-12。
+   */
+  const sceneGuard = (exchange: HttpExchange, sceneCode: string | undefined, action: string): boolean => {
+    if (!sceneCode?.trim()) return true
+    const info = caller(exchange)
+    if (!info.userId) return true
+    const decision = ctx.iam.checkScene(info.userId, sceneCode, action)
+    if (decision.decision !== 'deny') return true
+    ctx.platformBus.emit('audit.authz.denied', {
+      actorId: info.userId, actorName: info.name, point: `scene:${sceneCode}#${action}`, path: exchange.path,
+    })
+    exchange.fail(403, 'FORBIDDEN', `场景授权拒绝（${sceneCode} · ${action}）：${decision.reason}`)
+    return false
+  }
+
   // -- 部门与总览 -------------------------------------------------------------
 
   guarded('GET', '/api/panel/depts', 'panel.read', (exchange) => {
@@ -385,6 +404,8 @@ export function apply(ctx: Context) {
     const input = body<{ title?: string; detail?: string; lane?: string; assigneeName?: string; assigneeType?: string; sceneCode?: string }>(exchange)
     if (!input.title?.trim()) throw new Error('任务标题必填')
     if (input.lane !== undefined && !TASK_LANES.includes(input.lane as TaskLane)) throw new Error(`非法泳道：${input.lane}`)
+    // A-01：任务挂场景时按场景策略裁决创建动作（deny/fail-closed → 403），无策略维持放行
+    if (!sceneGuard(exchange, input.sceneCode, 'panel.task.create')) return
     const info = caller(exchange)
     const task = panel.createTask({
       dept: dept.id, title: input.title.trim(),

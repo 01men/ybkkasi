@@ -37,6 +37,8 @@ export interface DeveloperRecord extends RecordBase {
   passwordHash: string
   /** 发布者 Ed25519 公钥（SPKI DER → base64）。 */
   publicKey: string
+  /** 插件 id 命名空间（NEW-E-01 轻量版）：com.<namespace>.* 归属段；缺省取注册账号品牌段。 */
+  namespace?: string
   company?: string
   /** 收款账户登记（资金通道依赖清单就位前的登记位，v1.2 §六）。 */
   payoutAccount?: string
@@ -238,11 +240,20 @@ export class MarketService extends Service {
 
   // -- 开发者身份域（M2：独立于内部员工 iam） --------------------------------
 
-  registerDeveloper(input: { username: string; displayName: string; email: string; password: string; publicKey: string; company?: string; payoutAccount?: string }): { developer: DeveloperRecord; token: string } {
+  registerDeveloper(input: { username: string; displayName: string; email: string; password: string; publicKey: string; company?: string; payoutAccount?: string; namespace?: string }): { developer: DeveloperRecord; token: string } {
     if (!/^[a-z][a-z0-9_-]{2,31}$/.test(input.username)) throw new Error('开发者账号格式非法（^[a-z][a-z0-9_-]{2,31}$）')
-    if (input.password.length < 8) throw new Error('密码至少 8 位')
+    if (typeof input.displayName !== 'string' || input.displayName.trim() === '') throw new Error('开发者显示名（displayName）必填')
+    if (typeof input.email !== 'string' || input.email.trim() === '') throw new Error('开发者邮箱（email）必填')
+    if (typeof input.password !== 'string' || input.password.length < 8) throw new Error('密码至少 8 位')
     if (!isValidEd25519PublicKeyBase64(input.publicKey)) {
       throw new Error('发布者公钥格式非法（应为 Ed25519 SPKI DER base64）')
+    }
+    // NEW-E-01 轻量版：注册即绑定插件 id 命名空间（com.<namespace>.* 归属段）。
+    // 缺省取注册账号的品牌段（'-' 前段，如 acme-dev → acme）；显式指定须为合法 id 段字符域
+    //（品牌段含 id 非法字符——如下划线——时按原值入册：该账号提交 com.* 插件会被命名空间闸拦下）
+    const namespace = input.namespace ?? input.username.split('-')[0]!
+    if (input.namespace !== undefined && !/^[a-z0-9][a-z0-9-]{0,30}$/.test(namespace)) {
+      throw new Error(`插件 id 命名空间非法（^[a-z0-9][a-z0-9-]{0,30}$）：${namespace}`)
     }
     const credential = this.ctx.authn.createMachineCredential({
       name: `developer:${input.username}`,
@@ -259,6 +270,7 @@ export class MarketService extends Service {
       passwordSalt: salt,
       passwordHash: sha256Hex(`${salt}:${input.password}`),
       publicKey: input.publicKey,
+      namespace,
       ...(input.company !== undefined ? { company: input.company } : {}),
       ...(input.payoutAccount !== undefined ? { payoutAccount: input.payoutAccount } : {}),
       principalId: credential.principal.id,
@@ -299,6 +311,14 @@ export class MarketService extends Service {
     const parsed = parseManifest(files)
     if (parsed.publisher !== developer.username) {
       throw new Error(`plugin.yaml publisher 必须为提交者账号（${developer.username}），收到 ${parsed.publisher}`)
+    }
+    // NEW-E-01 轻量版：com.<x>.* 插件 id 的归属段必须与提交者命名空间一致，防 com.<品牌>.* 冒认。
+    // 存量兼容：无 namespace 字段的存量开发者不做此检查（保持审批闸现状）
+    if (parsed.id.startsWith('com.') && developer.namespace !== undefined) {
+      const vendor = parsed.id.slice('com.'.length).split('.')[0] ?? ''
+      if (vendor !== developer.namespace) {
+        throw new Error(`插件 id 命名空间越权：com.${vendor}.* 与开发者命名空间 com.${developer.namespace}.* 不一致，不得提交他人品牌段下的插件 id`)
+      }
     }
     const fingerprint = fingerprintOf(files)
     if (!verifyEd25519(developer.publicKey, fingerprint, signature)) {
@@ -454,6 +474,10 @@ export class MarketService extends Service {
     if (!submission.parsed.content.prompts.some((prompt) => prompt.name === promptName)) {
       throw new Error(`提示词包不存在：${promptName}`)
     }
+    // 确定性幂等键：安装+主体+提示词包+UTC 分钟窗——同业务重试（meterPromptUse 无业务单据 ID
+    // 可用）不重复计量，不同业务（不同安装/主体/提示词包/窗口）不互撞；分钟级去重窗口与
+    // usage 自动幂等键（autoIdempotencyKey）同口径
+    const dedupWindow = new Date().toISOString().slice(0, 16)
     this.ctx.usage.record({
       org: orgId,
       subject,
@@ -461,7 +485,7 @@ export class MarketService extends Service {
       resource: `plugin:${pluginId}`,
       tenant_id: install.tenantId,
       meters: [{ key: submission.parsed.billing.usage[0]?.key ?? 'prompts.used', value: 1, unit: submission.parsed.billing.usage[0]?.unit ?? '次' }],
-      idempotency_key: `plugin-use:${newId('pu')}`,
+      idempotency_key: `plugin-use:${install.id}:${subject}:${promptName}:${dedupWindow}`,
     })
   }
 
@@ -529,6 +553,7 @@ function seedOfficialPlugins(market: MarketService): void {
         email: 'official@platform.internal',
         password: randomBytes(24).toString('base64url'),
         publicKey: keys.publicKeyBase64,
+        namespace: 'platform',
       }).developer
     }
     for (const spec of OFFICIAL_PLUGINS) {

@@ -3,10 +3,51 @@
  * 注册到 ctx.tools：在完整 dsh 中模型可直接调用；独立宿主中经 /api/tools/execute 触达。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '../../platform-core/src/index.ts'
+import { defineTool, type ToolRunContext } from '../../platform-core/src/index.ts'
+import type { UserManageActor } from './index.ts'
 
 export const name = 'iam-tools'
 export const inject = ['tools', 'iam']
+
+/**
+ * iam 管理类工具的保留身份键（N1 跨组契约）：独立宿主桥侧（plugin-console routes/bridge.ts
+ * injectToolIdentity）以令牌解析的服务端身份注入 `args._actor`，客户端传入的同名键（含 actor）
+ * 一律先剥离后重注入，身份不可由调用方自填。完整 dsh 宿主直调形态无桥注入，回落 exec.principal。
+ */
+interface BridgeActor {
+  id?: string
+  name?: string
+  orgId?: string
+  platformAdmin?: boolean
+}
+
+/**
+ * 管理类工具操作者归一（N1）：`args._actor`（桥注入，优先）→ exec.principal（运行时直调）
+ * → 匿名空权限 actor（iam 服务层 assertManageScope fail-closed 拒绝）。返回剥离 `_actor`
+ * 后的业务参数，保留键不会泄入服务方法入参。
+ */
+function manageActorOf(args: any, exec?: ToolRunContext): { actor: UserManageActor; rest: Record<string, any> } {
+  const { _actor, ...rest } = args ?? {}
+  const bridge = (_actor ?? undefined) as BridgeActor | undefined
+  if (bridge && typeof bridge === 'object') {
+    return {
+      actor: {
+        ...(typeof bridge.id === 'string' && bridge.id ? { userId: bridge.id } : {}),
+        ...(typeof bridge.orgId === 'string' && bridge.orgId ? { orgId: bridge.orgId } : {}),
+        permissions: bridge.platformAdmin === true ? ['*'] : [],
+      },
+      rest,
+    }
+  }
+  const principal = exec?.principal
+  return {
+    actor: {
+      ...(principal?.userId ? { userId: principal.userId } : {}),
+      permissions: Array.isArray(principal?.permissions) ? [...principal.permissions] : [],
+    },
+    rest,
+  }
+}
 
 export function apply(ctx: Context) {
   const t = ctx.tools
@@ -14,6 +55,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'iam_org_tree',
     description: '获取组织架构树（含各级子组织与人数统计）。',
+    permission: 'iam.org.read',
     parameters: {},
     output: { type: 'object', additionalProperties: true },
     async execute() {
@@ -30,13 +72,15 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'iam_org_create',
     description: '创建组织（需 iam.org.write 权限）。parentId 为空表示顶级组织。',
+    permission: 'iam.org.write',
     parameters: {
       name: { type: 'string', required: true, description: '组织名称' },
       parentId: { type: 'string', description: '父组织 ID' },
     },
     output: { type: 'object', additionalProperties: true },
-    async execute(args) {
-      const org = ctx.iam.createOrg({ name: args.name, parentId: args.parentId ?? null })
+    async execute(args, exec) {
+      const { actor, rest } = manageActorOf(args, exec)
+      const org = ctx.iam.createOrg({ name: rest.name, parentId: rest.parentId ?? null }, actor)
       return { id: org.id, name: org.name }
     },
   }))
@@ -51,11 +95,12 @@ export function apply(ctx: Context) {
       parentId: { type: 'string', description: '新父组织 ID（传空字符串表示提升为顶级组织）' },
     },
     output: { type: 'object', additionalProperties: true },
-    async execute(args) {
-      if (args.name === undefined && args.parentId === undefined) throw new Error('name 与 parentId 至少提供一个')
-      if (args.name !== undefined) ctx.iam.renameOrg(args.orgId, args.name)
-      if (args.parentId !== undefined) ctx.iam.moveOrg(args.orgId, args.parentId || null)
-      const org = ctx.iam.orgs().get(args.orgId)
+    async execute(args, exec) {
+      const { actor, rest } = manageActorOf(args, exec)
+      if (rest.name === undefined && rest.parentId === undefined) throw new Error('name 与 parentId 至少提供一个')
+      if (rest.name !== undefined) ctx.iam.renameOrg(rest.orgId, rest.name, actor)
+      if (rest.parentId !== undefined) ctx.iam.moveOrg(rest.orgId, rest.parentId || null, actor)
+      const org = ctx.iam.orgs().get(rest.orgId)
       return { id: org.id, name: org.name, parentId: org.parentId }
     },
   }))
@@ -63,6 +108,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'iam_user_list',
     description: '查询账号列表，可按组织/状态/关键字过滤。',
+    permission: 'iam.user.read',
     parameters: {
       orgId: { type: 'string', description: '限定组织（含子树）' },
       status: { type: 'string', enum: ['pending', 'active', 'frozen', 'deactivated'], description: '状态过滤' },
@@ -102,8 +148,9 @@ export function apply(ctx: Context) {
       password: { type: 'string', description: '初始口令（缺省则随机生成，仅返回一次）' },
     },
     output: { type: 'object', additionalProperties: true },
-    async execute(args) {
-      const { user, initialPassword } = ctx.iam.createUser({ ...args, roleIds: args.roleIds })
+    async execute(args, exec) {
+      const { actor, rest } = manageActorOf(args, exec)
+      const { user, initialPassword } = ctx.iam.createUser({ ...rest, roleIds: rest.roleIds }, actor)
       return { id: user.id, username: user.username, status: user.status, ...(initialPassword ? { initialPassword } : {}) }
     },
   }))
@@ -116,8 +163,9 @@ export function apply(ctx: Context) {
       userId: { type: 'string', required: true, description: '账号 ID' },
     },
     output: { type: 'object', additionalProperties: true },
-    async execute(args) {
-      const { user, initialPassword } = ctx.iam.resetPassword(args.userId)
+    async execute(args, exec) {
+      const { actor, rest } = manageActorOf(args, exec)
+      const { user, initialPassword } = ctx.iam.resetPassword(rest.userId, undefined, actor)
       return { id: user.id, username: user.username, initialPassword }
     },
   }))
@@ -131,8 +179,9 @@ export function apply(ctx: Context) {
       reason: { type: 'string', required: true, description: '冻结原因（审计留痕）' },
     },
     output: { type: 'object', additionalProperties: true },
-    async execute(args) {
-      const user = ctx.iam.freezeUser(args.userId, args.reason)
+    async execute(args, exec) {
+      const { actor, rest } = manageActorOf(args, exec)
+      const user = ctx.iam.freezeUser(rest.userId, rest.reason, actor)
       return { id: user.id, status: user.status, note: '已发布 iam.user.frozen 事件，认证中心将吊销其令牌' }
     },
   }))
@@ -140,6 +189,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'iam_role_list',
     description: '列出全部角色与权限点。',
+    permission: 'iam.org.read',
     parameters: {},
     output: { type: 'object', additionalProperties: true },
     async execute() {
@@ -169,6 +219,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'iam_conflict_list',
     description: '查看三方同步冲突队列（pending 未处理）。',
+    permission: 'iam.org.read',
     parameters: {
       status: { type: 'string', enum: ['pending', 'resolved'], description: '默认 pending' },
     },

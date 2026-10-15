@@ -7,7 +7,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
-import { PermissionCatalog, type UserManageActor } from '../../../plugin-iam/src/index.ts'
+import { OrgScopeDeniedError, PermissionCatalog, type UserManageActor } from '../../../plugin-iam/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 /**
@@ -51,6 +51,25 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   }
 
   /**
+   * 管理面处理器包扎（N4）：跨组织拒绝（iam 服务层 OrgScopeDeniedError）在此回写 403 FORBIDDEN——
+   * guarded 兜底把裸 Error 一律落 400 BAD_REQUEST，而跨组织拒绝是鉴权语义而非请求格式错误；
+   * 其余错误原样上抛走既有 400 兜底。包扎形态保持 guarded( 字面量注册，契约 linter 提取不受影响。
+   */
+  const manageScope = (handler: (exchange: HttpExchange) => unknown): ((exchange: HttpExchange) => Promise<unknown>) => {
+    return async (exchange) => {
+      try {
+        return await handler(exchange)
+      } catch (error) {
+        if (error instanceof OrgScopeDeniedError) {
+          exchange.fail(403, 'FORBIDDEN', error.message)
+          return
+        }
+        throw error
+      }
+    }
+  }
+
+  /**
    * R11 多公司清单收口（见模块级 scopedOrgFilter 导出）：组织清单/树按调用者子树收敛。
    */
   const scopedOrgIds = (exchange: HttpExchange): string[] | null => scopedOrgIdsOf(ctx, caller, exchange)
@@ -80,21 +99,22 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     return ctx.iam.orgs().all().filter((org) => allow.has(org.id))
   })
 
-  guarded('POST', '/api/iam/orgs', 'iam.org.write', (exchange) => {
+  guarded('POST', '/api/iam/orgs', 'iam.org.write', manageScope((exchange) => {
     const input = body<{ name: string; parentId?: string | null; order?: number }>(exchange)
-    const org = ctx.iam.createOrg(input)
+    const org = ctx.iam.createOrg(input, manageActor(exchange))
     changeLog(exchange, 'iam.org.create', 'org', org.id, org.name)
     return org
-  })
+  }))
 
-  guarded('PATCH', '/api/iam/orgs/:id', 'iam.org.write', (exchange) => {
+  guarded('PATCH', '/api/iam/orgs/:id', 'iam.org.write', manageScope((exchange) => {
     const input = body<{ name?: string; parentId?: string | null; leaderUserIds?: string[] }>(exchange)
+    const actor = manageActor(exchange)
     if (input.name !== undefined) {
-      const org = ctx.iam.renameOrg(exchange.params['id']!, input.name)
+      const org = ctx.iam.renameOrg(exchange.params['id']!, input.name, actor)
       changeLog(exchange, 'iam.org.rename', 'org', org.id, org.name)
     }
     if (input.parentId !== undefined) {
-      ctx.iam.moveOrg(exchange.params['id']!, input.parentId)
+      ctx.iam.moveOrg(exchange.params['id']!, input.parentId, actor)
       changeLog(exchange, 'iam.org.move', 'org', exchange.params['id']!, input.parentId)
     }
     if (Array.isArray(input.leaderUserIds)) {
@@ -102,33 +122,39 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       changeLog(exchange, 'iam.org.leaders', 'org', org.id, org.name, `负责人：${input.leaderUserIds.join(',') || '（清空）'}`)
     }
     return ctx.iam.orgs().get(exchange.params['id']!)
-  })
+  }))
 
-  guarded('DELETE', '/api/iam/orgs/:id', 'iam.org.write', (exchange) => {
+  guarded('DELETE', '/api/iam/orgs/:id', 'iam.org.write', manageScope((exchange) => {
     const input = body<{ cascade?: boolean }>(exchange)
-    const result = ctx.iam.deleteOrg(exchange.params['id']!, { cascade: input.cascade === true })
+    const result = ctx.iam.deleteOrg(exchange.params['id']!, { cascade: input.cascade === true }, manageActor(exchange))
     changeLog(exchange, 'iam.org.delete', 'org', exchange.params['id']!, '',
       input.cascade ? `级联一键删除：移除组织 ${result.removedOrgs} 个，账号上移 ${result.movedUsers} 人` : '')
     return result
-  })
+  }))
 
+  // N3：非平台级管理员的账号清单自动收敛到管辖组织子树（含子组织）；显式 ?orgId= 落在子树外
+  // 显式 403（对齐 /api/agents?org= 越界不静默收窄的先例），平台超管（'*'）不受限
   guarded('GET', '/api/iam/users', 'iam.user.read', (exchange) => {
     const orgId = exchange.query.get('orgId') ?? undefined
     const status = exchange.query.get('status') ?? undefined
     const q = exchange.query.get('q') ?? undefined
+    const scope = scopedOrgIds(exchange)
+    if (orgId && scope !== null && !scope.includes(orgId)) {
+      exchange.fail(403, 'FORBIDDEN', '查询组织超出调用者的组织子树（组织隔离）')
+      return
+    }
     // 分页（测试 §9）：page/pageSize 可选，缺省返回全量保持旧客户端兼容
     const pageParam = Number(exchange.query.get('page') ?? 0)
     const sizeParam = Number(exchange.query.get('pageSize') ?? 0)
     const paginated = Number.isInteger(pageParam) && pageParam > 0 && Number.isInteger(sizeParam) && sizeParam > 0
     const page = paginated ? pageParam : 0
     const pageSize = paginated ? Math.min(500, sizeParam) : 0
-    const orgScope = orgId ? new Set(ctx.iam.orgSubtreeIds(orgId)) : undefined
-    const users = ctx.iam.users().find((user) => {
-      if (status && user.status !== status) return false
-      if (orgScope && !orgScope.has(user.orgId)) return false
-      if (q && !`${user.displayName}${user.username}${user.email}`.toLowerCase().includes(q.toLowerCase())) return false
-      return true
-    }).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    const users = ctx.iam.listUsers({
+      ...(orgId ? { orgId } : {}),
+      ...(status ? { status } : {}),
+      ...(q ? { q } : {}),
+      ...(scope !== null ? { scopeOrgIds: scope } : {}),
+    })
     const sliced = page > 0 && pageSize > 0 ? users.slice((page - 1) * pageSize, page * pageSize) : users
     return {
       total: users.length,
@@ -137,31 +163,31 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     }
   })
 
-  guarded('POST', '/api/iam/users', 'iam.user.write', (exchange) => {
+  guarded('POST', '/api/iam/users', 'iam.user.write', manageScope((exchange) => {
     const input = body<{ username: string; displayName: string; orgId: string; title?: string; email?: string; phone?: string; roleIds?: string[]; password?: string }>(exchange)
     const actor = manageActor(exchange)
     const { user, initialPassword } = ctx.iam.createUser(input, actor)
     if (input.roleIds?.length) ctx.iam.assignRoles(user.id, input.roleIds, actor)
-    ctx.iam.activateUser(user.id)
+    ctx.iam.activateUser(user.id, actor)
     changeLog(exchange, 'iam.user.create', 'user', user.id, user.displayName)
     return { ...decorateUser(ctx, ctx.iam.users().get(user.id)!), ...(initialPassword ? { initialPassword } : {}) }
-  })
+  }))
 
-  guarded('POST', '/api/iam/users/:id/reset-password', 'iam.user.write', (exchange) => {
+  guarded('POST', '/api/iam/users/:id/reset-password', 'iam.user.write', manageScope((exchange) => {
     const { password } = body<{ password?: string }>(exchange)
     const { user, initialPassword } = ctx.iam.resetPassword(exchange.params['id']!, password, manageActor(exchange))
     changeLog(exchange, 'iam.user.reset_password', 'user', user.id, user.displayName, password ? '设置为指定口令' : '重置为随机初始口令')
     return { id: user.id, username: user.username, initialPassword }
-  })
+  }))
 
-  guarded('POST', '/api/iam/users/import', 'iam.user.write', (exchange) => {
-    const { items } = body<{ items: Array<{ username: string; displayName: string; orgId: string; title?: string }> }>(exchange)
-    const result = ctx.iam.importUsers(items ?? [])
+  guarded('POST', '/api/iam/users/import', 'iam.user.write', manageScope((exchange) => {
+    const { items } = body<{ items: Array<{ username: string; displayName: string; orgId: string; title?: string; email?: string }> }>(exchange)
+    const result = ctx.iam.importUsers(items ?? [], manageActor(exchange))
     changeLog(exchange, 'iam.user.import', 'user', '', '', `新建 ${result.created.length}，跳过 ${result.skipped.length}`)
     return { created: result.created.map((user) => decorateUser(ctx, user)), skipped: result.skipped }
-  })
+  }))
 
-  guarded('PATCH', '/api/iam/users/:id', 'iam.user.write', (exchange) => {
+  guarded('PATCH', '/api/iam/users/:id', 'iam.user.write', manageScope((exchange) => {
     const input = body<{ displayName?: string; email?: string; phone?: string; title?: string; orgId?: string; roleIds?: string[]; accountType?: 'internal' | 'external' | 'suspended-review'; primaryOrgId?: string }>(exchange)
     const actor = manageActor(exchange)
     const { roleIds, ...patch } = input
@@ -169,7 +195,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     if (roleIds) ctx.iam.assignRoles(user.id, roleIds, actor)
     changeLog(exchange, 'iam.user.update', 'user', user.id, user.displayName)
     return decorateUser(ctx, ctx.iam.users().get(user.id)!)
-  })
+  }))
 
   for (const [action, permission] of [
     ['activate', 'iam.user.write'],
@@ -177,7 +203,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     ['unfreeze', 'iam.user.freeze'],
     ['deactivate', 'iam.user.freeze'],
   ] as const) {
-    guarded('POST', `/api/iam/users/:id/${action}`, permission, (exchange) => {
+    guarded('POST', `/api/iam/users/:id/${action}`, permission, manageScope((exchange) => {
       const { reason } = body<{ reason?: string }>(exchange)
       const id = exchange.params['id']!
       const actor = manageActor(exchange)
@@ -187,25 +213,25 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
             : ctx.iam.deactivateUser(id, reason ?? '', actor)
       changeLog(exchange, `iam.user.${action}`, 'user', user.id, user.displayName, reason ?? '')
       return decorateUser(ctx, user)
-    })
+    }))
   }
 
-  guarded('POST', '/api/iam/users/:id/bindings', 'iam.user.write', (exchange) => {
+  guarded('POST', '/api/iam/users/:id/bindings', 'iam.user.write', manageScope((exchange) => {
     const input = body<{ provider: 'dingtalk' | 'feishu' | 'wecom'; unionId: string; displayName?: string; verifyCode?: string }>(exchange)
     const user = ctx.iam.bindThirdParty(exchange.params['id']!, { ...input, displayName: input.displayName ?? input.unionId }, manageActor(exchange))
     changeLog(exchange, 'iam.user.bind', 'user', user.id, user.displayName, input.provider)
     return decorateUser(ctx, user)
-  })
+  }))
 
-  guarded('DELETE', '/api/iam/users/:id/bindings/:provider', 'iam.user.write', (exchange) => {
+  guarded('DELETE', '/api/iam/users/:id/bindings/:provider', 'iam.user.write', manageScope((exchange) => {
     const { verifyCode } = body<{ verifyCode: string }>(exchange)
     const user = ctx.iam.unbindThirdParty(exchange.params['id']!, exchange.params['provider']! as 'dingtalk', verifyCode, manageActor(exchange))
     changeLog(exchange, 'iam.user.unbind', 'user', user.id, user.displayName, exchange.params['provider'])
     return decorateUser(ctx, user)
-  })
+  }))
 
   // R4 删除面：物理删除仅限已注销账号（deactivate 软删除先行，双保险防误删在职账号）
-  guarded('DELETE', '/api/iam/users/:id', 'iam.user.freeze', (exchange) => {
+  guarded('DELETE', '/api/iam/users/:id', 'iam.user.freeze', manageScope((exchange) => {
     const id = exchange.params['id']!
     const target = ctx.iam.users().get(id)
     if (!target) {
@@ -219,7 +245,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     ctx.iam.deleteUser(id, manageActor(exchange))
     changeLog(exchange, 'iam.user.delete', 'user', id, target.displayName, '物理删除（已注销账号）')
     return { deleted: true }
-  })
+  }))
 
   guarded('GET', '/api/iam/roles', 'iam.org.read', () => ({
     roles: ctx.iam.roles().all(),

@@ -13,6 +13,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'skill_search',
     description: '搜索 Skill 市场（关键字/分类/标签，按下载量/评分/更新时间排序）。',
+    permission: 'skill.read',
     parameters: {
       q: { type: 'string', description: '关键字' },
       category: { type: 'string', description: '分类' },
@@ -35,6 +36,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'skill_submit',
     description: '提交 Skill 到市场（自动进入静态扫描 → 两级审批流水线）。可选携带 skill.zip 包内容（base64，上架时经存储后端上传 NAS）。',
+    permission: 'skill.submit',
     parameters: {
       name: { type: 'string', required: true, description: 'Skill 名称' },
       content: { type: 'string', required: true, description: 'SKILL.md 全文' },

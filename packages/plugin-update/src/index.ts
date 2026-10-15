@@ -572,7 +572,9 @@ export class UpdateService extends Service {
     let manifestCheck: Awaited<ReturnType<UpdateService['verifyReleaseManifest']>> | undefined
     if (info.installMode === 'source' && pin) {
       try {
-        await runGit(info.rootDir, ['fetch', 'origin', '--tags', '--prune'])
+        // E-05：fetch 只在正式执行路径发生（外呼 + 变更 .git）——dryRun 不外呼不落 .git，
+        // pin 解析/签名核验基于本地既有 refs（上次 fetch 的远端追踪引用与 tags）完成
+        if (!options.dryRun) await runGit(info.rootDir, ['fetch', 'origin', '--tags', '--prune'])
         targetResolved = (await runGit(info.rootDir, ['rev-parse', '--verify', `${pin}^{commit}`])).trim()
       } catch (error) {
         throw new Error(`pin 目标无法解析：${pin}（${error instanceof Error ? error.message.slice(0, 160) : String(error)}）`)

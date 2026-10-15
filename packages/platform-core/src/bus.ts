@@ -106,6 +106,8 @@ export const PlatformEvents = {
   FlowCreated: 'flow.created',
   FlowStepUpdated: 'flow.step.updated',
   FlowCompleted: 'flow.completed',
+  // TF 停滞告警（C-06）：running 态但 running 步=0——只告警不自动重跑，推进仍须显式调用
+  FlowStalled: 'flow.stalled',
   FlowTemplateChanged: 'flow.template.changed',
   // Agent 域（IAW 交接 7-1）：A2A 跨运行时调用
   AgentA2aInvoked: 'agent.a2a.invoked',
@@ -163,6 +165,8 @@ interface BusDeadLetterRecord {
   error: string
   attempts: number
   at: string
+  /** 事件来源：缺省=平台内部；plugin:<id>=第三方插件。plugin: 死信结构性重投依赖此字段（存量无该字段的记录按缺省处理，不报错）。 */
+  source?: string
 }
 
 export class PlatformBusService extends Service {
@@ -313,7 +317,8 @@ export class PlatformBusService extends Service {
     const retained: BusDeadLetterRecord[] = []
     for (const record of records) {
       try {
-        this.emit(record.eventName, record.payload)
+        // 补记 source 的 plugin: 死信按原来源重发（结构性可重投）；存量无 source 记录按缺省来源重发（emit 校验不通过则原地保留）
+        this.emit(record.eventName, record.payload, record.source !== undefined ? { source: record.source } : {})
         redelivered++
       } catch (error) {
         // 不可重投（源校验失败/参数非法）：保留死信并注明原因，等待人工处置
@@ -332,6 +337,7 @@ export class PlatformBusService extends Service {
     const record: BusDeadLetterRecord = {
       id: `bdl-${randomUUID()}`, eventName: event.name, payload: event.payload,
       listener, error, attempts, at: new Date().toISOString(),
+      ...(event.source !== undefined ? { source: event.source } : {}),
     }
     this.appendDeadLetter(record)
     if (options.suppressAlert) return
@@ -358,32 +364,38 @@ export class PlatformBusService extends Service {
     }
   }
 
-  /** 单事件派发：逐监听器隔离，超时/异常按次计失败，指数退避重试 3 次后入死信。 */
+  /**
+   * 单事件派发（C-05）：事件间仍按队列 FIFO 串行（drain 逐事件等待 allSettled），
+   * 同一事件的各监听器并发隔离——单监听器失败/挂起（至多 LISTENER_TIMEOUT_MS）不再拖慢
+   * 同事件其他监听器；每监听器超时/异常按次计失败，指数退避重试 3 次后入死信（既有语义不变）。
+   */
   private async deliver(event: PlatformEvent): Promise<void> {
     const targets: Array<{ cb: BusListener; label: string }> = []
     for (const cb of this.listeners.get(event.name) ?? []) targets.push({ cb, label: event.name })
     for (const cb of this.wildcard) targets.push({ cb, label: '*' })
-    for (const { cb, label } of targets) {
-      let delivered = false
-      for (let attempt = 1; attempt <= RETRY_BACKOFF_MS.length + 1 && !delivered; attempt++) {
-        try {
-          await withTimeout(Promise.resolve(cb(event.payload, event)), LISTENER_TIMEOUT_MS)
-          delivered = true
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          // 监听器异常一律显式落事件（OPT-P1-04）：审计可查，不再 console.error 了事；
-          // 回授断路（QA C-01）：反馈事件自身的监听器失败不再回授，直接入死信（否则自激循环）
-          console.error(`[bus] 监听器处理 ${event.name}（${label}）第 ${attempt} 次失败`, error)
-          if (FEEDBACK_EVENTS.has(event.name)) {
-            this.enterDeadLetter(event, label, `反馈事件监听器失败（不回授，QA C-01）：${message}`, attempt, { suppressAlert: true })
-            break
-          }
-          this.emit(PlatformEvents.BusListenerError, { event: event.name, listener: label, attempt, error: message, at: new Date().toISOString() })
-          if (attempt <= RETRY_BACKOFF_MS.length) {
-            await sleep(RETRY_BACKOFF_MS[attempt - 1])
-          } else {
-            this.enterDeadLetter(event, label, `3 次重试均失败：${message}`, attempt)
-          }
+    await Promise.allSettled(targets.map(({ cb, label }) => this.deliverToOne(event, cb, label)))
+  }
+
+  /** 单监听器派发链：失败逐次落 bus.listener_error（回授断路见 FEEDBACK_EVENTS），重试耗尽入死信。 */
+  private async deliverToOne(event: PlatformEvent, cb: BusListener, label: string): Promise<void> {
+    for (let attempt = 1; attempt <= RETRY_BACKOFF_MS.length + 1; attempt++) {
+      try {
+        await withTimeout(Promise.resolve(cb(event.payload, event)), LISTENER_TIMEOUT_MS)
+        return
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        // 监听器异常一律显式落事件（OPT-P1-04）：审计可查，不再 console.error 了事；
+        // 回授断路（QA C-01）：反馈事件自身的监听器失败不再回授，直接入死信（否则自激循环）
+        console.error(`[bus] 监听器处理 ${event.name}（${label}）第 ${attempt} 次失败`, error)
+        if (FEEDBACK_EVENTS.has(event.name)) {
+          this.enterDeadLetter(event, label, `反馈事件监听器失败（不回授，QA C-01）：${message}`, attempt, { suppressAlert: true })
+          return
+        }
+        this.emit(PlatformEvents.BusListenerError, { event: event.name, listener: label, attempt, error: message, at: new Date().toISOString() })
+        if (attempt <= RETRY_BACKOFF_MS.length) {
+          await sleep(RETRY_BACKOFF_MS[attempt - 1])
+        } else {
+          this.enterDeadLetter(event, label, `3 次重试均失败：${message}`, attempt)
         }
       }
     }

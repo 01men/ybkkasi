@@ -56,4 +56,4 @@ RongQi (ybkk-AIOS) is a self-hosted enterprise AI resource management platform: 
 - 全部文件操作经 MCP 文件网关并按真实用户身份（X-On-Behalf-User）留痕；测试内 stub 均为进程内真实 HTTP 服务，不降级为 mock
 - 全中文单语产品（2026-10-13 起）：表现层（UI/CLI/通知/错误提示）一律中文，不维护英文版本；协议层例外——事件名/权限点/错误原因码/API 信封字段/环境变量名/浏览器存储键保留 ASCII 键（跨系统机器契约），逐键中文释义见 docs/协议键中文对照总表.md
 
-（更新日期：2026-10-15）
+（最近更新：2026-10-15 · 审查反馈整体整改批次——组织隔离 fail-closed、MCP 工具权限最小化（存量工具逐一补声明最小权限 permission，/mcp tools/call 的 console.login 基线收敛为漏声明 fail-safe）、模型渠道降级链预算守卫、/docs 白名单公开、内核韧性十项收口；控制台 ⌘K 命令面板页面索引补齐 6 条真实路由，sceneCode 全链路口径补注面板任务创建入口（本批次接线）。更新日期：2026-10-15）

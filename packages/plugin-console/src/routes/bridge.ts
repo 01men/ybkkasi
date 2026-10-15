@@ -58,7 +58,11 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
    * 工具身份注入：服务端以令牌解析的调用者身份为准，禁止调用方自填身份参数。
    * connector_execute / mcp_invoke 的调用方身份已改为经 exec.principal 传递（schema 无 caller* 参数），
    * 不再走 args 注入；其余工具的 approver/requester/actor 仍由此处覆盖。
+   * iam 管理类工具（N1）：以 args 保留键 _actor 注入服务端可信操作者（id/name/orgId/platformAdmin），
+   * 供 iam 服务层做 fail-closed 组织隔离；客户端传入的 _actor/actor 一律剥离后重注入。
+   * /mcp tools/call 与 REST /api/tools/execute 两条链路都经此处，注入口径天然一致。
    */
+  const iamManageTools = new Set(['iam_org_create', 'iam_org_update', 'iam_user_create', 'iam_user_reset_password', 'iam_user_freeze'])
   const injectToolIdentity = (name: string, inputArgs: Record<string, unknown>, info: CallerInfo): Record<string, unknown> => {
     const args = { ...inputArgs }
     const principalId = info.userId ?? info.principalId
@@ -71,6 +75,18 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
       args.actor = info.name
     } else if (name === 'agent_bind_user' || name === 'skill_install' || name === 'skill_publish') {
       args.actor = info.name
+    } else if (iamManageTools.has(name)) {
+      delete args.actor
+      delete args._actor
+      // orgId 只对人类调用者解析（令牌 refId → 用户档案单次查询）；机器主体与无归属者缺省，
+      // 由 iam 服务层按非平台管理员 fail-closed 拒绝（与 REST iam 路由 manageActor 同口径）
+      const orgId = info.userId ? ctx.iam.users().get(info.userId)?.orgId : undefined
+      args._actor = {
+        id: principalId,
+        name: info.name,
+        ...(orgId ? { orgId } : {}),
+        platformAdmin: info.permissions.includes('*'),
+      }
     }
     // nas_fs_* 工具身份已改为经 exec.principal 传递（P0-2：身份不进工具参数，schema 无 actor* 参数）
     return args

@@ -295,11 +295,13 @@ export class UsageService extends Service {
     if (!inserted) {
       const existing = this.ctx.txnStore.one<UsageRow>('usage_events', { idempotency_key: event.idempotency_key })
       if (!existing) throw new Error(`幂等键异常：${event.idempotency_key} 已占用但记录缺失`)
+      // feedback 幂等口径（组4：同 messageId 改评分不双计）：键不含 score 段，score 随 meter unit
+      // 落在内容里——同键改评属预期重放（first-write-wins，保留首次评分），不按内容冲突拒绝
       const sameContent = existing.org === event.org
         && existing.subject === event.subject
         && existing.principal === event.principal
         && existing.resource === event.resource
-        && existing.meters_json === JSON.stringify(event.meters)
+        && (existing.meters_json === JSON.stringify(event.meters) || event.idempotency_key.startsWith('feedback:'))
       if (!sameContent) {
         throw new Error(`幂等键冲突：${event.idempotency_key} 已绑定事件 ${existing.id}，同键不同内容被拒绝`)
       }
@@ -575,10 +577,20 @@ export class UsageService extends Service {
     if (filter.from) { conditions.push('occurred_at >= ?'); params.push(filter.from) }
     if (filter.to) { conditions.push('occurred_at < ?'); params.push(filter.to) }
     if (filter.org) { conditions.push('org = ?'); params.push(filter.org) }
-    const rows = this.ctx.txnStore.sql<{ resource: string; subject: string; org: string; day: string; idempotency_key: string }>(
-      `SELECT resource, subject, org, substr(occurred_at, 1, 10) AS day, idempotency_key FROM usage_events WHERE ${conditions.join(' AND ')}`,
+    // 评分来源（组4：幂等键去 score 段后）——新格式评分随事件内容（meter unit=up/down）；
+    // 存量行键尾仍带 score 段，按键尾回退解析（两代格式并存期间聚合口径不变）
+    const rows = this.ctx.txnStore.sql<{ resource: string; subject: string; org: string; day: string; idempotency_key: string; meters_json: string }>(
+      `SELECT resource, subject, org, substr(occurred_at, 1, 10) AS day, idempotency_key, meters_json FROM usage_events WHERE ${conditions.join(' AND ')}`,
       params,
-    ).map((row) => ({ ...row, score: row.idempotency_key.slice(row.idempotency_key.lastIndexOf(':') + 1) }))
+    ).map((row) => {
+      let score = ''
+      try {
+        const unit = JSON.parse(row.meters_json)?.[0]?.unit
+        if (unit === 'up' || unit === 'down') score = unit
+      } catch { /* 内容损坏回落键尾解析 */ }
+      if (score !== 'up' && score !== 'down') score = row.idempotency_key.slice(row.idempotency_key.lastIndexOf(':') + 1)
+      return { ...row, score }
+    })
     const count = (score: string) => rows.filter((row) => row.score === score).length
     const rate = (up: number, total: number): number | null => (total === 0 ? null : Math.round((up / total) * 1000) / 1000)
     const resources = new Map<string, { up: number; down: number }>()

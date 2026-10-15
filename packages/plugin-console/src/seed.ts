@@ -3,12 +3,14 @@
  * - 基线（默认，生产形态）：内置角色 + 根组织 + 平台管理员 admin——口令取 ADMIN_PASSWORD 环境变量，
  *   缺省则随机生成并一次性写入 data/admin-initial-password.txt。不含任何演示业务数据。
  * - 演示（DEMO_SEED=1）：完整演示数据——组织树 / 演示账号（口令统一 Ybk@2026，仅限演示环境）/
- *   钉钉 mock 连接器 / MCP 服务与权限组 / Skill 市场 / Agent / 应用 / 28 天历史用量与成本 / 告警规则 / 待办审批。
+ *   钉钉 mock 连接器 / MCP 服务与权限组 / Skill 市场 / Agent / 应用 / 28 天历史用量
+ *   （成本由 usage 事件×价格簿经正式管道派生）/ 告警规则 / 待办审批。
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { newId } from '../../platform-core/src/index.ts'
+import { SYSTEM_ACTOR } from '../../plugin-iam/src/index.ts'
 import { recordBootstrap } from './routes/platform.ts'
 
 export async function seedAll(ctx: Context): Promise<void> {
@@ -37,23 +39,27 @@ function seedBaseline(ctx: Context): void {
   logger.info('首次启动，正在初始化平台基线（内置角色 + 根组织 + 平台管理员）…')
   ctx.iam.ensureBuiltinRoles()
   const orgName = process.env.ORG_NAME ?? '元冰可集团'
-  const root = ctx.iam.createOrg({ name: orgName })
+  const root = ctx.iam.createOrg({ name: orgName }, SYSTEM_ACTOR)
   const roleSuper = ctx.iam.roles().findOne((role) => role.code === 'super_admin')!
+  // ADMIN_PASSWORD 空串视为未设置：显式空串会触发口令强度校验令首启失败，
+  // 即使放行也等价于空口令把 admin 锁死——统一回落随机生成路径
+  const adminPassword = process.env.ADMIN_PASSWORD ? process.env.ADMIN_PASSWORD : undefined
   const { user: admin, initialPassword } = ctx.iam.createUser({
     username: 'admin',
     displayName: '平台管理员',
     orgId: root.id,
     title: '平台管理员',
     roleIds: [roleSuper.id],
-    password: process.env.ADMIN_PASSWORD,
-  })
+    password: adminPassword,
+  }, SYSTEM_ACTOR)
   ctx.iam.users().update(admin.id, { status: 'active' })
   void admin
   let passwordFile: string | undefined
   if (initialPassword) {
     const file = join(ctx.opsStorage.dataDirPath, 'admin-initial-password.txt')
     if (!existsSync(file)) {
-      writeFileSync(file, `平台管理员 admin 的初始口令（仅生成一次；首次登录后请妥善保管并删除本文件）：\n${initialPassword}\n`, 'utf8')
+      // mode 0600：初始口令文件仅属主可读写，防同机其他账号经组/全局可读位取得管理员口令
+      writeFileSync(file, `平台管理员 admin 的初始口令（仅生成一次；首次登录后请妥善保管并删除本文件）：\n${initialPassword}\n`, { encoding: 'utf8', mode: 0o600 })
     }
     passwordFile = file
     logger.info(`平台管理员 admin 初始口令已生成，写入 ${file}（请立即登录并妥善保管）`)
@@ -80,13 +86,13 @@ async function seedDemo(ctx: Context): Promise<void> {
   recordBootstrap(ctx, { mode: 'demo', orgName: '元冰可集团' })
 
   // -- 组织树 --------------------------------------------------------------
-  const root = ctx.iam.createOrg({ name: '元冰可集团' })
-  const tech = ctx.iam.createOrg({ name: '技术中心', parentId: root.id })
-  const aiDept = ctx.iam.createOrg({ name: 'AI 平台部', parentId: tech.id })
-  const beDept = ctx.iam.createOrg({ name: '后端部', parentId: tech.id })
-  const feDept = ctx.iam.createOrg({ name: '前端部', parentId: tech.id })
-  const prodDept = ctx.iam.createOrg({ name: '产品运营部', parentId: root.id })
-  ctx.iam.createOrg({ name: '市场部', parentId: root.id })
+  const root = ctx.iam.createOrg({ name: '元冰可集团' }, SYSTEM_ACTOR)
+  const tech = ctx.iam.createOrg({ name: '技术中心', parentId: root.id }, SYSTEM_ACTOR)
+  const aiDept = ctx.iam.createOrg({ name: 'AI 平台部', parentId: tech.id }, SYSTEM_ACTOR)
+  const beDept = ctx.iam.createOrg({ name: '后端部', parentId: tech.id }, SYSTEM_ACTOR)
+  const feDept = ctx.iam.createOrg({ name: '前端部', parentId: tech.id }, SYSTEM_ACTOR)
+  const prodDept = ctx.iam.createOrg({ name: '产品运营部', parentId: root.id }, SYSTEM_ACTOR)
+  ctx.iam.createOrg({ name: '市场部', parentId: root.id }, SYSTEM_ACTOR)
 
   // -- 角色与账号 ------------------------------------------------------------
   ctx.iam.ensureBuiltinRoles()
@@ -97,7 +103,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   const roleAuditor = ctx.iam.roles().findOne((role) => role.code === 'auditor')!
 
   const mkUser = (username: string, displayName: string, orgId: string, title: string, roleIds: string[]) => {
-    const { user } = ctx.iam.createUser({ username, displayName, orgId, title, roleIds, password: 'Ybk@2026' })
+    const { user } = ctx.iam.createUser({ username, displayName, orgId, title, roleIds, password: 'Ybk@2026' }, SYSTEM_ACTOR)
     ctx.iam.users().update(user.id, { status: 'active' })
     return ctx.iam.users().get(user.id)!
   }
@@ -114,7 +120,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   mkUser('suyq', '苏砚秋', beDept.id, '后端工程师', [roleDev.id])
   mkUser('heqw', '何青梧', feDept.id, '前端工程师', [roleDev.id])
   mkUser('yqz', '叶栖迟', prodDept.id, '运营专员', [])
-  const { user: pendingUser } = ctx.iam.createUser({ username: 'newcomer', displayName: '周明澜', orgId: feDept.id, title: '前端工程师（试用期）', password: 'Ybk@2026' })
+  const { user: pendingUser } = ctx.iam.createUser({ username: 'newcomer', displayName: '周明澜', orgId: feDept.id, title: '前端工程师（试用期）', password: 'Ybk@2026' }, SYSTEM_ACTOR)
   void pendingUser
 
   // -- 用户组 --------------------------------------------------------------
@@ -479,11 +485,12 @@ async function seedDemo(ctx: Context): Promise<void> {
     ctx.appRegistry.online(app.id, admin.displayName)
   }
 
-  // -- 历史用量 / 成本 / MCP 调用 --------------------------------------------
+  // -- 历史用量 / MCP 调用 ----------------------------------------------------
+  // 成本不在此直写：下方计量历史经 usage.record 入正式管道，audit 消费方按价格簿
+  // （mcp:*/model:* 的内部成本费率）归集出 audit:costs，工作台/FinOps 成本同源可溯。
   const rand = mulberry32(20260821)
   const usage = ctx.agentRegistry.usage()
   const appUsage = ctx.appRegistry.usage()
-  const costs = ctx.audit.costs()
   const today = new Date()
   for (let day = 29; day >= 0; day--) {
     const date = new Date(today.getTime() - day * 86400_000).toISOString().slice(0, 10)
@@ -497,11 +504,6 @@ async function seedDemo(ctx: Context): Promise<void> {
         // DAU 提报（设计适配 2026-10-14）：台账/单位 DAU 成本的运营口径数据源
         dau: Math.max(8, Math.floor(calls / 6)),
         totalLatencyMs: calls * (200 + Math.floor(rand() * 600)),
-      })
-      costs.insert({
-        id: newId('cost'), date, agentId: agent.id,
-        llmTokens: tokens, toolCalls: calls,
-        costYuan: Math.round(tokens * 0.0000015 * 1000) / 1000,
       })
     }
     for (const [app, base] of [[appCs, 320], [appBi, 140], [appHr, 210]] as const) {
@@ -537,7 +539,9 @@ async function seedDemo(ctx: Context): Promise<void> {
 
   // -- 演示计量历史（经真实 usage 管道：可对账/可报表；零价快照口径，M0-2 起无钱包） ----
   // 设计适配（2026-10-14，规格 5.x 演示覆盖要求）：近 30 天 × 六类资产 × 多部门 的计量事件——
-  // 台账 calls30d/tokens30d/cost30d、trend/heat、用量报表、模型网关 30d 消耗全部由此真实聚合。
+  // 台账 calls30d/tokens30d/cost30d、trend/heat、用量报表、模型网关 30d 消耗全部由此真实聚合；
+  // 成本演示数值同源：事件经 audit 消费方按价格簿费率（mcp:* 15 分/千 tokens、
+  // model:<slug> 内部采购费率）归集进 audit:costs，不再管道外自造数。
   // 确定性原则：所有数值由「资产:日期」锚定的 mulberry32 派生（同款防幂等键跨日重种冲突的写法），
   // 幂等键 seed:<resource>:<date> 绑定内容，重种 = 幂等重放；不使用裸随机。
 

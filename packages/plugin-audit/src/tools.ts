@@ -13,6 +13,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'audit_logs',
     description: '查询审计日志（认证/授权/调用/变更四类），支持按资源、操作人、时间回溯。',
+    permission: 'audit.read',
     parameters: {
       type: { type: 'string', enum: ['auth', 'authz', 'invoke', 'change'], description: '日志类型' },
       resourceId: { type: 'string', description: '资源 ID 精确过滤' },
@@ -28,6 +29,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'audit_alerts_list',
     description: '查看平台告警（含未读临界/警告），用于异常排查入口。',
+    permission: 'audit.read',
     parameters: {
       unreadOnly: { type: 'boolean', description: '仅未读' },
     },
@@ -60,10 +62,15 @@ export function apply(ctx: Context) {
       approverId: { type: 'string', required: true, description: '审批人用户 ID' },
       approverName: { type: 'string', required: true, description: '审批人姓名' },
       opinion: { type: 'string', description: '审批意见' },
+      confirmed: { type: 'boolean', description: '高风险 L4 审批通过必须显式 true 二次确认；缺省 false 由服务端 fail-closed 拦截' },
+      finalReview: { type: 'boolean', description: '可选，通过后附加公司级终审标记' },
     },
     output: { type: 'object', additionalProperties: true },
     async execute(args) {
-      const record = await ctx.audit.decideApproval(args.approvalId, args.decision, args.approverId, args.approverName, args.opinion)
+      const record = await ctx.audit.decideApproval(args.approvalId, args.decision, args.approverId, args.approverName, args.opinion, {
+        confirmed: args.confirmed === true,
+        ...(args.finalReview !== undefined ? { finalReview: args.finalReview === true } : {}),
+      })
       return { id: record.id, status: record.status, execution: record.execution }
     },
   }))
@@ -71,6 +78,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'audit_cost_report',
     description: '成本穿透分析：按应用/Agent/组织/日期聚合 Token 消耗与成本。',
+    permission: 'audit.read',
     parameters: {
       groupBy: { type: 'string', enum: ['app', 'agent', 'org', 'date'], required: true, description: '聚合维度' },
       from: { type: 'string', description: '起始日期 YYYY-MM-DD' },

@@ -55,6 +55,8 @@ export interface FlowRecord extends RecordBase {
   /** SLA（分钟，3-3）：触发时点起算；dueAt=createdAt+slaMinutes。 */
   slaMinutes?: number
   dueAt?: string
+  /** 停滞标记（C-06）：running 态但 running 步=0 时落时点；恢复推进即清除。只告警不自动重跑。 */
+  stalledAt?: string
   createdBy: string
   finishedAt?: string
 }
@@ -89,6 +91,11 @@ const STEP_TRANSITIONS: Record<FlowStepAction, { from: FlowStepStatus[]; to: Flo
   block: { from: ['running'], to: 'blocked' },
   restart: { from: ['blocked'], to: 'running' },
   skip: { from: ['pending', 'running', 'blocked'], to: 'skipped' },
+}
+
+/** SLA 校验（C-07）：必须为正数——非法值会让 dueAt 早于 createdAt（出生即逾期/overdueMinutes 为负）。 */
+const assertSlaMinutes = (value: number): void => {
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`slaMinutes 必须为正数（分钟），收到：${value}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +138,7 @@ export class FlowService extends Service {
     this.validateStepDraft(input.steps)
     if (!input.code?.trim() || !/^[A-Za-z0-9._-]{2,64}$/.test(input.code)) throw new Error(`模板 code 非法（字母/数字/._-，2-64 位）：${input.code}`)
     if (!input.name?.trim()) throw new Error('模板名称必填')
+    if (input.slaMinutes !== undefined) assertSlaMinutes(input.slaMinutes)
     const existing = this.templates().findOne((item) => item.code === input.code)
     const payload = {
       code: input.code.trim(),
@@ -213,6 +221,8 @@ export class FlowService extends Service {
       steps = input.steps ?? []
     }
     this.validateStepDraft(steps)
+    // C-07：入参或模板继承的 slaMinutes 都必须为正数（防出生即逾期）
+    if (slaMinutes !== undefined) assertSlaMinutes(slaMinutes)
     const now = new Date().toISOString()
     const record = this.flows().insert({
       id: newId('tf'),
@@ -270,6 +280,7 @@ export class FlowService extends Service {
       elapsedMinutes,
       slaBreached: breached,
       overdueMinutes: breached ? elapsedMinutes - (flow.slaMinutes ?? 0) : 0,
+      ...(flow.stalledAt ? { stalled: true } : {}),
     }
   }
 
@@ -310,16 +321,27 @@ export class FlowService extends Service {
       }
     }
     const allSettled = steps.every((item) => item.status === 'done' || item.status === 'skipped')
+    // C-06：running 态但 running 步=0（如 skip 掉唯一 running 步且仍有 pending 步）——流程停滞。
+    // 只落标记 + 告警事件，不自动重跑（真实化红线：推进必须显式调用）；恢复推进时清除标记。
+    const stalled = !allSettled && !steps.some((item) => item.status === 'running')
     const updated = collection.update(flow.id, {
       steps,
       status: allSettled ? 'completed' : flow.status,
       ...(allSettled ? { finishedAt: now } : {}),
+      ...(stalled && !flow.stalledAt ? { stalledAt: now } : {}),
+      ...(!stalled && flow.stalledAt ? { stalledAt: undefined } : {}),
     })
     this.ctx.platformBus.emit(PlatformEvents.FlowStepUpdated, {
       flowId: flow.id, code: flow.code, dept: flow.dept, sceneCode: flow.sceneCode,
       stepKey, action, to: rule.to, actor, note: note ?? '',
       currentStep: steps.find((item) => item.status === 'running')?.key ?? '',
     })
+    if (stalled) {
+      this.ctx.platformBus.emit(PlatformEvents.FlowStalled, {
+        flowId: flow.id, code: flow.code, name: flow.name, dept: flow.dept, sceneCode: flow.sceneCode,
+        stalledAt: now, reason: `running 态但无 running 步骤（步骤 ${stepKey} → ${rule.to} 后无自动推进）`,
+      })
+    }
     if (allSettled) {
       completed = true
       this.ctx.platformBus.emit(PlatformEvents.FlowCompleted, {
@@ -354,6 +376,8 @@ export interface FlowView {
   elapsedMinutes: number
   slaBreached: boolean
   overdueMinutes: number
+  /** 停滞（C-06）：running 态但 running 步=0，记录见 stalledAt。 */
+  stalled?: boolean
 }
 
 // ---------------------------------------------------------------------------

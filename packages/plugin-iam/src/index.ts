@@ -4,6 +4,7 @@
  * 覆盖方案 §二：组织/账号、三方认证绑定、三方接入配置、角色/用户组。
  * 三方连接器（钉钉/飞书/企微）实现统一 OrgConnector 接口，新增 IM 平台只需新增连接器。
  */
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import {
@@ -97,12 +98,32 @@ export interface RoleRecord extends RecordBase {
 }
 
 /**
- * 账号管理操作者上下文（QA A-03）：HTTP 面必须传入；服务内部调用（种子/三方同步/导入）
- * 不带 actor，由平台语义兜底。permissions 取操作者令牌实时解析结果（'*'=平台管理员）。
+ * 账号管理操作者上下文（QA A-03）：外部入口（REST 管理路由与工具桥）必须携带可归因 actor，
+ * 组织归属校验 fail-closed（N1）。permissions 取操作者令牌实时解析结果（'*'=平台管理员）；
+ * orgId 为显式组织归属（工具桥 `_actor` 注入形态），缺省按 userId 反查账号档案定位归属组织。
  */
 export interface UserManageActor {
   userId?: string
+  /** 操作者归属组织（组织子树判定根；缺省按 userId 反查账号档案）。 */
+  orgId?: string
   permissions: string[]
+}
+
+/** 内部系统身份（基线迁移/种子初始化/三方同步等服务内部链路）：显式平台级操作者，替代无归因放行。 */
+export const SYSTEM_ACTOR: UserManageActor = { permissions: ['*'] }
+
+/**
+ * 跨组织操作拒绝（QA A-03/N4）：领域语义为 403 FORBIDDEN——控制台路由层捕获后经
+ * exchange.fail(403) 回写（guarded 兜底对裸 Error 一律 400，跨组织拒绝不属请求格式错误）。
+ */
+export class OrgScopeDeniedError extends Error {
+  readonly status = 403
+  readonly code = 'FORBIDDEN'
+
+  constructor(message: string) {
+    super(message)
+    this.name = 'OrgScopeDeniedError'
+  }
 }
 
 export interface UserGroupRule {
@@ -233,7 +254,8 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'connector.invoke', label: '调用连接器 action', group: '连接器' },
   { point: 'connector.permgroup.write', label: '管理连接器权限组', group: '连接器' },
   { point: 'connector.runs.read', label: '查看连接器运行日志/对账视图', group: '连接器' },
-  { point: 'connector.market.publish', label: '上架连接器型插件（M3，业务触发启动）', group: '连接器' },
+  // connector.market.publish 移除（E-06 权限点卫生）：全仓无任何消费闸门（无 guarded/requirePermission/
+  // hasPermission 引用），亦无内置角色持有；上架动作由 market.submit 契约 + 市场审批流承载。
   { point: 'skill.read', label: '浏览 Skill 市场', group: 'Skill 市场' },
   { point: 'skill.submit', label: '提交 Skill', group: 'Skill 市场' },
   { point: 'skill.approve', label: '审批 Skill', group: 'Skill 市场' },
@@ -270,7 +292,8 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'modelgw.invoke', label: '调用模型网关', group: '模型网关' },
   { point: 'modelgw.admin', label: '管理模型目录', group: '模型网关' },
   { point: 'market.read', label: '浏览插件市场', group: '插件市场' },
-  { point: 'market.submit', label: '提交插件', group: '插件市场' },
+  // market.submit 移除（E-06 权限点卫生）：提交面 POST /api/market/submit 走开发者身份自校验
+  // （access=authenticated + developerCaller），该权限点全仓无消费、无角色持有。
   { point: 'market.approve', label: '审批插件', group: '插件市场' },
   { point: 'market.install', label: '安装插件', group: '插件市场' },
   { point: 'market.developer', label: '开发者门户', group: '插件市场' },
@@ -283,7 +306,9 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'panel.task.write', label: '面板任务流转（创建/泳道迁移）', group: '部门面板' },
   { point: 'panel.config.write', label: '面板配置（widget/KPI 布局/图谱重载）', group: '部门面板' },
   { point: 'scenegraph.read', label: '查看行业场景图谱', group: '部门面板' },
-  { point: 'scenegraph.activate', label: '管理行业授权激活（审批执行）', group: '部门面板' },
+  // scenegraph.activate 移除（E-06 权限点卫生）：行业激活的实际闸门是 panel.write（激活申请）
+  // 与 market.approve（审批执行），该点全仓无消费；org_admin 迁移批次同步摘除（存量库已
+  // 落库的点由管理员按角色编辑回收，迁移只补缺不删改）。
   { point: 'dingtalk.message.send', label: '钉钉桥接消息投递（群桥绑定/推送/回决回调）', group: '部门面板' },
   // 事务流引擎（IAW 交接 3-1..3-4，宿主新域 flow）
   { point: 'flow.read', label: '查看事务流（编排/模板/SLA）', group: '事务流' },
@@ -325,12 +350,13 @@ export const BUILTIN_ROLE_MIGRATION: Record<string, string[]> = {
   // auditor 补 nas.authz.read：审计员可查看 NAS 数据权限规则与判定留痕（dev-plan-nas-authz §2.3）
   // + exec.read（2026-10-14）：执行中枢任务/唤醒留痕纳入只读审计面
   auditor: ['connector.runs.read', 'connector.connection.read', 'nas.authz.read', 'panel.read', 'scenegraph.read', 'flow.read', 'exec.read'],
-  // 部门面板（review-dsh-agent-panel-v2 Phase 0）：业务成员=member 直用面板；org_admin 增配置与行业激活；
+  // 部门面板（review-dsh-agent-panel-v2 Phase 0）：业务成员=member 直用面板；org_admin 增配置；
   // 存量库经迁移补点，新装库直接来自 BuiltinRoles 定义（两处必须同步）
   // + exec.read/exec.write（2026-10-14）：普通用户可在执行中枢发起/查看自己的任务
   member: ['panel.read', 'panel.write', 'panel.task.write', 'scenegraph.read', 'flow.read', 'flow.write', 'exec.read', 'exec.write'],
   // org_admin 增 exec.*（2026-10-14）：本组织执行中枢全权（读/写/运维 tick，与 iam.* 通配同口径）
-  org_admin: ['panel.read', 'panel.write', 'panel.task.write', 'panel.config.write', 'scenegraph.read', 'scenegraph.activate', 'flow.read', 'flow.write', 'flow.admin', 'exec.*'],
+  // scenegraph.activate 摘除（E-06）：全仓无消费死点（见 PermissionCatalog 内注）
+  org_admin: ['panel.read', 'panel.write', 'panel.task.write', 'panel.config.write', 'scenegraph.read', 'flow.read', 'flow.write', 'flow.admin', 'exec.*'],
 }
 
 /** 兼容别名：迁移通道创建时的历史命名（仅 connector 批次）。 */
@@ -956,10 +982,12 @@ export class IamService extends Service {
     return sortRec(roots)
   }
 
-  createOrg(input: { name: string; parentId?: string | null; order?: number; customFields?: Record<string, string>; tenantId?: string; leaderUserIds?: string[] }): OrgRecord {
+  createOrg(input: { name: string; parentId?: string | null; order?: number; customFields?: Record<string, string>; tenantId?: string; leaderUserIds?: string[] }, actor?: UserManageActor): OrgRecord {
     if (!input.name?.trim()) throw new Error('组织名称不能为空')
     const parentId = input.parentId ?? null
     if (parentId && !this.orgs().get(parentId)) throw new Error(`父组织不存在：${parentId}`)
+    // 挂载点受操作者组织子树约束（N1 与账号管理同口径）；顶级组织（parentId=null）仅平台管理员可建
+    this.assertManageScope(actor, parentId ?? undefined, '创建组织')
     // 同级同名判重与引擎唯一键同口径：按连接器归属分区（无 connectorId 的手工组织一个分区）。
     const ownerKey = input.customFields?.['connectorId'] ?? ''
     const duplicate = this.orgs().findOne((org) => org.name === input.name && org.parentId === parentId
@@ -1001,8 +1029,9 @@ export class IamService extends Service {
     return legacy ? legacy.split(',').map((item) => item.trim()).filter(Boolean) : []
   }
 
-  renameOrg(id: string, name: string): OrgRecord {
+  renameOrg(id: string, name: string, actor?: UserManageActor): OrgRecord {
     const org = this.requireOrg(id)
+    this.assertManageScope(actor, id, '重命名组织')
     if (!name?.trim()) throw new Error('组织名称不能为空')
     const trimmed = name.trim()
     // 判重口径同 createOrg：只在同一连接器归属分区内拒绝同名。
@@ -1014,9 +1043,11 @@ export class IamService extends Service {
     return updated
   }
 
-  /** 移动组织（拖拽调岗），含环检测。 */
-  moveOrg(id: string, newParentId: string | null): OrgRecord {
+  /** 移动组织（拖拽调岗），含环检测；组织与新上级均须落在操作者子树内（防借移动越界挂载）。 */
+  moveOrg(id: string, newParentId: string | null, actor?: UserManageActor): OrgRecord {
     this.requireOrg(id)
+    this.assertManageScope(actor, id, '移动组织')
+    this.assertManageScope(actor, newParentId ?? undefined, '移动组织到目标上级')
     if (newParentId) {
       if (newParentId === id) throw new Error('不能将组织移动到自身之下')
       // 父组织存在性校验（QA SEC-03）：不存在时下方环检测会静默放行，产生悬挂 parentId
@@ -1037,8 +1068,9 @@ export class IamService extends Service {
    * cascade=true 一键删除整棵子树：子树内组织全部移除，直接挂载的账号上移到
    * 存活的最近上级组织（被删根的父组织；删除根组织时上移到首个存活根组织）。
    */
-  deleteOrg(id: string, options?: { cascade?: boolean }): { deleted: boolean; removedOrgs: number; movedUsers: number; fallbackOrgId?: string } {
+  deleteOrg(id: string, options?: { cascade?: boolean }, actor?: UserManageActor): { deleted: boolean; removedOrgs: number; movedUsers: number; fallbackOrgId?: string } {
     const org = this.requireOrg(id)
+    this.assertManageScope(actor, id, '删除组织')
     if (!options?.cascade) {
       if (this.orgs().find((item) => item.parentId === id).length > 0) throw new Error('存在子组织，无法删除；请改用「连同子组织一键删除」')
       if (this.users().find((user) => user.orgId === id).length > 0) throw new Error('组织下仍有账号，无法删除；请改用「连同子组织一键删除」（账号将上移到上级组织）')
@@ -1087,16 +1119,19 @@ export class IamService extends Service {
   // -- 账号 ---------------------------------------------------------------
 
   /**
-   * 组织归属校验（QA A-03）：org_admin（iam.* 通配）此前可跨组织接管账号——服务层补栏：
-   * 非平台管理员（无 '*'）只允许管理本组织子树内的账号；机器主体与无法定位组织归属者
-   * 一律拒绝（fail-closed）。actor 缺省=服务内部调用（种子/三方同步/导入），不做限制。
+   * 组织归属校验（QA A-03/N1 fail-closed）：非平台管理员（无 '*'）只允许管理本组织子树内的
+   * 账号/组织；机器主体与无法定位组织归属者一律拒绝。actor.orgId（工具桥 `_actor` 注入）
+   * 优先，缺省按 userId 反查账号档案。actor 缺失一律拒绝：外部入口（REST 管理路由与工具桥）
+   * 必须携带真实调用者身份，服务内部链路（种子/三方同步/SSO 自注册）显式传 SYSTEM_ACTOR。
    */
-  private assertManageScope(actor: UserManageActor | undefined, targetOrgId: string, action: string): void {
-    if (!actor) return
+  private assertManageScope(actor: UserManageActor | undefined, targetOrgId: string | undefined, action: string): void {
+    if (!actor) {
+      throw new OrgScopeDeniedError(`账号管理操作缺少操作者身份（${action}）：外部入口必须携带可归因调用者，内部系统链路请显式传入系统身份（组织隔离，QA A-03）`)
+    }
     if (actor.permissions.includes('*')) return
-    const actorUser = actor.userId ? this.users().get(actor.userId) : undefined
-    if (!actorUser || !this.orgSubtreeIds(actorUser.orgId).includes(targetOrgId)) {
-      throw new Error(`跨组织账号操作被拒绝（${action}）：目标不在操作者的组织子树内（组织隔离，QA A-03）`)
+    const actorOrgId = actor.orgId ?? (actor.userId ? this.users().get(actor.userId)?.orgId : undefined)
+    if (!actorOrgId || !targetOrgId || !this.orgSubtreeIds(actorOrgId).includes(targetOrgId)) {
+      throw new OrgScopeDeniedError(`跨组织账号操作被拒绝（${action}）：目标不在操作者的组织子树内（组织隔离，QA A-03）`)
     }
   }
 
@@ -1124,7 +1159,6 @@ export class IamService extends Service {
     if (!this.orgs().get(input.orgId)) throw new Error(`组织不存在：${input.orgId}`)
     this.assertManageScope(actor, input.orgId, '创建账号')
     if (input.password !== undefined) this.assertPasswordStrength(input.password)
-    const salt = generateSecret('salt').slice(0, 16)
     const password = input.password ?? generateSecret('init')
     const user = this.users().insert({
       id: newId('usr'),
@@ -1136,8 +1170,8 @@ export class IamService extends Service {
       title: input.title ?? '',
       status: 'pending',
       roleIds: input.roleIds ?? [],
-      passwordSalt: salt,
-      passwordHash: hashPassword(password, salt),
+      passwordSalt: '',
+      passwordHash: hashPasswordScrypt(password),
       bindings: [],
       ...(input.jobNumber !== undefined ? { jobNumber: input.jobNumber } : {}),
     })
@@ -1151,12 +1185,11 @@ export class IamService extends Service {
     if (user.status === 'deactivated') throw new Error('账号已注销，无法重置口令')
     if (password !== undefined) this.assertPasswordStrength(password)
     const next = password ?? generateSecret('init')
-    const salt = generateSecret('salt').slice(0, 16)
-    this.users().update(id, { passwordSalt: salt, passwordHash: hashPassword(next, salt) })
+    this.users().update(id, { passwordSalt: '', passwordHash: hashPasswordScrypt(next) })
     return { user: this.users().get(id)!, initialPassword: next }
   }
 
-  importUsers(items: Array<{ username: string; displayName: string; orgId: string; title?: string; email?: string }>): { created: UserRecord[]; skipped: string[] } {
+  importUsers(items: Array<{ username: string; displayName: string; orgId: string; title?: string; email?: string }>, actor?: UserManageActor): { created: UserRecord[]; skipped: string[] } {
     const created: UserRecord[] = []
     const skipped: string[] = []
     for (const item of items) {
@@ -1164,7 +1197,7 @@ export class IamService extends Service {
         skipped.push(item.username)
         continue
       }
-      created.push(this.createUser(item).user)
+      created.push(this.createUser(item, actor).user)
     }
     return { created, skipped }
   }
@@ -1263,10 +1296,35 @@ export class IamService extends Service {
     return this.users().get(id)!
   }
 
+  /**
+   * 账号清单（N3 组织管理员读面收敛）：orgId 展开为其组织子树过滤；scopeOrgIds（调用方可见
+   * 组织集合，控制台层由 scopedOrgIdsOf 计算）传入时做交集——非平台管理员只看得到管辖子树
+   * 内的账号。两者缺省不过滤（平台管理员/服务内部调用，保持既有全量口径）。
+   */
+  listUsers(input: { orgId?: string; status?: string; q?: string; scopeOrgIds?: string[] } = {}): UserRecord[] {
+    const orgScope = input.orgId ? new Set(this.orgSubtreeIds(input.orgId)) : undefined
+    const allowScope = input.scopeOrgIds ? new Set(input.scopeOrgIds) : undefined
+    const q = input.q?.toLowerCase()
+    return this.users().find((user) => {
+      if (input.status && user.status !== input.status) return false
+      if (orgScope && !orgScope.has(user.orgId)) return false
+      if (allowScope && !allowScope.has(user.orgId)) return false
+      if (q && !`${user.displayName}${user.username}${user.email}`.toLowerCase().includes(q)) return false
+      return true
+    }).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
   verifyPassword(username: string, password: string): UserRecord {
     const user = this.users().findOne((item) => item.username === username)
     if (!user) throw new Error('用户名或密码错误')
-    if (user.passwordHash !== hashPassword(password, user.passwordSalt)) throw new Error('用户名或密码错误')
+    if (!verifyPasswordHash(user, password)) throw new Error('用户名或密码错误')
+    // 透明升级（A-09）：旧格式（裸 sha256）验证通过即重哈希为 scrypt——存量用户无感迁移，
+    // 下一次登录起新格式生效；升级失败不阻断登录（下次再试）。
+    if (!user.passwordHash.startsWith(SCRYPT_PREFIX)) {
+      try {
+        this.users().update(user.id, { passwordSalt: '', passwordHash: hashPasswordScrypt(password) })
+      } catch { /* 升级失败保持旧哈希，验证已通过不阻断 */ }
+    }
     if (user.status === 'frozen') throw new Error(`账号已冻结：${user.frozenReason ?? '联系管理员'}`)
     if (user.status === 'deactivated') throw new Error('账号已注销')
     if (user.status === 'pending') throw new Error('账号待激活，请联系管理员')
@@ -1731,7 +1789,7 @@ export class IamService extends Service {
         }
         remoteOrgToId.set(remoteOrg.remoteId, local.id)
       } else {
-        const record = this.createOrg({ name: remoteOrg.name, parentId: parent, customFields: { remoteId: remoteOrg.remoteId, connectorId: config.id } })
+        const record = this.createOrg({ name: remoteOrg.name, parentId: parent, customFields: { remoteId: remoteOrg.remoteId, connectorId: config.id } }, SYSTEM_ACTOR)
         remoteOrgToId.set(remoteOrg.remoteId, record.id)
         created++
       }
@@ -1757,7 +1815,7 @@ export class IamService extends Service {
           title: remoteUser.title,
           email: remoteUser.email,
           jobNumber: remoteUser.jobNumber,
-        })
+        }, SYSTEM_ACTOR)
         this.users().update(record.id, secondaryOrgId ? { status: 'active', primaryOrgId: orgId, orgId: secondaryOrgId } : { status: 'active' })
         this.linkIdentity(record.id, { provider, providerUserId: remoteUser.remoteId, corpId: config.corpId, displayName: remoteUser.name }, 'connector-sync')
         created++
@@ -1787,7 +1845,7 @@ export class IamService extends Service {
       }
       if (!remoteUser.active) {
         if (local.status === 'active' || local.status === 'pending') {
-          this.freezeUser(local.id, `三方同步：${provider} 通讯录已离职`)
+          this.freezeUser(local.id, `三方同步：${provider} 通讯录已离职`, SYSTEM_ACTOR)
           frozen++
         }
         continue
@@ -1943,8 +2001,47 @@ export interface OrgTreeNode extends OrgRecord {
   children: OrgTreeNode[]
 }
 
+// -- 口令哈希（A-09：scrypt KDF + 常数时间比较） ---------------------------------------------
+
+/** scrypt 存储格式前缀：`scrypt$<N>$<r>$<p>$<saltB64>$<hashB64>`（参数随哈希自描述，可平滑调档）。 */
+const SCRYPT_PREFIX = 'scrypt$'
+/** OWASP 推荐下限档（N=2^14, r=8, p=1），单次派生约 16MiB 内存。 */
+const SCRYPT_N = 16_384
+const SCRYPT_R = 8
+const SCRYPT_P = 1
+const SCRYPT_KEYLEN = 64
+
+/** 新格式口令哈希（scrypt，随机 16 字节盐）。 */
+function hashPasswordScrypt(password: string): string {
+  const salt = randomBytes(16)
+  const hash = scryptSync(password, salt, SCRYPT_KEYLEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P })
+  return `${SCRYPT_PREFIX}${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('base64')}$${hash.toString('base64')}`
+}
+
+/** 旧格式口令哈希（裸 sha256，存量库口径；仅供无感升级校验，不再用于新写入）。 */
 function hashPassword(password: string, salt: string): string {
   return sha256Hex(`${salt}:${password}`)
+}
+
+/**
+ * 口令校验（常数时间比较，timingSafeEqual）：新格式走 scrypt 参数复算；
+ * 旧格式（裸 sha256 hex）按旧算法复算后同精度比较——两条路径都不因首字节差异提前返回。
+ */
+function verifyPasswordHash(record: { passwordHash: string; passwordSalt: string }, password: string): boolean {
+  if (record.passwordHash.startsWith(SCRYPT_PREFIX)) {
+    const [n, r, p, saltB64, hashB64] = record.passwordHash.slice(SCRYPT_PREFIX.length).split('$')
+    const expected = Buffer.from(hashB64 ?? '', 'base64')
+    if (expected.length === 0 || !Number(n) || !Number(r) || !Number(p)) return false
+    try {
+      const actual = scryptSync(password, Buffer.from(saltB64 ?? '', 'base64'), expected.length, { N: Number(n), r: Number(r), p: Number(p) })
+      return timingSafeEqual(expected, actual)
+    } catch {
+      return false
+    }
+  }
+  const expected = Buffer.from(record.passwordHash, 'utf8')
+  const actual = Buffer.from(hashPassword(password, record.passwordSalt), 'utf8')
+  return expected.length === actual.length && timingSafeEqual(expected, actual)
 }
 
 // ---------------------------------------------------------------------------

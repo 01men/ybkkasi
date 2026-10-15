@@ -23,6 +23,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'mcp_service_list',
     description: '列出 MCP 服务（含健康状态、版本、灰度比例）。',
+    permission: 'mcp.service.read',
     parameters: {
       status: { type: 'string', enum: ['draft', 'verifying', 'online', 'gray', 'unhealthy', 'offline'], description: '状态过滤' },
     },
@@ -43,6 +44,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'mcp_deploy',
     description: '部署/更新 MCP 服务（L3：支持灰度比例；dryRun 返回影响面预览）。',
+    permission: 'mcp.service.deploy',
     parameters: {
       serviceId: { type: 'string', required: true, description: '服务 ID' },
       grayPercent: { type: 'number', description: '灰度比例 0-100，缺省 100（全量）' },
@@ -91,6 +93,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'mcp_metrics',
     description: '查看 MCP 服务运营监控：调用量、成功率、P95 延迟、Token 消耗、按调用方/工具统计。',
+    permission: 'mcp.service.read',
     parameters: {
       serviceId: { type: 'string', required: true, description: '服务 ID' },
     },
@@ -120,6 +123,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'mcp_health_check',
     description: '对 MCP 服务执行一次健康探测（熔断状态下可用于恢复确认）。',
+    permission: 'mcp.service.deploy',
     parameters: {
       serviceId: { type: 'string', required: true, description: '服务 ID' },
     },

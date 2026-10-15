@@ -245,6 +245,8 @@ export class ModelGatewayService extends Service {
    * 降级链调用（1-2）：主 → 备1 → 备2 逐级降级，每步按 stepTimeoutMs（默认 8s）超时；
    * HTTP 5xx / 超时 / 网络错误触发降级，每次降级 emit modelgw.degraded（面板 SSE 提示条 + 审计）。
    * 链尾 manual=true：全链失败返回 escalated=true（转人工）而非裸错误。
+   * 预算熔断（1-4 / BUG-2510-B1）：每次真实调用前复检（同单渠道路径口径），block 态 fail-closed
+   * 直接抛「预算熔断」错误终止整链（不进降级、不调上游、不入账）。
    * 内容安全拦截：外部内容安全网关未接入（诚实缺位），接入后在 invokeOnce 返回路径上挂钩。
    */
   async invokeWithFallback(input: Omit<ModelInvokeInput, 'model'> & { group: string }): Promise<ModelInvokeResult | { ok: false; escalated: true; reason: string; degradations: Array<{ from: string; reason: string; at: string }> }> {
@@ -281,6 +283,17 @@ export class ModelGatewayService extends Service {
       } catch (error) {
         reject(error instanceof Error ? error.message : String(error))
         continue
+      }
+      // 预算熔断（1-4 / BUG-2510-B1）：每次真实调用前与单渠道路径（invoke）同口径复检——
+      // 链内逐渠道计量入账会推进用量，降级前复检堵住 block 态经备用渠道继续调通上游；
+      // 按当前渠道 slug 评估（对被调模型的命中语义与单渠道路径完全一致，R3 通配/R10 主体不受影响），
+      // 熔断错误不进降级（reject）而直接终止整链——错误文案与信封和单渠道路径一致
+      try {
+        this.enforceBudget({ ...input, model: slug })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.recordTelemetry({ model: slug, ok: false, latencyMs: 0, outputTokens: 0, degraded: index > 0, error: `预算熔断：${message}` })
+        throw error
       }
       try {
         const result = await this.invokeTracked(model, input, stepTimeoutMs, index > 0)
@@ -409,13 +422,14 @@ export class ModelGatewayService extends Service {
 
   /**
    * org 维度预算进度（面板 cost chip / usage summary 的 budget 字段数据源）；无预算=null。
-   * 只取「无模型范围（!modelSlug）且无主体范围（!subject）」的 org 级预算：
-   * modelSlug='*' 是全模型通配预算而非 org 进度口径，subject 预算是主体维度——
-   * 两者都不进 org 级进度（R3/R10 口径注释）。
+   * 只取「模型范围不限且无主体范围」的 org 级预算：模型范围不限 = 未声明 modelSlug，
+   * 或 modelSlug='*'（R3 通配=命中任意模型，即全模型口径，视同 org 进度计入——
+   * 此前 '*' 被 !modelSlug 一并排除，只配通配预算的组织在摘要里 budget 恒 null 与熔断面口径分裂）；
+   * 字面量模型级预算是单模型口径、subject 预算是主体维度（R10）——两者不进 org 级进度。
    */
   budgetStatusFor(orgId: string): { orgId: string; daily: BudgetWindowStatus | null; monthly: BudgetWindowStatus | null } | null {
     const budget = this.budgets().all()
-      .filter((item) => item.enabled && !item.modelSlug && !item.subject && (item.orgId ?? '') === (orgId || ''))
+      .filter((item) => item.enabled && !item.subject && (!item.modelSlug || item.modelSlug === '*') && (item.orgId ?? '') === (orgId || ''))
       .sort((a, b) => (a.orgId ? 0 : 1) - (b.orgId ? 0 : 1))[0] // org 专属优先于平台级
     if (!budget) return null
     return { orgId: budget.orgId ?? '（平台级）', ...this.budgetStatus(budget) }

@@ -15,7 +15,7 @@ import {
   PlatformEvents, generateSecret, newId, sha256Hex,
   type Collection, type RecordBase,
 } from '../../platform-core/src/index.ts'
-import { PermissionCatalog } from '../../plugin-iam/src/index.ts'
+import { PermissionCatalog, SYSTEM_ACTOR } from '../../plugin-iam/src/index.ts'
 import * as authnTools from './tools.ts'
 import { OidcService } from './oidc.ts'
 import { EntryTicketService } from './entry-ticket.ts'
@@ -479,8 +479,8 @@ export class AuthnService extends Service {
       displayName: ticket.profile['name'] ?? username,
       orgId: defaultOrg.id,
       email: ticket.profile['email'],
-    })
-    this.ctx.iam.activateUser(user.id)
+    }, SYSTEM_ACTOR)
+    this.ctx.iam.activateUser(user.id, SYSTEM_ACTOR)
     this.ctx.iam.linkIdentity(user.id, {
       provider: ticket.provider as 'dingtalk',
       providerUserId: ticket.profile['providerUserId'] ?? '',

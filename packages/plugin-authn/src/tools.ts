@@ -49,6 +49,7 @@ export function apply(ctx: Context) {
   t.register(defineTool({
     name: 'authn_token_list',
     description: '查询主体令牌列表（含吊销状态）。',
+    permission: 'authn.principal.read',
     parameters: {
       principalId: { type: 'string', description: '按主体过滤' },
       activeOnly: { type: 'boolean', description: '仅未吊销' },

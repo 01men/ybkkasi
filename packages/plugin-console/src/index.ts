@@ -85,6 +85,19 @@ export const PUBLIC_PATHS = new Set([
  *  执行中枢 webhook 触发器：路径即凭证（未登记/停用路径一律 404，fail-closed，见 plugin-exec-hub）。 */
 const PUBLIC_PATH_PREFIXES = ['/api/authn/oidc/auth-requests/', '/api/exec/webhook/']
 
+/** /docs 公开白名单（默认拒绝，导出供 selftest 比对——清单变动即红）：
+ *  仅收录面向外部读者的接入指引与对外口径设计文档（「本文档随服务发布，可直接访问」系列）。
+ *  目录内其余文档（部署 runbook、qa-report/handoff/dev-plan/contract/重构基线等内部协作面）
+ *  一律 404，改走仓库私有分发；扩编须经评审改此清单，宁紧勿松。 */
+export const PUBLIC_DOCS = new Set([
+  'app-onboarding.md',
+  'agent-onboarding.md',
+  'app-sso-integration.md',
+  'app-org-sync.md',
+  'app-rbac-guide.md',
+  'ecosystem-design-v1.2.md',
+])
+
 /** 从请求头推导对外基址（钉钉等真实 IdP 的 redirect_uri 需绝对 URL；反代场景优先 x-forwarded-*）。 */
 function requestOrigin(exchange: HttpExchange): string | undefined {
   const header = (name: string): string | undefined => {
@@ -239,23 +252,44 @@ export function apply(ctx: Context) {
     http.serveStatic('/', publicDir, '/index.html')
   }
 
-  // -- /docs 静态发布：仓库/安装包内 docs 目录（应用接入指南等文档随服务可直接访问） ----
+  // -- /docs 文档发布（默认拒绝白名单，见 PUBLIC_DOCS）：仅白名单内文档随服务可直接访问 ----
   // 源码检出与 dsh plugin add 两种形态下本文件均位于 <root>/packages/plugin-console/src/，
-  // docs 目录恒为 <root>/docs。公开无鉴权（与控制台 SPA 同级；内容均为已公开的仓库文档）。
+  // docs 目录恒为 <root>/docs。本路由面为纯匿名静态服务（鉴权中间件只覆盖 /api/*），
+  // 不存在按登录身份放行的上下文——白名单外一律 404（不用 403，避免存在性探测），
+  // 内部文档改走仓库私有分发。白名单收在代码常量而非 docs/ 旁 manifest：manifest 本身就在
+  // 伺服目录内，可读即反向泄露内部文档清单；常量则随代码评审走查、diff 可审计。
   const docsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs')
   if (existsSync(docsDir)) {
-    http.serveStatic('/docs', docsDir)
+    // 拦截全部 /docs/* 子路径（先于路由与静态分发）：仅放行白名单内的单文件名。
+    // 白名单键即文件名字面量（不含路径分隔符），故 %2F/.. 等任何越界或畸形编码形态
+    // 都落不进集合，天然无穿越面（强度不低于原按段解码+拒绝越界段的目录伺服实现）。
+    http.use((exchange) => {
+      if (!exchange.path.startsWith('/docs/')) return
+      let name = ''
+      try {
+        name = decodeURIComponent(exchange.path.slice('/docs/'.length))
+      } catch { /* 畸形编码按白名单外处理 */ }
+      if (!PUBLIC_DOCS.has(name)) {
+        exchange.fail(404, 'NOT_FOUND', '文档不存在')
+        return true
+      }
+      exchange.file(join(docsDir, name))
+      return true
+    })
     http.register('GET', '/docs', (exchange) => {
       const escapeHtml = (text: string) => text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch] ?? ch)
-      const files = readdirSync(docsDir).filter((name) => name.endsWith('.md')).sort()
+      const files = readdirSync(docsDir).filter((name) => PUBLIC_DOCS.has(name)).sort()
       const items = files.map((name) => {
-      const hint = name === 'app-sso-integration.md' ? '（应用统一身份接入指南）'
-        : name === 'app-org-sync.md' ? '（应用组织架构同步指南）'
-        : name === 'app-rbac-guide.md' ? '（应用内权限（RBAC）构造指南）' : ''
+        const hint = name === 'app-onboarding.md' ? '（AI 应用接入总览）'
+          : name === 'agent-onboarding.md' ? '（Agent 接入指引）'
+          : name === 'app-sso-integration.md' ? '（应用统一身份接入指南）'
+          : name === 'app-org-sync.md' ? '（应用组织架构同步指南）'
+          : name === 'app-rbac-guide.md' ? '（应用内权限（RBAC）构造指南）'
+          : name === 'ecosystem-design-v1.2.md' ? '（平台生态设计 v1.2）' : ''
         return `<li><a href="/docs/${encodeURIComponent(name)}">${escapeHtml(name)}</a>${hint}</li>`
       }).join('')
       exchange.res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      exchange.res.end(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>元冰可 · 平台文档</title><style>body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#1f2328}h1{font-size:20px}li{margin:8px 0;font-size:14px}a{color:#2563eb}</style></head><body><h1>元冰可 · 平台文档</h1><p>以下文档随本服务发布，可直接打开阅读：</p><ul>${items}</ul></body></html>`)
+      exchange.res.end(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>元冰可 · 平台文档</title><style>body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#1f2328}h1{font-size:20px}li{margin:8px 0;font-size:14px}a{color:#2563eb}</style></head><body><h1>元冰可 · 平台文档</h1><p>以下对外文档随本服务发布，可直接打开阅读：</p><ul>${items}</ul></body></html>`)
     })
   }
 
