@@ -6,6 +6,7 @@ import { openCmdk } from './cmdk.js'
 import { replayPlatformTheme, PLATFORM_KEY } from './platform.js'
 import { resolveLanding, isBareLanding, LANDING_PREF_KEY } from './landing.js'
 import { consumeNextSources, exitWithNext } from './next-redirect.js'
+import rqI18n from './i18n.js'
 
 // 平台主题（WP-05/B3）：启动即回放记忆的平台（免闪默认色）。写入方为平台身份下发方
 // （applyPlatformTheme——卡片包域回流后的工作台校准、或部署方预置 heng_ops_platform 键）。
@@ -233,7 +234,7 @@ function renderShell(page, params, builder) {
     location.hash = '#/login'
     navigate()
   }
-  $('#btn-refresh').onclick = () => { navigate(); toast('数据已刷新') }
+  $('#btn-refresh').onclick = () => { navigate(); toast(rqI18n.t('数据已刷新')) }
   $('#conn-indicator')?.addEventListener('click', () => { location.hash = '#/connections' })
   $('#cmdk-trigger').onclick = () => openCmdk()
   $('#avatar').onclick = () => openCmdk()
@@ -278,7 +279,7 @@ async function refreshBadges() {
     }
     const host = $('#alert-host')
     if (host && overview.alerts?.unread > 0) {
-      host.innerHTML = `<button class="icon-btn" id="btn-alerts" title="${overview.alerts.unread} 条未读告警">${icon('bell')}<span class="dot"></span></button>`
+      host.innerHTML = `<button class="icon-btn" id="btn-alerts" title="${esc(rqI18n.t('{n} 条未读告警', { n: overview.alerts.unread }))}">${icon('bell')}<span class="dot"></span></button>`
       host.querySelector('#btn-alerts').onclick = () => { location.hash = '#/audit?tab=alerts' }
     } else if (host) {
       host.innerHTML = `<button class="icon-btn" title="暂无未读告警">${icon('bell')}</button>`

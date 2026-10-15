@@ -13,6 +13,7 @@ import type {
   ResourceAdapter,
 } from '../contract.ts'
 import type { IdentityResolution, ResourceGrantSpec } from '../contract.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 
 const UNSUPPORTED = 'AI 应用机器 API 适配一期未开放（具备机器 API 的应用请经 MCP/Connector 显式接入）'
 
@@ -21,11 +22,11 @@ export function createAppAdapter(_ctx: unknown): ResourceAdapter {
     kind: 'app',
 
     async probeGrant(_spec: ResourceGrantSpec, _resolution: IdentityResolution): Promise<AdapterProbeResult> {
-      return { ok: false, message: UNSUPPORTED }
+      return { ok: false, message: t(UNSUPPORTED) }
     },
 
     async invoke(_input: AdapterInvokeInput): Promise<AdapterInvokeResult> {
-      return { ok: false, message: UNSUPPORTED, gatewayRef: { outcome: 'denied' } }
+      return { ok: false, message: t(UNSUPPORTED), gatewayRef: { outcome: 'denied' } }
     },
   }
 }

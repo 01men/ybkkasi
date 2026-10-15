@@ -7,6 +7,7 @@
  *   - 全部为纯函数，空值一律回退空串（契约约定：不返回 null / 缺省字段）。
  */
 import type { ResourceEntity } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 
 // ---- 门户字段契约（api.md §4） ------------------------------------------------
 
@@ -136,17 +137,20 @@ export function mapApps(entities: ResourceEntity[], mctx: PortalMappingContext):
   return entities
     .filter((app) => app.status === 'online')
     .filter((app) => !mctx.hideConfidential || app.attrs['dataClass'] !== 'confidential')
-    .map((app) => ({
-      id: app.id,
-      tag: s(tags(app.attrs['channels'])[0]) || APP_TYPE_LABELS[s(app.attrs['appType'])] || s(app.attrs['appType']),
-      name: app.name,
-      desc: s(app.attrs['description']),
-      dept: mctx.deptName(app.orgId),
-      version: s(app.attrs['publishVersion']),
-      accent: accentFor(app.id),
-      link: s(app.attrs['url']),
-      launchDate: lastOnlineDate(app),
-    }))
+    .map((app) => {
+      const typeLabel = APP_TYPE_LABELS[s(app.attrs['appType'])]
+      return {
+        id: app.id,
+        tag: s(tags(app.attrs['channels'])[0]) || (typeLabel !== undefined ? t(typeLabel) : '') || s(app.attrs['appType']),
+        name: app.name,
+        desc: s(app.attrs['description']),
+        dept: mctx.deptName(app.orgId),
+        version: s(app.attrs['publishVersion']),
+        accent: accentFor(app.id),
+        link: s(app.attrs['url']),
+        launchDate: lastOnlineDate(app),
+      }
+    })
 }
 
 /** 已上线 Agent → 门户 /employees（数字员工）。 */
@@ -195,10 +199,10 @@ export function mapSkills(skills: PortalSkillSource[], mctx: PortalMappingContex
 /** 首页统计 4 卡（契约：value 必须为字符串，门户按数组顺序渲染 4 个指标卡）。 */
 export function mapStats(counts: { apps: number; employees: number; skills: number; mcp: number }): PortalStat[] {
   return [
-    { value: String(counts.apps), unit: '+', label: '已上线AI应用' },
-    { value: String(counts.employees), unit: '+', label: '数字员工' },
-    { value: String(counts.skills), unit: '+', label: '上架技能' },
-    { value: String(counts.mcp), unit: '+', label: '在线MCP服务' },
+    { value: String(counts.apps), unit: '+', label: t('已上线AI应用') },
+    { value: String(counts.employees), unit: '+', label: t('数字员工') },
+    { value: String(counts.skills), unit: '+', label: t('上架技能') },
+    { value: String(counts.mcp), unit: '+', label: t('在线MCP服务') },
   ]
 }
 

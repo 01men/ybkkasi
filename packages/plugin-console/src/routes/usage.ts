@@ -6,6 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConsoleRouteDeps } from './deps.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import { scopedOrgFilterOf } from './iam.ts'
 
 export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
@@ -20,7 +21,7 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
       const text = String(value)
       return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
     }
-    const header = '维度,维度值,事件数,tokens,charge_cents(零价快照恒0),cost_cents(内部成本参考),nonbillable事件数'
+    const header = t('维度,维度值,事件数,tokens,charge_cents(零价快照恒0),cost_cents(内部成本参考),nonbillable事件数')
     const lines = [header]
     const pushRows = (name: string, rows: Array<{ dimension: string; events: number; tokens: number; charge_cents: number; cost_cents: number; nonbillable_events: number }>) => {
       for (const row of rows) lines.push([name, esc(row.dimension), row.events, row.tokens, row.charge_cents, row.cost_cents, row.nonbillable_events].join(','))
@@ -83,13 +84,13 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
 
     // Top 资产：资源键沿用 usage 计量 resource（mcp:<slug>/model:<slug>/app:<slug>/skill:<id>/nas:<id>/agent:<id>）
     const RESOURCE_KIND_LABELS: Record<string, string> = {
-      mcp: 'MCP 服务', model: '模型路由', skill: 'Skill', nas: 'NAS 存储', app: 'AI 应用', agent: 'Agent', kb: '知识包', panel: '部门面板', connector: '连接器',
+      mcp: t('MCP 服务'), model: t('模型路由'), skill: 'Skill', nas: t('NAS 存储'), app: t('AI 应用'), agent: 'Agent', kb: t('知识包'), panel: t('部门面板'), connector: t('连接器'),
     }
     const labelOfResource = (resource: string) => {
       const idx = resource.indexOf(':')
       const kind = idx >= 0 ? resource.slice(0, idx) : ''
       const key = idx >= 0 ? resource.slice(idx + 1) : resource
-      const fallback = `${RESOURCE_KIND_LABELS[kind] ?? '资产'} ${key}`
+      const fallback = t('{label} {key}', { label: RESOURCE_KIND_LABELS[kind] ?? t('资产'), key })
       if (kind === 'mcp') return ctx.mcpRegistry.services().findOne((item) => item.slug === key)?.name ?? fallback
       if (kind === 'model') return ctx.modelGateway.models().findOne((item) => item.slug === key)?.displayName ?? fallback
       if (kind === 'skill') return ctx.skillHub.skills().get(key)?.name ?? fallback
@@ -181,7 +182,7 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
       status: input.status ?? 'online',
       ...(input.dataClassLimit !== undefined ? { dataClassLimit: input.dataClassLimit } : {}),
     })
-    changeLog(exchange, 'modelgw.model.upsert', 'model', model.id, model.slug, `分级上限=${model.dataClassLimit ?? 'internal'}`)
+    changeLog(exchange, 'modelgw.model.upsert', 'model', model.id, model.slug, t('分级上限={limit}', { limit: model.dataClassLimit ?? 'internal' }))
     return model
   })
 
@@ -189,7 +190,7 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   guarded('DELETE', '/api/modelgw/models/:id', 'modelgw.admin', (exchange) => {
     const id = exchange.params['id']!
     const model = ctx.modelGateway.models().get(id)
-    if (!model) throw new Error(`模型不存在：${id}`)
+    if (!model) throw new Error(t('模型不存在：{id}', { id }))
     ctx.modelGateway.models().remove(id)
     changeLog(exchange, 'modelgw.delete', 'model', id, model.slug)
     return { deleted: true }
@@ -201,7 +202,7 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
     // 默认用量归口组织：调用者所属组织（人）或凭证组织（机器）
     const orgId = input.orgId
       ?? (info.kind === 'human' && info.userId ? ctx.iam.users().get(info.userId)?.orgId : undefined)
-    if (!orgId) throw new Error('未指定用量归口组织（orgId），且调用者无可归属组织')
+    if (!orgId) throw new Error(t('未指定用量归口组织（orgId），且调用者无可归属组织'))
     // 计量主体：human=user:<id>；machine 凭证关联 Agent 时=agent:<refId>（usage.recorded 回灌 Agent 台账的依据），其余机器=app:<principalId>
     const subject = info.kind === 'human'
       ? `user:${info.userId ?? info.principalId}`
@@ -238,9 +239,9 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   guarded('DELETE', '/api/approvals/:id', 'approval.decide', (exchange) => {
     const id = exchange.params['id']!
     const record = ctx.audit.approvals().get(id)
-    if (!record) throw new Error(`审批单不存在：${id}`)
+    if (!record) throw new Error(t('审批单不存在：{id}', { id }))
     ctx.audit.deleteApproval(id)
-    changeLog(exchange, 'approval.delete', 'approval', id, record.title, `清理驳回审批单（kind=${record.kind}）`)
+    changeLog(exchange, 'approval.delete', 'approval', id, record.title, t('清理驳回审批单（kind={kind}）', { kind: record.kind }))
     return { deleted: true }
   })
 

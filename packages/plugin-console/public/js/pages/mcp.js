@@ -1,5 +1,6 @@
 /** MCP 服务：卡片墙 + 详情抽屉（监控图表/工具/版本/权限组）+ 部署向导。 */
 import { api, session } from '../api.js'
+import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import {
   h, $, $$, esc, toast, openDrawer, openModal, confirmDialog,
@@ -64,7 +65,7 @@ export async function renderMcp(content, params, ctx) {
             <div class="res-name">${esc(svc.name)} ${statusBadge(svc.status)}${svc.bridgeFrom ? `<span class="badge badge-warning" title="M0 数据面桥接（open-connector）：仅服务级粗粒度权限组，无 action 级授权 / 连接级绑定 / oct_ 令牌镜像——生产纳管请走 #/connectors 原生链路">桥接过渡</span>` : ''}</div>
             <div class="res-slug">${esc(svc.endpoint || svc.slug)}</div>
           </div>
-          <span class="traffic ${trafficClass(health)}" title="健康状态：${health}"></span>
+          <span class="traffic ${trafficClass(health)}" title="${esc(rqI18n.t('健康状态：{status}', { status: health }))}"></span>
         </div>
         <div class="res-desc">${esc(svc.description || '暂无描述')}</div>
         ${svc.status === 'gray' ? `
@@ -73,9 +74,9 @@ export async function renderMcp(content, params, ctx) {
             <div class="progress"><div class="progress-bar" style="width:${svc.grayPercent}%"></div></div>
           </div>` : ''}
         <div class="res-foot">
-          <span class="metric">${icon('box', 13)}${svc.tools.length} 工具</span>
+          <span class="metric">${icon('box', 13)}${esc(rqI18n.t('{n} 工具', { n: svc.tools.length }))}</span>
           <span class="metric">${icon('gitBranch', 13)}v${esc(svc.currentVersion)}</span>
-          <span class="metric">${icon('activity', 13)}${healthLabel(health)}${svc.health?.latencyMs ? ` ${svc.health.latencyMs}ms` : ''}</span>
+          <span class="metric">${icon('activity', 13)}${esc(rqI18n.t(healthLabel(health)))}${svc.health?.latencyMs ? ` ${svc.health.latencyMs}ms` : ''}</span>
           <span style="margin-left:auto">${svc.mode === 'external' ? '<span class="badge badge-muted no-dot">外部注册</span>' : '<span class="badge badge-brand no-dot">平台托管</span>'}</span>
         </div>
       </div>`)
@@ -102,7 +103,7 @@ async function openServiceDetail(id, ctx) {
 
   const drawer = openDrawer({
     title: svcData.name,
-    sub: `${svcData.endpoint} · ${svcData.mode === 'external' ? '外部注册' : '平台托管'} · v${svcData.currentVersion}`,
+    sub: `${svcData.endpoint} · ${svcData.mode === 'external' ? rqI18n.t('外部注册') : rqI18n.t('平台托管')} · v${svcData.currentVersion}`,
     wide: true,
     body: `
       <div class="flex mb-20" style="gap:14px">
@@ -126,7 +127,7 @@ async function openServiceDetail(id, ctx) {
 
       <div class="tabs" id="svc-tabs">
         <div class="tab active" data-tab="monitor">监控</div>
-        <div class="tab" data-tab="tools">工具 (${svcData.tools.length})</div>
+        <div class="tab" data-tab="tools">${esc(rqI18n.t('工具 ({n})', { n: svcData.tools.length }))}</div>
         <div class="tab" data-tab="versions">版本</div>
         <div class="tab" data-tab="calls">调用明细</div>
         <div class="tab" data-tab="grants">授权主体</div>
@@ -165,7 +166,7 @@ async function openServiceDetail(id, ctx) {
             <div class="flex" style="padding:6px 0;border-bottom:1px solid var(--border)">
               <span class="badge ${c.callerType === 'agent' ? 'badge-purple' : 'badge-brand'} no-dot">${c.callerType === 'agent' ? 'Agent' : '用户'}</span>
               <span class="fs-13 grow">${esc(c.callerName)}</span>
-              <span class="col-num">${fmtNum(c.calls)} 次</span>
+              <span class="col-num">${esc(rqI18n.t('{n} 次', { n: fmtNum(c.calls) }))}</span>
             </div>`).join('') || '<span class="text-4 fs-12">暂无调用</span>'}
         </div>`
     }
@@ -200,11 +201,11 @@ async function openServiceDetail(id, ctx) {
         </div>`
       tabBody.querySelectorAll('[data-rollback]').forEach((btn) => {
         btn.onclick = async () => {
-          const result = await confirmDialog({ title: '版本回滚', message: `将 <b>${esc(svcData.name)}</b> 回滚到 <b>v${esc(btn.dataset.rollback)}</b>，调用方将在下一次请求生效。`, confirmText: '回滚' })
+          const result = await confirmDialog({ title: '版本回滚', message: rqI18n.t('将 <b>{name}</b> 回滚到 <b>v{version}</b>，调用方将在下一次请求生效。', { name: esc(svcData.name), version: esc(btn.dataset.rollback) }), confirmText: '回滚' })
           if (!result) return
           try {
             await api.post(`/api/mcp/services/${svcData.id}/rollback`, { targetVersion: btn.dataset.rollback })
-            toast('已回滚'); drawer.close(); ctx.rerender()
+            toast(rqI18n.t('已回滚')); drawer.close(); ctx.rerender()
           } catch (error) { toast(error.message, 'error') }
         }
       })
@@ -234,7 +235,7 @@ async function openServiceDetail(id, ctx) {
             <span style="font-weight:600">${icon('shield', 14)} ${esc(g.name)}</span>
             <span class="fs-12 text-3">${esc(g.description || '')}</span>
           </div>
-          <div class="fs-12 text-3 mb-8">工具策略：${policyLabel(g.policies[svcData.id])}</div>
+          <div class="fs-12 text-3 mb-8">${esc(rqI18n.t('工具策略：{policy}', { policy: policyLabel(g.policies[svcData.id]) }))}</div>
           <div class="flex" style="flex-wrap:wrap;gap:6px">
             ${g.subjects.map((s) => `<span class="badge ${subjectClass(s.type)} no-dot">${esc(s.name ?? s.id)}</span>`).join('')}
           </div>
@@ -255,7 +256,7 @@ async function openServiceDetail(id, ctx) {
     btn.classList.add('btn-loading')
     try {
       const result = await api.post(`/api/mcp/services/${svcData.id}/health`)
-      toast(`探测完成：${result.status}（${result.latencyMs}ms）`)
+      toast(rqI18n.t('探测完成：{status}（{ms}ms）', { status: result.status, ms: result.latencyMs }))
       drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') } finally { btn.classList.remove('btn-loading') }
   }
@@ -265,7 +266,7 @@ async function openServiceDetail(id, ctx) {
     btn.classList.add('btn-loading')
     try {
       const updated = await api.post(`/api/mcp/services/${svcData.id}/sync-tools`)
-      toast(`工具清单已同步：${updated.tools.length} 个工具`)
+      toast(rqI18n.t('工具清单已同步：{n} 个工具', { n: updated.tools.length }))
       drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') } finally { btn.classList.remove('btn-loading') }
   }
@@ -275,12 +276,12 @@ async function openServiceDetail(id, ctx) {
   if (offlineBtn) offlineBtn.onclick = async () => {
     const result = await confirmDialog({
       title: '下线 MCP 服务（L4）', requireReason: true, danger: true, confirmText: '提交审批',
-      message: `下线 <b>${esc(svcData.name)}</b> 是高危操作，将生成审批单，审批通过后自动执行。所有依赖该服务的 Agent 调用会立即失败。`,
+      message: rqI18n.t('下线 <b>{name}</b> 是高危操作，将生成审批单，审批通过后自动执行。所有依赖该服务的 Agent 调用会立即失败。', { name: esc(svcData.name) }),
     })
     if (!result) return
     try {
       const response = await api.post(`/api/mcp/services/${svcData.id}/offline`, { reason: result.reason })
-      toast('已创建 L4 审批单，等待审批')
+      toast(rqI18n.t('已创建 L4 审批单，等待审批'))
       drawer.close(); ctx.rerender()
       void response
     } catch (error) { toast(error.message, 'error') }
@@ -291,27 +292,27 @@ async function openServiceDetail(id, ctx) {
     btn.classList.add('btn-loading')
     try {
       await api.post(`/api/mcp/services/${svcData.id}/verify`)
-      toast('测试环境验证通过'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('测试环境验证通过')); drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') } finally { btn.classList.remove('btn-loading') }
   }
 
   const deleteBtn = drawer.el.querySelector('#svc-delete')
   if (deleteBtn) deleteBtn.onclick = async () => {
     const result = await confirmDialog({
-      title: `删除 MCP 服务 · ${svcData.name}`, requireReason: true, danger: true, confirmText: '确认删除',
-      message: `将永久删除 <b>${esc(svcData.name)}</b> 的服务登记（含工具清单与探活状态），操作不可恢复；调用明细与审计数据保留。`,
+      title: rqI18n.t('删除 MCP 服务 · {name}', { name: svcData.name }), requireReason: true, danger: true, confirmText: '确认删除',
+      message: rqI18n.t('将永久删除 <b>{name}</b> 的服务登记（含工具清单与探活状态），操作不可恢复；调用明细与审计数据保留。', { name: esc(svcData.name) }),
     })
     if (!result) return
     try {
       await api.delete(`/api/mcp/services/${svcData.id}`)
-      toast('已删除'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('已删除')); drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') }
   }
 }
 
 function openGrayDialog(svc, drawer, ctx) {
   const modal = openModal({
-    title: `灰度发布 · ${svc.name}`,
+    title: rqI18n.t('灰度发布 · {name}', { name: svc.name }),
     body: `
       <div class="muted-box mb-14" style="display:flex;gap:8px">
         ${icon('info', 15)}<span>灰度按调用方标签路由：未命中灰度比例的调用将继续走 <b>v${esc(svc.versions.find((v) => v.status === 'previous')?.version ?? svc.currentVersion)}</b> 稳定版本。</span>
@@ -327,7 +328,7 @@ function openGrayDialog(svc, drawer, ctx) {
     try {
       const result = await api.post(`/api/mcp/services/${svc.id}/deploy`, { dryRun: true })
       const impact = result.impact?.length
-        ? result.impact.map((i) => `<li>${esc(i.name)}（${typeLabel(i.type)}）</li>`).join('')
+        ? result.impact.map((i) => `<li>${esc(rqI18n.t('{name}（{type}）', { name: i.name, type: rqI18n.t(typeLabel(i.type)) }))}</li>`).join('')
         : '<li>无直接依赖方，可安全发布</li>'
       modal.close()
       openModal({ title: '影响面预演（dry-run）', body: `<div class="form-hint">以下资源可能受到本次发布影响：</div><ul style="padding-left:18px;line-height:2">${impact}</ul><div class="muted-box mt-14">dry-run 未执行任何变更。</div>`, foot: '<button class="btn btn-primary" data-ok>知道了</button>' })
@@ -341,7 +342,7 @@ function openGrayDialog(svc, drawer, ctx) {
         grayPercent: Number(body.querySelector('#gray-range').value),
         version: data.version, changelog: data.changelog,
       })
-      toast(`已发布 v${data.version}`); modal.close(); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('已发布 v{version}', { version: data.version })); modal.close(); drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') }
   }
 }
@@ -486,17 +487,17 @@ tools: []           # 部署后在「工具」页登记`
   prevBtn.onclick = () => { if (step > 1) { collect(); step--; renderStep() } }
   nextBtn.onclick = async () => {
     if (step === 1) {
-      if (!state.source) return toast('请选择接入来源', 'error')
+      if (!state.source) return toast(rqI18n.t('请选择接入来源'), 'error')
       step = 2; renderStep(); return
     }
     if (step === 2) {
       collect()
       if (state.source === 'import') {
-        if (!state.config?.trim()) return toast('请粘贴 MCP 配置 JSON', 'error')
-        try { JSON.parse(state.config) } catch { return toast('配置不是合法 JSON，请检查后重试', 'error') }
+        if (!state.config?.trim()) return toast(rqI18n.t('请粘贴 MCP 配置 JSON'), 'error')
+        try { JSON.parse(state.config) } catch { return toast(rqI18n.t('配置不是合法 JSON，请检查后重试'), 'error') }
         step = 3; renderStep(); return
       }
-      if (!state.name) return toast('请填写服务名称', 'error')
+      if (!state.name) return toast(rqI18n.t('请填写服务名称'), 'error')
       step = 3; renderStep(); return
     }
     collect()
@@ -505,9 +506,9 @@ tools: []           # 部署后在「工具」页登记`
       if (state.source === 'import') {
         const result = await api.post('/api/mcp/import', { config: state.config })
         const failures = result.results.filter((item) => !item.ok)
-        if (result.imported > 0) toast(`已导入 ${result.imported} 个服务（工具已自动发现并上线）`)
+        if (result.imported > 0) toast(rqI18n.t('已导入 {n} 个服务（工具已自动发现并上线）', { n: result.imported }))
         if (failures.length) {
-          toast(`未导入：${failures.map((item) => `${item.name}（${item.error}）`).join('；')}`.slice(0, 160), 'error')
+          toast(rqI18n.t('未导入：{list}', { list: failures.map((item) => rqI18n.t('{name}（{error}）', { name: item.name, error: item.error })).join('；') }).slice(0, 160), 'error')
           if (result.imported === 0) return
         }
         modal.close(); ctx.rerender()
@@ -519,7 +520,7 @@ tools: []           # 部署后在「工具」页登记`
         transport: state.transport || 'http',
         mode: state.source === 'endpoint' ? 'external' : 'hosted',
       })
-      toast('服务已创建（草稿），完成验证后即可发布')
+      toast(rqI18n.t('服务已创建（草稿），完成验证后即可发布'))
       modal.close(); ctx.rerender()
     } catch (error) {
       toast(error.message, 'error')
@@ -586,7 +587,7 @@ async function openPermGroups(ctx) {
         const result = await confirmDialog({ title: '删除权限组', message: '删除后相关主体的访问授权立即失效。', danger: true })
         if (!result) return
         await api.delete(`/api/mcp/perm-groups/${btn.dataset.del}`)
-        toast('已删除'); drawer.close(); ctx.rerender()
+        toast(rqI18n.t('已删除')); drawer.close(); ctx.rerender()
       }
     })
   }
@@ -640,7 +641,7 @@ async function openPermGroups(ctx) {
         })
         try {
           await api.post('/api/mcp/perm-groups', { name, description: collectForm(modal.body).description, policies, subjects })
-          toast('权限组已创建'); modal.close(); drawer.close(); ctx.rerender()
+          toast(rqI18n.t('权限组已创建')); modal.close(); drawer.close(); ctx.rerender()
         } catch (error) { toast(error.message, 'error') }
       }
     })
@@ -649,7 +650,7 @@ async function openPermGroups(ctx) {
 
 function openTryInvoke(svc, toolName, ctx) {
   const modal = openModal({
-    title: `试调用 · ${toolName}`,
+    title: rqI18n.t('试调用 · {name}', { name: toolName }),
     body: `
       <div class="muted-box mb-14">通过统一网关调用（鉴权 / 限流 / 审计 / 指标全部生效）。参数以 JSON 输入。</div>
       ${field('参数（JSON）', textareaField('args', { value: '{\n  "query": "演示参数"\n}', rows: 5 }))}`,
@@ -665,7 +666,7 @@ function openTryInvoke(svc, toolName, ctx) {
       const result = await api.post('/api/mcp/invoke', { serviceId: svc.id, tool: toolName, args })
       modal.close()
       openModal({
-        title: result.ok ? '调用成功' : `调用失败（${result.status}）`,
+        title: result.ok ? '调用成功' : rqI18n.t('调用失败（{status}）', { status: result.status }),
         body: `<div class="code-block">${esc(JSON.stringify({ status: result.status, latencyMs: result.latencyMs, version: result.version, result: result.result ?? result.error }, null, 2))}</div>`,
         foot: '<button class="btn btn-primary" data-ok>关闭</button>',
       })
@@ -708,8 +709,8 @@ function versionLabel(status) {
   return { current: '当前版本', previous: '历史版本', 'rolled-back': '已回滚' }[status] ?? status
 }
 function policyLabel(policy) {
-  const tools = policy.allowedTools === '*' ? '全部工具' : `${policy.allowedTools.length} 个工具`
-  return policy.constraints?.readOnly ? `${tools} · 只读模式` : tools
+  const tools = policy.allowedTools === '*' ? rqI18n.t('全部工具') : rqI18n.t('{n} 个工具', { n: policy.allowedTools.length })
+  return policy.constraints?.readOnly ? rqI18n.t('{tools} · 只读模式', { tools }) : tools
 }
 function subjectClass(type) {
   return { user_group: 'badge-brand', agent: 'badge-purple', app: 'badge-info' }[type] ?? 'badge-muted'

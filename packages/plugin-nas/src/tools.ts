@@ -12,6 +12,7 @@
 import { resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '../../platform-core/src/index.ts'
+import { t as translate } from '../../platform-i18n/src/index.ts'
 import { WORK_DENY_CODE_LABELS, gateManagedWork, type WorkCallerRef, type WorkforcePolicyRegistry } from '../../platform-core/src/workforce-port.ts'
 import { WORKFORCE_ARTIFACTS_ROOT } from './index.ts'
 
@@ -52,7 +53,7 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args) {
       const nas = ctx.nasRegistry.get(String(args.nasId))
-      if (!nas) throw new Error(`NAS 资产不存在：${args.nasId}`)
+      if (!nas) throw new Error(translate('NAS 资产不存在：{id}', { id: String(args.nasId) }))
       return {
         id: nas.id, name: nas.name, slug: nas.slug, status: nas.status,
         attrs: { ...nas.attrs, accessToken: mask(String(nas.attrs['accessToken'] ?? '')) },
@@ -166,9 +167,8 @@ export function apply(ctx: Context) {
         const candidate = resolve(localFile)
         if (candidate !== WORKFORCE_ARTIFACTS_ROOT && !candidate.startsWith(`${WORKFORCE_ARTIFACTS_ROOT}${sep}`)) {
           throw new Error(
-            `上传被拒绝（ARTIFACT_SCOPE_DENIED）：受管数字员工禁止读取平台任意本地路径，`
-            + `localFile 仅允许 workforce 受控目录（${WORKFORCE_ARTIFACTS_ROOT}${sep}…）；`
-            + `请改走 POST /api/workforce/artifacts 受控上传后引用 artifact ID`,
+            translate('上传被拒绝（ARTIFACT_SCOPE_DENIED）：受管数字员工禁止读取平台任意本地路径，localFile 仅允许 workforce 受控目录（{root}…）；请改走 POST /api/workforce/artifacts 受控上传后引用 artifact ID',
+              { root: `${WORKFORCE_ARTIFACTS_ROOT}${sep}` }),
           )
         }
       }
@@ -226,16 +226,16 @@ function actorOf(
   if (binding) {
     const sessionId = exec.agent?.session?.id
     if (typeof sessionId !== 'string' || sessionId === '') {
-      throw new Error('文件操作被拒绝：当前调用未携带已显式绑定平台身份的 dsh 会话（D15 精确会话绑定，禁止回落「最近一次绑定」）；请先在工作台完成身份绑定后重试')
+      throw new Error(translate('文件操作被拒绝：当前调用未携带已显式绑定平台身份的 dsh 会话（D15 精确会话绑定，禁止回落「最近一次绑定」）；请先在工作台完成身份绑定后重试'))
     }
     const identity = sessionBoundIdentity(binding, sessionId)
     if (!identity) {
-      throw new Error('文件操作被拒绝：当前会话未显式绑定平台身份（D15 禁止按「最近一次绑定」回落执行），请重新完成身份绑定后再试')
+      throw new Error(translate('文件操作被拒绝：当前会话未显式绑定平台身份（D15 禁止按「最近一次绑定」回落执行），请重新完成身份绑定后再试'))
     }
     return { id: identity.userId, name: identity.name, kind: 'human' }
   }
   const principal = exec.principal
-  if (!principal) throw new Error('缺少调用者身份（exec.principal），文件操作 fail-closed 拒绝执行')
+  if (!principal) throw new Error(translate('缺少调用者身份（exec.principal），文件操作 fail-closed 拒绝执行'))
   if (principal.kind === 'human') {
     return { id: principal.userId ?? principal.principalId, name: principal.name, kind: 'human' }
   }

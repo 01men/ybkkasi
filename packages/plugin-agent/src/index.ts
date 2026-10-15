@@ -13,6 +13,7 @@ import {
   PlatformEvents, newId,
   type Collection, type RecordBase, type ResourceTypeSpec,
 } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import { AppRegistryService, type AppRegistryServiceSsoCaller } from '../../plugin-app/src/index.ts'
 import { OidcService } from '../../plugin-authn/src/oidc.ts'
 import { PermissionCatalog } from '../../plugin-iam/src/index.ts'
@@ -75,8 +76,8 @@ export class AgentRegistryService extends Service {
         const agent = ctx.resourceCore.collection('agent').get(p.callerId)
         ctx.audit.fire({
           severity: 'warning',
-          title: `Agent「${agent?.name ?? p.callerId}」调用频次突增`,
-          message: `10 分钟内调用 ${times.length} 次，超过异常阈值 120，请检查是否存在死循环或滥用。`,
+          title: t('Agent「{name}」调用频次突增', { name: agent?.name ?? p.callerId }),
+          message: t('10 分钟内调用 {count} 次，超过异常阈值 120，请检查是否存在死循环或滥用。', { count: times.length }),
           resourceType: 'agent',
           resourceId: p.callerId,
         })
@@ -113,8 +114,8 @@ export class AgentRegistryService extends Service {
         if (!agent) continue
         ctx.audit.fire({
           severity: 'info',
-          title: `Agent「${agent.name}」引用的 Skill 已弃用`,
-          message: `Skill「${p.name}」已弃用，请尽快迁移至替代版本，避免下次构建失败。`,
+          title: t('Agent「{name}」引用的 Skill 已弃用', { name: agent.name }),
+          message: t('Skill「{name}」已弃用，请尽快迁移至替代版本，避免下次构建失败。', { name: p.name }),
           resourceType: 'agent',
           resourceId: agent.id,
         })
@@ -140,19 +141,19 @@ export class AgentRegistryService extends Service {
   assertOrgChartAcyclic(agentId: string, managerId: string | undefined): void {
     const manager = String(managerId ?? '').trim()
     if (!manager) return
-    if (manager === agentId) throw new Error('汇报线不得指向自己')
+    if (manager === agentId) throw new Error(t('汇报线不得指向自己'))
     const collection = this.ctx.resourceCore.collection('agent')
     let current = manager
     for (let steps = 0; steps < 100; steps++) {
-      if (current === agentId) throw new Error('汇报线成环：沿汇报上级回溯会回到该 Agent，请修正 managerId')
+      if (current === agentId) throw new Error(t('汇报线成环：沿汇报上级回溯会回到该 Agent，请修正 managerId'))
       const node = collection.get(current)
-      if (!node) throw new Error(`汇报上级 Agent 不存在：${current}`)
+      if (!node) throw new Error(t('汇报上级 Agent 不存在：{id}', { id: current }))
       const next = String(node.attrs['managerId'] ?? '').trim()
       if (!next) return // 回溯到顶（链路上无环）
       current = next
     }
     // 步数上限兜底：不含自身的既有环数据或超深链路在此截断，同样拒绝
-    throw new Error('汇报线成环（或层级超过 100 级）：请修正 managerId')
+    throw new Error(t('汇报线成环（或层级超过 100 级）：请修正 managerId'))
   }
 
   register(input: {
@@ -214,9 +215,9 @@ export class AgentRegistryService extends Service {
     rotated: boolean
   } {
     const agent = this.ctx.resourceCore.get('agent', agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
     const principal = this.machinePrincipal(agentId)
-    if (!principal) throw new Error(`Agent 机器凭证不存在（可能已被禁用或删除），无法生成接入提示词`)
+    if (!principal) throw new Error(t('Agent 机器凭证不存在（可能已被禁用或删除），无法生成接入提示词'))
     let credential: AgentOnboardingCredential
     let rotated = false
     if (opts.rotate) {
@@ -232,11 +233,11 @@ export class AgentRegistryService extends Service {
   /** 用户绑定：记录"哪些用户可使用该 Agent"，使用即授权留痕。 */
   bindUser(agentId: string, userId: string, actor: string): AgentBindingRecord {
     const agent = this.ctx.resourceCore.get('agent', agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
     const user = this.ctx.iam.users().get(userId)
-    if (!user) throw new Error(`用户不存在：${userId}`)
+    if (!user) throw new Error(t('用户不存在：{id}', { id: userId }))
     if (this.bindings().findOne((item) => item.agentId === agentId && item.userId === userId)) {
-      throw new Error(`${user.displayName} 已绑定该 Agent`)
+      throw new Error(t('{name} 已绑定该 Agent', { name: user.displayName }))
     }
     return this.bindings().insert({
       id: newId('agb'),
@@ -261,7 +262,7 @@ export class AgentRegistryService extends Service {
   /** on-behalf-of：用户通过 Agent 行事时签发身份透传令牌。 */
   issueOnBehalfOfToken(agentId: string, verifiedUser: import('../../plugin-authn/src/index.ts').VerifiedPrincipal): { token: string; actChain: unknown[] } {
     const principal = this.machinePrincipal(agentId)
-    if (!principal) throw new Error('该 Agent 尚未注册机器身份，请先在注册时勾选颁发凭证')
+    if (!principal) throw new Error(t('该 Agent 尚未注册机器身份，请先在注册时勾选颁发凭证'))
     const { token, record } = this.ctx.authn.issueOnBehalfOf(verifiedUser, principal.id)
     return { token, actChain: record.actChain }
   }
@@ -309,10 +310,10 @@ export class AgentRegistryService extends Service {
     description?: string
   }): { client: ReturnType<OidcService['clientsForAgent']>[number]; clientSecret: string } {
     const agent = this.ctx.resourceCore.get('agent', agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
     AppRegistryService.assertRedirectUris(input.redirectUris)
     const existing = this.ctx.oidc.clientsForAgent(agentId)
-    if (existing.length > 0) throw new Error(`该 Agent 已签发 SSO 客户端（${existing[0]!.clientId}），请直接管理或先禁用后重新签发`)
+    if (existing.length > 0) throw new Error(t('该 Agent 已签发 SSO 客户端（{clientId}），请直接管理或先禁用后重新签发', { clientId: existing[0]!.clientId }))
     const created = this.ctx.oidc.createClient({
       name: agent.name,
       redirectUris: input.redirectUris,
@@ -345,7 +346,7 @@ export class AgentRegistryService extends Service {
 
   private requireSsoClient(agentId: string) {
     const clients = this.ctx.oidc.clientsForAgent(agentId)
-    if (clients.length === 0) throw new Error('该 Agent 尚未签发 SSO 客户端')
+    if (clients.length === 0) throw new Error(t('该 Agent 尚未签发 SSO 客户端'))
     return clients[0]!
   }
 
@@ -361,26 +362,26 @@ export class AgentRegistryService extends Service {
     const active = this.activeSsoClient(agent.id)
     if (active) return active.clientId
     if (mode === 'oidc') {
-      throw new Error(`上线门禁：Agent 上线前必须完成身份纳管——请在「Agent 本体 → 详情 → SSO 配置」签发 OIDC 客户端（当前 AGENT_SSO_ENFORCE=oidc）`)
+      throw new Error(t('上线门禁：Agent 上线前必须完成身份纳管——请在「Agent 本体 → 详情 → SSO 配置」签发 OIDC 客户端（当前 AGENT_SSO_ENFORCE=oidc）'))
     }
     const entryUrl = String(agent.attrs['entryUrl'] ?? '').trim()
     if (!entryUrl) {
-      throw new Error('上线门禁：Agent 上线前必须完成身份纳管——签发 OIDC 客户端，或登记交互界面地址 entryUrl（免登通道）后重试')
+      throw new Error(t('上线门禁：Agent 上线前必须完成身份纳管——签发 OIDC 客户端，或登记交互界面地址 entryUrl（免登通道）后重试'))
     }
     return undefined
   }
 
   requestOnline(agentId: string, requester: { id: string; name: string }) {
     const agent = this.ctx.resourceCore.get('agent', agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
     const errors = this.ctx.resourceCore.validateAttrs('agent', agent.attrs, 'online')
-    if (errors.length > 0) throw new Error(`上线条件不满足：${errors.join('；')}`)
+    if (errors.length > 0) throw new Error(t('上线条件不满足：{errors}', { errors: errors.join('；') }))
     const ssoClientId = this.assertOnlineGate(agent)
     return this.ctx.audit.createApproval({
       kind: 'agent.online',
       // WP-10/L1：L4 高危操作统一高风险——通过需二次确认，通过即落公司级终审标记
       riskLevel: 'high',
-      title: `Agent 上线：${agent.name}`,
+      title: t('Agent 上线：{name}', { name: agent.name }),
       payload: { agentId, requesterId: requester.id, ...(ssoClientId ? { ssoClientId } : {}) },
       requesterId: requester.id,
       requesterName: requester.name,
@@ -389,22 +390,22 @@ export class AgentRegistryService extends Service {
 
   requestOffline(agentId: string, requester: { id: string; name: string }, reason: string) {
     const agent = this.ctx.resourceCore.get('agent', agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
-    if (!reason?.trim()) throw new Error('下线必须填写原因（护栏要求）')
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
+    if (!reason?.trim()) throw new Error(t('下线必须填写原因（护栏要求）'))
     // REL-02：开单前状态预检（与 requestOnline 的 validateAttrs 同风格的入口护栏，口径直接读生命周期状态机）：
     // 只有状态机允许流转到 offline 的状态（trial/online）才可开下线审批单，否则批准后执行器必然失败、
     // 凭证吊销联动也不生效（白挂 L4 单）。执行期 transition 复核保留（双保险不动）。
     const canOffline = this.ctx.resourceCore.availableTransitions('agent', agentId).some((item) => item.action === 'offline')
     if (!canOffline) {
       const stateLabel = this.ctx.resourceCore.stateLabel('agent', agent.status).label
-      throw new Error(`当前状态「${stateLabel}」不允许申请「下线」审批：仅试运行/已上线的 Agent 可开下线审批单（REL-02 预检）`)
+      throw new Error(t('当前状态「{state}」不允许申请「下线」审批：仅试运行/已上线的 Agent 可开下线审批单（REL-02 预检）', { state: stateLabel }))
     }
     const impact = this.ctx.resourceCore.impact('agent', agentId)
     return this.ctx.audit.createApproval({
       kind: 'agent.offline',
       // WP-10/L1：L4 高危操作统一高风险——通过需二次确认，通过即落公司级终审标记
       riskLevel: 'high',
-      title: `Agent 下线：${agent.name}`,
+      title: t('Agent 下线：{name}', { name: agent.name }),
       payload: { agentId, reason, impact: impact.map((item) => `${item.name}（${item.type}）`) },
       requesterId: requester.id,
       requesterName: requester.name,
@@ -426,8 +427,8 @@ export class AgentRegistryService extends Service {
     for (const binding of this.boundUsers(agentId)) {
       this.ctx.audit.fire({
         severity: 'info',
-        title: `你绑定的 Agent「${result.entity.name}」已下线`,
-        message: `绑定关系保留，恢复上线后可继续使用。原因：${reason}`,
+        title: t('你绑定的 Agent「{name}」已下线', { name: result.entity.name }),
+        message: t('绑定关系保留，恢复上线后可继续使用。原因：{reason}', { reason }),
         resourceType: 'agent',
         resourceId: agentId,
       })
@@ -473,9 +474,10 @@ export class AgentRegistryService extends Service {
   freezeAgent(agentId: string, reason: string, actor?: string): string {
     const collection = this.ctx.resourceCore.collection('agent')
     const agent = collection.get(agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
     if (agent.attrs['frozenAt']) {
-      throw new Error(`Agent「${agent.name}」已冻结（${String(agent.attrs['frozenReason'] ?? '原因未登记')}），请走解冻审批单解冻`)
+      const frozenReason = agent.attrs['frozenReason'] !== undefined ? String(agent.attrs['frozenReason']) : t('原因未登记')
+      throw new Error(t('Agent「{name}」已冻结（{reason}），请走解冻审批单解冻', { name: agent.name, reason: frozenReason }))
     }
     collection.update(agentId, { attrs: { ...agent.attrs, frozenAt: new Date().toISOString(), frozenReason: reason } })
     this.ctx.audit.record({
@@ -487,12 +489,12 @@ export class AgentRegistryService extends Service {
     this.ctx.platformBus.emit('agent.frozen', { agentId, reason, actor })
     const approval = this.ctx.audit.createApproval({
       kind: 'agent.unfreeze',
-      title: `Agent「${agent.name}」预算超限冻结，申请解冻`,
+      title: t('Agent「{name}」预算超限冻结，申请解冻', { name: agent.name }),
       // 预算熔断属高危治理动作，解冻同样按 L4 高危口径（approve 需二次确认）
       riskLevel: 'high',
       payload: { agentId, reason },
       requesterId: actor ?? 'exec-hub',
-      requesterName: '执行中枢（预算联动，系统发起）',
+      requesterName: t('执行中枢（预算联动，系统发起）'),
     })
     return approval.id
   }
@@ -501,7 +503,7 @@ export class AgentRegistryService extends Service {
   unfreezeAgent(agentId: string, by?: string): void {
     const collection = this.ctx.resourceCore.collection('agent')
     const agent = collection.get(agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
     const frozenReason = String(agent.attrs['frozenReason'] ?? '')
     const restAttrs: Record<string, unknown> = { ...agent.attrs }
     delete restAttrs['frozenAt']
@@ -562,15 +564,15 @@ export class AgentRegistryService extends Service {
    */
   reportUsage(agentId: string, report: { dau?: number; sessions?: number; userIds?: string[]; uniqueUsers?: number; date?: string }): void {
     const agent = this.ctx.resourceCore.get('agent', agentId)
-    if (!agent) throw new Error(`Agent 不存在：${agentId}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
     const date = report.date ?? new Date().toISOString().slice(0, 10)
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`date 格式非法：${date}（应为 YYYY-MM-DD）`)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(t('date 格式非法：{date}（应为 YYYY-MM-DD）', { date }))
     for (const [key, value] of [['dau', report.dau], ['sessions', report.sessions], ['uniqueUsers', report.uniqueUsers]] as const) {
-      if (value !== undefined && (!Number.isInteger(value) || value < 0)) throw new Error(`${key} 必须是非负整数（收到：${value}）`)
+      if (value !== undefined && (!Number.isInteger(value) || value < 0)) throw new Error(t('{key} 必须是非负整数（收到：{value}）', { key, value }))
     }
     const hashes = (report.userIds ?? []).map((id) => createHash('sha256').update(String(id)).digest('hex').slice(0, 16))
     if (report.uniqueUsers !== undefined && hashes.length > report.uniqueUsers) {
-      throw new Error(`userIds 数量（${hashes.length}）不应大于 uniqueUsers（${report.uniqueUsers}）`)
+      throw new Error(t('userIds 数量（{count}）不应大于 uniqueUsers（{unique}）', { count: hashes.length, unique: report.uniqueUsers }))
     }
     const existing = this.usage().findOne((item) => item.agentId === agentId && item.date === date)
     let mergedSessions: number
@@ -735,7 +737,7 @@ export function apply(ctx: Context) {
       point: `agent.onboarding-rotate(owner:${agentId})`,
       path: exchange.path,
     })
-    exchange.fail(403, 'FORBIDDEN', `仅 Agent 负责人、绑定用户或平台管理员可轮换「${agent.name}」的机器凭证 secret（对齐 obo-token 守卫口径，REL-05）`)
+    exchange.fail(403, 'FORBIDDEN', t('仅 Agent 负责人、绑定用户或平台管理员可轮换「{name}」的机器凭证 secret（对齐 obo-token 守卫口径，REL-05）', { name: agent.name }))
     return true
   })
   // R7 组织化环校验挂载点决策：console 的 PATCH /api/agents/:id 直接调 resourceCore.update('agent')

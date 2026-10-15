@@ -14,6 +14,7 @@ import {
   providerName, nameStatusMismatch, strategyName, fieldName, syncStatCard,
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
 } from './helpers.js'
+import rqI18n from '../../i18n.js'
 
 export async function renderConflicts(ctx) {
   const [data, orgs] = await Promise.all([
@@ -40,14 +41,13 @@ export async function renderConflicts(ctx) {
   }
   // 批量处理：逐条调用单条 resolve 接口，逐条容错，最后汇总结果（不新增后端接口）
   async function batchResolve(keep) {
-    const label = keep === 'platform' ? '保留平台' : '以三方为准'
     const confirmed = await confirmDialog({
-      title: `批量处理 ${pending.length} 条同步冲突`,
+      title: rqI18n.t('批量处理 {n} 条同步冲突', { n: pending.length }),
       message: keep === 'platform'
-        ? `将忽略三方差异，${pending.length} 条冲突全部保留平台侧当前数据并关闭工单。`
-        : `将用三方通讯录数据覆盖平台侧数据，共 ${pending.length} 条，立即生效并留痕。确认继续？`,
+        ? rqI18n.t('将忽略三方差异，{n} 条冲突全部保留平台侧当前数据并关闭工单。', { n: pending.length })
+        : rqI18n.t('将用三方通讯录数据覆盖平台侧数据，共 {n} 条，立即生效并留痕。确认继续？', { n: pending.length }),
       danger: keep !== 'platform',
-      confirmText: `确认全部${label}`,
+      confirmText: rqI18n.t(keep === 'platform' ? '确认全部保留平台' : '确认全部以三方为准'),
     })
     if (!confirmed) return
     let ok = 0
@@ -60,8 +60,8 @@ export async function renderConflicts(ctx) {
         failed.push(error.message)
       }
     }
-    if (failed.length) toast(`已处理 ${ok} 条，失败 ${failed.length} 条：${failed[0]}`, 'error')
-    else toast(`一键${label}完成：共处理 ${ok} 条冲突`, 'success')
+    if (failed.length) toast(rqI18n.t('已处理 {ok} 条，失败 {f} 条：{msg}', { ok, f: failed.length, msg: failed[0] }), 'error')
+    else toast(rqI18n.t(keep === 'platform' ? '一键保留平台完成：共处理 {n} 条冲突' : '一键以三方为准完成：共处理 {n} 条冲突', { n: ok }), 'success')
     ctx.rerender()
   }
   for (const conflict of pending) {
@@ -91,7 +91,7 @@ export async function renderConflicts(ctx) {
     card.querySelectorAll('[data-keep]').forEach((btn) => {
       btn.onclick = async () => {
         await api.post(`/api/iam/conflicts/${conflict.id}/resolve`, { keep: btn.dataset.keep })
-        toast('冲突已处理')
+        toast(rqI18n.t('冲突已处理'))
         ctx.rerender()
       }
     })
@@ -100,7 +100,7 @@ export async function renderConflicts(ctx) {
   function diffRows(rowData) {
     return Object.entries(rowData ?? {}).filter(([k]) => k !== 'jobNumber').map(([k, v]) => {
       // 部门差异显示完整路径而非原始 ID；组织已被删除时如实说明
-      const value = k === 'orgId' ? (orgPathById.get(String(v)) ?? `${v}（该组织已不在平台组织树中）`) : v
+      const value = k === 'orgId' ? (orgPathById.get(String(v)) ?? rqI18n.t('{org}（该组织已不在平台组织树中）', { org: v })) : v
       return `
       <div class="flex" style="padding:3px 0;font-size:12.5px">
         <span class="text-4" style="width:70px;flex-shrink:0">${fieldName(k)}</span><span>${esc(String(value ?? '—'))}</span>

@@ -7,6 +7,7 @@
  *   - 30d 用量：GET /api/modelgw/routes-usage（WB 并行实现）→ 404 时回落 models 响应内联 usage30d 字段 → 仍无则该列收敛为「待接入」
  *   - 渠道时延/可用性：逐 slug GET /api/modelgw/:slug/telemetry?window=30（panel.read，失败隐藏时延列，不造假） */
 import { api, session } from '../api.js'
+import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import {
   h, $, $$, esc, toast, openDrawer, confirmDialog, collectForm, field, inputField, selectField,
@@ -26,7 +27,7 @@ async function mount(content, ctx) {
       title: data.fatal.status === 403 ? '无模型网关读取权限' : '模型目录加载失败',
       desc: data.fatal.status === 403
         ? '模型目录接口需要 modelgw.read 权限（当前登录身份未授予）；如需查看请联系管理员开通。'
-        : `${data.fatal.message}（当前宿主可能未部署 modelgw 管理接口）`,
+        : rqI18n.t('{msg}（当前宿主可能未部署 modelgw 管理接口）', { msg: data.fatal.message }),
       actionText: '重试', onAction: () => void mount(content, ctx), icon: 'plug',
     }))
     content.innerHTML = ''
@@ -70,18 +71,18 @@ async function mount(content, ctx) {
       ${statCard({
         label: '路由数',
         value: `<span class="tnum">${models.length}</span>`,
-        sub: `在线 ${onlineCount} · 离线 ${models.length - onlineCount}`,
+        sub: rqI18n.t('在线 {a} · 离线 {b}', { a: onlineCount, b: models.length - onlineCount }),
       })}
       ${statCard({
         label: '渠道数',
         value: `<span class="tnum">${channelCount}</span>`,
-        sub: groups.length ? `渠道组 ${groups.length} 个（主/备/兜底降级链）` : '未配置渠道组（每路由单渠道直连）',
+        sub: groups.length ? rqI18n.t('渠道组 {n} 个（主/备/兜底降级链）', { n: groups.length }) : '未配置渠道组（每路由单渠道直连）',
       })}
       ${statCard({
         label: '预算熔断',
         value: enabledBudgets.length ? `<span class="tnum">${enabledBudgets.length}</span> <span style="font-size:13px;font-weight:400;color:var(--text-3)">条规则</span>` : '未配置',
         sub: enabledBudgets.length
-          ? `熔断阻断 ${blockCount} 条 · 最高预警比 ${warnPct ?? '—'}% · 超限即${blockCount ? '熔断并告警' : '告警'}`
+          ? rqI18n.t('熔断阻断 {b} 条 · 最高预警比 {w}% · 超限即{action}', { b: blockCount, w: warnPct ?? '—', action: blockCount ? rqI18n.t('熔断并告警') : rqI18n.t('告警') })
           : '暂无预算规则：超限不拦截，仅计量统计',
       })}
     </div>
@@ -94,7 +95,7 @@ async function mount(content, ctx) {
       <div class="card-title" style="margin-bottom:4px">${icon('settings', 15)} 网关治理（管理员通道）</div>
       <div class="fs-12 text-3" style="margin-bottom:12px">模型目录全量表与渠道组 / 预算编辑自财务视图迁入；全部写操作与审计留痕口径不变。</div>
       ${canAdmin ? `
-      <div class="card-title" style="margin:0 0 8px;font-size:13px">${icon('plug', 14)} 模型目录（${models.length}）</div>
+      <div class="card-title" style="margin:0 0 8px;font-size:13px">${icon('plug', 14)} ${esc(rqI18n.t('模型目录（{n}）', { n: models.length }))}</div>
       <div id="gw-model-table"></div>` : ''}
       ${canConfig ? `
       <div class="card-title" style="margin:18px 0 8px;font-size:13px">${icon('gitBranch', 14)} 渠道组（主/备降级链）</div>
@@ -120,7 +121,7 @@ async function mount(content, ctx) {
       const fresh = await loadGatewayData({ quiet: true })
       const freshChannels = new Set()
       for (const g of fresh.groups) for (const s of (g.chain ?? [g.primary])) freshChannels.add(s)
-      toast(`路由探测完成：${fresh.models.length} 条路由 · ${freshChannels.size || fresh.models.length} 个渠道已重查（目录与遥测刷新，未产生真实模型调用）`)
+      toast(rqI18n.t('路由探测完成：{m} 条路由 · {c} 个渠道已重查（目录与遥测刷新，未产生真实模型调用）', { m: fresh.models.length, c: freshChannels.size || fresh.models.length }))
       await mount(content, ctx)
     } catch (error) {
       toast(error.message, 'error')
@@ -221,8 +222,8 @@ function renderRouteCard(host, model, { models, groups, budgets, usageMap, telem
         tone: pct > 70 ? 'warn' : '',
         width: '150px',
         label: `${Math.round(pct)}/${Math.round((budget.warnRatio ?? 0.8) * 100)}%`,
-      }) + `<span class="fs-11 text-3" style="margin-left:6px">月限 ${fmtCost(limitYuan)}</span>`
-      : `<span class="fs-11 text-3">月限 ${fmtCost(limitYuan)} · 用量待接入</span>`
+      }) + `<span class="fs-11 text-3" style="margin-left:6px">${esc(rqI18n.t('月限 {cost}', { cost: fmtCost(limitYuan) }))}</span>`
+      : `<span class="fs-11 text-3">${esc(rqI18n.t('月限 {cost} · 用量待接入', { cost: fmtCost(limitYuan) }))}</span>`
   }
 
   const card = h(`
@@ -234,7 +235,7 @@ function renderRouteCard(host, model, { models, groups, budgets, usageMap, telem
           <span style="font-size:14.5px;font-weight:600">${esc(group?.name ?? model.displayName ?? model.slug)}</span>
           <span class="mono" style="background:var(--surface-2);border-radius:6px;padding:2px 7px;font-size:11px">${esc(model.slug)}</span>
           ${healthDot(health)}
-          ${tel?.degradedInvocations > 0 ? `<span class="badge badge-warn no-dot">${icon('alert', 11)} 30d 降级 ${tel.degradedInvocations} 次</span>` : ''}
+          ${tel?.degradedInvocations > 0 ? `<span class="badge badge-warn no-dot">${icon('alert', 11)}${esc(rqI18n.t(' 30d 降级 {n} 次', { n: tel.degradedInvocations }))}</span>` : ''}
           ${group && group.enabled === false ? '<span class="badge badge-muted no-dot">渠道组停用</span>' : ''}
         </div>
         <div class="fs-11-5 text-3" style="margin-top:3px">
@@ -302,20 +303,20 @@ async function toggleModel(model, onDone) {
   }
   try {
     await api.post('/api/modelgw/models', payload)
-    toast(payload.status === 'online' ? `模型 ${model.slug} 已上线` : `模型 ${model.slug} 已下线`)
+    toast(payload.status === 'online' ? rqI18n.t('模型 {slug} 已上线', { slug: model.slug }) : rqI18n.t('模型 {slug} 已下线', { slug: model.slug }))
     onDone()
   } catch (error) { toast(error.message, 'error') }
 }
 
 async function deleteModel(model, onDone) {
   const confirmed = await confirmDialog({
-    title: `删除模型 · ${model.slug}`, danger: true, confirmText: '确认删除',
-    message: `将从模型目录删除「<b>${esc(model.slug)}</b>」，引用它的调用与渠道组会失去主/备路由，操作不可恢复。`,
+    title: rqI18n.t('删除模型 · {slug}', { slug: model.slug }), danger: true, confirmText: '确认删除',
+    message: rqI18n.t('将从模型目录删除「<b>{slug}</b>」，引用它的调用与渠道组会失去主/备路由，操作不可恢复。', { slug: esc(model.slug) }),
   })
   if (!confirmed) return
   try {
     await api.delete(`/api/modelgw/models/${encodeURIComponent(model.id ?? model.slug)}`)
-    toast('模型已删除')
+    toast(rqI18n.t('模型已删除'))
     onDone()
   } catch (error) { toast(error.message, 'error') }
 }
@@ -367,7 +368,7 @@ function mountModelTable(models, rerender) {
       }
       try {
         await api.post('/api/modelgw/models', payload)
-        toast(btn.dataset.next === 'online' ? `模型 ${slug} 已上线` : `模型 ${slug} 已下线`)
+        toast(btn.dataset.next === 'online' ? rqI18n.t('模型 {slug} 已上线', { slug }) : rqI18n.t('模型 {slug} 已下线', { slug }))
         rerender()
       } catch (error) { toast(error.message, 'error') }
     }
@@ -375,13 +376,13 @@ function mountModelTable(models, rerender) {
   host.querySelectorAll('[data-mg-del]').forEach((btn) => {
     btn.onclick = async () => {
       const confirmed = await confirmDialog({
-        title: `删除模型 · ${btn.dataset.slug}`, danger: true, confirmText: '确认删除',
-        message: `将从模型目录删除「<b>${esc(btn.dataset.slug)}</b>」，引用它的调用与渠道组会失去主/备路由，操作不可恢复。`,
+        title: rqI18n.t('删除模型 · {slug}', { slug: btn.dataset.slug }), danger: true, confirmText: '确认删除',
+        message: rqI18n.t('将从模型目录删除「<b>{slug}</b>」，引用它的调用与渠道组会失去主/备路由，操作不可恢复。', { slug: esc(btn.dataset.slug) }),
       })
       if (!confirmed) return
       try {
         await api.delete(`/api/modelgw/models/${btn.dataset.mgDel}`)
-        toast('模型已删除')
+        toast(rqI18n.t('模型已删除'))
         rerender()
       } catch (error) { toast(error.message, 'error') }
     }
@@ -414,7 +415,7 @@ function openModelForm(rerender) {
   drawer.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const data = collectForm(drawer.body)
-    if (!data.slug) return toast('请填写模型 slug', 'error')
+    if (!data.slug) return toast(rqI18n.t('请填写模型 slug'), 'error')
     const payload = {
       slug: data.slug,
       displayName: data.displayName || undefined,
@@ -428,7 +429,7 @@ function openModelForm(rerender) {
     btn.classList.add('btn-loading')
     try {
       await api.post('/api/modelgw/models', payload)
-      toast('模型目录已保存')
+      toast(rqI18n.t('模型目录已保存'))
       drawer.close(); rerender()
     } catch (error) {
       toast(error.message, 'error')
@@ -447,7 +448,7 @@ async function mountChannelGroups(models) {
     const data = await api.get('/api/modelgw/channel-groups')
     groups = data?.groups ?? []
   } catch (error) {
-    host.innerHTML = `<div class="fs-12 text-4" style="padding:10px 0">渠道组加载失败：${esc(error.message)}</div>`
+    host.innerHTML = `<div class="fs-12 text-4" style="padding:10px 0">${esc(rqI18n.t('渠道组加载失败：{msg}', { msg: error.message }))}</div>`
     return
   }
   const slugOptions = (value) => [
@@ -488,7 +489,7 @@ async function mountChannelGroups(models) {
     btn.classList.add('btn-loading')
     try {
       await api.put('/api/modelgw/channel-groups', { groups: next })
-      toast('渠道组已保存')
+      toast(rqI18n.t('渠道组已保存'))
     } catch (error) { toast(error.message, 'error') } finally { btn.classList.remove('btn-loading') }
   })
 }
@@ -502,7 +503,7 @@ async function mountBudgets(rerender) {
     const data = await api.get('/api/modelgw/budgets')
     budgets = data?.budgets ?? []
   } catch (error) {
-    host.innerHTML = `<div class="fs-12 text-4" style="padding:10px 0">预算加载失败：${esc(error.message)}</div>`
+    host.innerHTML = `<div class="fs-12 text-4" style="padding:10px 0">${esc(rqI18n.t('预算加载失败：{msg}', { msg: error.message }))}</div>`
     return
   }
   const yuan = (cents) => fmtCost((Number(cents ?? 0) || 0) / 100)
@@ -548,7 +549,7 @@ async function mountBudgets(rerender) {
       if (!confirmed) return
       try {
         await api.delete(`/api/modelgw/budgets/${btn.dataset.bdel}`)
-        toast('预算规则已删除')
+        toast(rqI18n.t('预算规则已删除'))
         void mountBudgets(rerender)
       } catch (error) { toast(error.message, 'error') }
     }
@@ -592,7 +593,7 @@ async function openBudgetForm(budget, onSaved) {
   drawer.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const data = collectForm(drawer.body)
-    if (data.dailyLimitCents === '' && data.monthlyLimitCents === '') return toast('日/月限额至少填一项', 'error')
+    if (data.dailyLimitCents === '' && data.monthlyLimitCents === '') return toast(rqI18n.t('日/月限额至少填一项'), 'error')
     const payload = {
       ...(budget?.id ? { id: budget.id } : {}),
       orgId: data.orgId || undefined,
@@ -608,7 +609,7 @@ async function openBudgetForm(budget, onSaved) {
     btn.classList.add('btn-loading')
     try {
       await api.put('/api/modelgw/budgets', payload)
-      toast('预算已保存')
+      toast(rqI18n.t('预算已保存'))
       drawer.close(); onSaved()
     } catch (error) {
       toast(error.message, 'error')

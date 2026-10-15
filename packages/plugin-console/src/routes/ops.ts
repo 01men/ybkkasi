@@ -6,6 +6,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ConsoleRouteDeps } from './deps.ts'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { nonbillableUsage } from '../../../plugin-usage/src/index.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 
 export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { http, guarded, body, changeLog, caller } = deps
@@ -70,23 +71,23 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       path: exchange.path,
       ...(subject ? { subject } : {}),
     })
-    exchange.fail(403, 'FORBIDDEN', `禁止写入其他主体或组织的计量事实（${reason}）`)
+    exchange.fail(403, 'FORBIDDEN', t('禁止写入其他主体或组织的计量事实（{reason}）', { reason }))
   }
   const assertUsageSubjectOwnership = (exchange: HttpExchange, info: ReturnType<ConsoleRouteDeps['caller']>, input: { org: string; subject: string }): boolean => {
     if (info.permissions.includes('*')) return true
     if (info.kind === 'machine') {
       const boundSubject = info.refType === 'agent' && info.refId ? `agent:${info.refId}` : ''
       if (!boundSubject) {
-        denyUsageOwnership(exchange, info, input.subject, '机器凭证未绑定 Agent 资源，无自有计量主体')
+        denyUsageOwnership(exchange, info, input.subject, t('机器凭证未绑定 Agent 资源，无自有计量主体'))
         return false
       }
       if (input.subject !== boundSubject) {
-        denyUsageOwnership(exchange, info, input.subject, `机器主体只能申报自身计量 subject=${boundSubject}`)
+        denyUsageOwnership(exchange, info, input.subject, t('机器主体只能申报自身计量 subject={subject}', { subject: boundSubject }))
         return false
       }
       const agent = ctx.resourceCore.get('agent', info.refId!)
       if (agent?.orgId && input.org && input.org !== agent.orgId) {
-        denyUsageOwnership(exchange, info, input.subject, `事件 org=${input.org} 超出绑定 Agent 组织（${agent.orgId}）`)
+        denyUsageOwnership(exchange, info, input.subject, t('事件 org={org} 超出绑定 Agent 组织（{orgId}）', { org: input.org, orgId: agent.orgId }))
         return false
       }
       return true
@@ -95,11 +96,11 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const ownOrg = user?.orgId
     const subjectAllowed = input.subject === `user:${info.userId}` || /^(kb|panel):/.test(input.subject)
     if (!subjectAllowed) {
-      denyUsageOwnership(exchange, info, input.subject, '人类主体只能申报本人（user:<self>）或本组织协作类键（kb:*/panel:*）')
+      denyUsageOwnership(exchange, info, input.subject, t('人类主体只能申报本人（user:<self>）或本组织协作类键（kb:*/panel:*）'))
       return false
     }
     if (!ownOrg || !input.org || !orgSubtreeContains(ownOrg, input.org)) {
-      denyUsageOwnership(exchange, info, input.subject, `事件 org=${input.org || '（空）'} 超出你的组织子树（${ownOrg ?? '未归属组织'}）`)
+      denyUsageOwnership(exchange, info, input.subject, t('事件 org={org} 超出你的组织子树（{ownOrg}）', { org: input.org || t('（空）'), ownOrg: ownOrg ?? t('未归属组织') }))
       return false
     }
     return true
@@ -109,7 +110,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const input = body<{ org: string; subject: string; principal: string; resource: string; meters: Array<{ key: string; value: number; unit: string }>; tenant_id?: string; trace_id?: string; idempotency_key?: string }>(exchange)
     if (!assertUsageSubjectOwnership(exchange, caller(exchange), input)) return
     const event = ctx.usage.record(input)
-    changeLog(exchange, 'usage.record', 'usage_event', event.event_id, event.resource, `${event.meters.map((meter) => `${meter.key}=${meter.value}`).join(',')} charge=${event.pricing.charge_cents}分`)
+    changeLog(exchange, 'usage.record', 'usage_event', event.event_id, event.resource, t('{meters} charge={cents}分', { meters: event.meters.map((meter) => `${meter.key}=${meter.value}`).join(','), cents: event.pricing.charge_cents }))
     return event
   })
 
@@ -198,17 +199,17 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       ? `usage.feedback(on-behalf:agent:${info.refId})`
       : 'usage.feedback(on-behalf:machine)'
     if (!onBehalfRaw) {
-      denyFeedbackAttribution(exchange, info, 'usage.feedback(on-behalf:missing)', '', '机器主体回传反馈须携带 X-On-Behalf-User 归因到人')
+      denyFeedbackAttribution(exchange, info, 'usage.feedback(on-behalf:missing)', '', t('机器主体回传反馈须携带 X-On-Behalf-User 归因到人'))
       return false
     }
     const targetUserId = resolveFeedbackOnBehalfUser(onBehalfRaw)
     if (!targetUserId) {
-      denyFeedbackAttribution(exchange, info, point, onBehalfRaw, `禁止将反馈归因到不存在的主体（${onBehalfRaw} 未命中平台用户与三方身份映射）`)
+      denyFeedbackAttribution(exchange, info, point, onBehalfRaw, t('禁止将反馈归因到不存在的主体（{subject} 未命中平台用户与三方身份映射）', { subject: onBehalfRaw }))
       return false
     }
     if (info.permissions.includes('*')) return targetUserId
     if (info.refType !== 'agent' || !info.refId) {
-      denyFeedbackAttribution(exchange, info, point, targetUserId, '机器凭证未绑定 Agent 资源，无归因白名单通道')
+      denyFeedbackAttribution(exchange, info, point, targetUserId, t('机器凭证未绑定 Agent 资源，无归因白名单通道'))
       return false
     }
     if (ctx.resourceCore.get('agent', info.refId)?.ownerId === targetUserId) return targetUserId
@@ -226,7 +227,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const binding = workforce?.bindings?.findWhere?.({ agentId: info.refId, status: 'active' })?.[0]
     const supervisorUserId = binding ? workforce?.employees?.get?.(binding.employeeId)?.supervisorUserId : undefined
     if (supervisorUserId && supervisorUserId === targetUserId) return targetUserId
-    denyFeedbackAttribution(exchange, info, point, targetUserId, '归因目标不在该 Agent 的白名单内（负责人/绑定真人/员工主管三通道均未命中）')
+    denyFeedbackAttribution(exchange, info, point, targetUserId, t('归因目标不在该 Agent 的白名单内（负责人/绑定真人/员工主管三通道均未命中）'))
     return false
   }
 
@@ -234,7 +235,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const info = caller(exchange)
     const input = body<{ resource: string; messageId?: string; score: 'up' | 'down'; note?: string }>(exchange)
     if (!input.resource?.trim() || (input.score !== 'up' && input.score !== 'down')) {
-      exchange.fail(400, 'BAD_REQUEST', 'resource 与 score（up/down）必填')
+      exchange.fail(400, 'BAD_REQUEST', t('resource 与 score（up/down）必填'))
       return
     }
     // W4：归因收敛入口——machine 走白名单守卫（拒绝时已 403+audit，短路）；human 原样透传（行为不变）
@@ -245,7 +246,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const onBehalf = onBehalfResolved
     const subject = onBehalf ? `user:${onBehalf}` : (info.userId ? `user:${info.userId}` : '')
     if (!subject) {
-      exchange.fail(403, 'FORBIDDEN', '机器主体回传反馈须携带 X-On-Behalf-User 归因到人')
+      exchange.fail(403, 'FORBIDDEN', t('机器主体回传反馈须携带 X-On-Behalf-User 归因到人'))
       return
     }
     // W4：组织口径随归因——机器代报（onBehalf=已归一化目标 userId）取目标用户组织；
@@ -266,7 +267,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       meters: [{ key: 'calls', value: 1, unit: input.score }],
     })
     changeLog(exchange, 'usage.feedback', 'usage_event', event.event_id, input.resource,
-      `${input.score}${input.note ? `：${input.note}` : ''}（非计费零价快照，X-On-Behalf-User${onBehalf ? `=${onBehalf}` : '未用'}）`)
+      t('{score}{note}（非计费零价快照，X-On-Behalf-User{onBehalf}）', { score: input.score, note: input.note ? t('：{note}', { note: input.note }) : '', onBehalf: onBehalf ? `=${onBehalf}` : t('未用') }))
     return { event_id: event.event_id, charge_cents: event.pricing.charge_cents, nonbillable: event.pricing.rate?.nonbillable === true }
   })
 
@@ -302,7 +303,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
 
   guarded('POST', '/api/usage/dead-letters/retry', 'usage.admin', (exchange) => {
     const result = ctx.usage.retryDeadLetters()
-    changeLog(exchange, 'usage.deadletter.retry', 'usage', 'dead-letters', '', `重投 ${result.retried} 条，剩余 ${result.remaining} 条`)
+    changeLog(exchange, 'usage.deadletter.retry', 'usage', 'dead-letters', '', t('重投 {retried} 条，剩余 {remaining} 条', { retried: result.retried, remaining: result.remaining }))
     return result
   })
 
@@ -313,7 +314,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
 
   guarded('POST', '/api/bus/dead-letters/retry', 'usage.admin', (exchange) => {
     const result = ctx.platformBus.retryDeadLetters()
-    changeLog(exchange, 'bus.deadletter.retry', 'bus', 'dead-letters', '', `尝试 ${result.attempted} 条，重投 ${result.redelivered} 条，保留 ${result.retained} 条`)
+    changeLog(exchange, 'bus.deadletter.retry', 'bus', 'dead-letters', '', t('尝试 {attempted} 条，重投 {redelivered} 条，保留 {retained} 条', { attempted: result.attempted, redelivered: result.redelivered, retained: result.retained }))
     return result
   })
 
@@ -323,7 +324,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const input = body<{ days?: number }>(exchange)
     const days = typeof input.days === 'number' && Number.isFinite(input.days) && input.days >= 0 ? Math.floor(input.days) : undefined
     const result = ctx.usage.purgeExpired(days)
-    changeLog(exchange, 'usage.retention.purge', 'usage', 'retention', '', `days=${days ?? 'default'} 事件=${result.purgedEvents} 水位=${result.purgedWatermarks} 死信=${result.purgedDeadLetters}`)
+    changeLog(exchange, 'usage.retention.purge', 'usage', 'retention', '', t('days={days} 事件={events} 水位={watermarks} 死信={deadLetters}', { days: days ?? 'default', events: result.purgedEvents, watermarks: result.purgedWatermarks, deadLetters: result.purgedDeadLetters }))
     return { ...result, retentionDays: ctx.usage.retentionDays }
   })
 
@@ -390,11 +391,11 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   guarded('PUT', '/api/modelgw/channel-groups', 'panel.config.write', (exchange) => {
     const input = body<{ slug: string; name: string; primary: string; backup1?: string; backup2?: string; manual?: boolean; stepTimeoutMs?: number; enabled?: boolean }>(exchange)
     if (!input.slug?.trim() || !input.primary?.trim() || !input.name?.trim()) {
-      exchange.fail(400, 'BAD_REQUEST', 'slug/name/primary 必填')
+      exchange.fail(400, 'BAD_REQUEST', t('slug/name/primary 必填'))
       return
     }
     if (input.stepTimeoutMs !== undefined && (input.stepTimeoutMs < 500 || input.stepTimeoutMs > 60_000)) {
-      exchange.fail(400, 'BAD_REQUEST', 'stepTimeoutMs 应在 500-60000ms 之间（PRD §4.1 口径 8000）')
+      exchange.fail(400, 'BAD_REQUEST', t('stepTimeoutMs 应在 500-60000ms 之间（PRD §4.1 口径 8000）'))
       return
     }
     const group = ctx.modelGateway.upsertChannelGroup({
@@ -418,7 +419,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const input = body<{ messages?: Array<{ role: string; content: string }>; prompt?: string; dataClass?: string; maxTokens?: number }>(exchange)
     const messages = input.messages ?? (input.prompt ? [{ role: 'user', content: input.prompt }] : [])
     if (messages.length === 0) {
-      exchange.fail(400, 'BAD_REQUEST', 'messages（或 prompt）必填')
+      exchange.fail(400, 'BAD_REQUEST', t('messages（或 prompt）必填'))
       return
     }
     const info = caller(exchange)
@@ -451,7 +452,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   guarded('GET', '/api/modelgw/:slug/telemetry', 'panel.read', (exchange) => {
     const slug = exchange.params['slug']!
     if (!ctx.modelGateway.models().findOne((item) => item.slug === slug)) {
-      exchange.fail(404, 'NOT_FOUND', `模型不存在：${slug}`)
+      exchange.fail(404, 'NOT_FOUND', t('模型不存在：{slug}', { slug }))
       return
     }
     const windowDays = Math.min(Math.max(Number(exchange.query.get('window')?.replace(/d$/, '') ?? 7) || 7, 1), 30)
@@ -471,7 +472,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     }>(exchange)
     for (const [key, value] of [['dailyLimitCents', input.dailyLimitCents], ['monthlyLimitCents', input.monthlyLimitCents]] as const) {
       if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
-        exchange.fail(400, 'BAD_REQUEST', `${key} 应为非负数（分）`)
+        exchange.fail(400, 'BAD_REQUEST', t('{key} 应为非负数（分）', { key }))
         return
       }
     }
@@ -487,7 +488,7 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
         action: input.action ?? 'warn',
         enabled: input.enabled ?? true,
       })
-      changeLog(exchange, 'modelgw.budget.upsert', 'modelgw_budget', budget.id, `${budget.orgId ?? '（平台级）'}${budget.subject ? `/${budget.subject}` : ''}${budget.modelSlug ? `/${budget.modelSlug}` : ''}`)
+      changeLog(exchange, 'modelgw.budget.upsert', 'modelgw_budget', budget.id, `${budget.orgId ?? t('（平台级）')}${budget.subject ? `/${budget.subject}` : ''}${budget.modelSlug ? `/${budget.modelSlug}` : ''}`)
       return budget
     } catch (error) {
       exchange.fail(400, 'BAD_REQUEST', error instanceof Error ? error.message : String(error))

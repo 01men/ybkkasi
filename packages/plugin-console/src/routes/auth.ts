@@ -6,6 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import { ProviderAuthError } from '../../../plugin-iam/src/providers.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
@@ -33,7 +34,7 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
   http.register('POST', '/api/auth/login', async (exchange) => {
     const { username, password } = body<{ username: string; password: string }>(exchange)
     if (!username || !password) {
-      exchange.fail(400, 'BAD_REQUEST', '用户名与密码必填')
+      exchange.fail(400, 'BAD_REQUEST', t('用户名与密码必填'))
       return
     }
     try {
@@ -70,7 +71,7 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
   http.register('POST', '/api/auth/sso', async (exchange) => {
     const { provider, code, state } = body<{ provider: string; code: string; state: string }>(exchange)
     if (!code || !state) {
-      exchange.fail(400, 'BAD_REQUEST', 'code 与 state 必填（先调 /api/auth/sso/authorize 获取 state）')
+      exchange.fail(400, 'BAD_REQUEST', t('code 与 state 必填（先调 /api/auth/sso/authorize 获取 state）'))
       return
     }
     try {
@@ -131,15 +132,15 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
     const info = caller(exchange)
     const userId = targetUserId ?? info.userId
     if (!userId) {
-      exchange.fail(401, 'UNAUTHORIZED', '仅平台账号（人）可发起三方身份绑定')
+      exchange.fail(401, 'UNAUTHORIZED', t('仅平台账号（人）可发起三方身份绑定'))
       return
     }
     if (userId !== info.userId && !info.permissions.includes('*') && !info.permissions.includes('iam.user.write')) {
-      exchange.fail(403, 'FORBIDDEN', '为其他账号发起绑定需要 iam.user.write 权限')
+      exchange.fail(403, 'FORBIDDEN', t('为其他账号发起绑定需要 iam.user.write 权限'))
       return
     }
     if (!ctx.iam.users().get(userId)) {
-      exchange.fail(400, 'BAD_REQUEST', `账号不存在：${userId}`)
+      exchange.fail(400, 'BAD_REQUEST', t('账号不存在：{id}', { id: userId }))
       return
     }
     try {
@@ -170,7 +171,7 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
 </head><body><div class="card">${bodyHtml}</div>${script}</body></html>`)
     }
     if (!code || !state) {
-      render('授权回调异常', `<div class="bad">✕</div><h2>回调参数缺失</h2><p>缺少 code/state，请从控制台重新发起授权。</p><p><a href="/">返回控制台</a></p>`)
+      render(t('授权回调异常'), `<div class="bad">✕</div><h2>${t('回调参数缺失')}</h2><p>${t('缺少 code/state，请从控制台重新发起授权。')}</p><p><a href="/">${t('返回控制台')}</a></p>`)
       return
     }
     try {
@@ -181,16 +182,16 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
           type: 'change', actorType: 'human', actorId: result.userId,
           actorName: ctx.iam.users().get(result.userId)?.displayName ?? result.userId,
           action: 'iam.user.bind', resourceType: 'user', resourceId: result.userId,
-          resourceName: result.displayName, result: 'ok', detail: `${result.provider} 扫码授权绑定`,
+          resourceName: result.displayName, result: 'ok', detail: t('{provider} 扫码授权绑定', { provider: result.provider }),
         })
-        render('绑定成功', `<div class="ok">✓</div><h2>钉钉身份绑定成功</h2><p>已绑定：<b>${escapeHtml(result.displayName)}</b></p><p>即将自动返回控制台…</p><p><a href="${webBase}/#/iam">立即返回</a></p>`,
+        render(t('绑定成功'), `<div class="ok">✓</div><h2>${t('钉钉身份绑定成功')}</h2><p>${t('已绑定：')}<b>${escapeHtml(result.displayName)}</b></p><p>${t('即将自动返回控制台…')}</p><p><a href="${webBase}/#/iam">${t('立即返回')}</a></p>`,
           `<script>setTimeout(()=>{location.href=\`${webBase}/#/iam\`},2000)</script>`)
         return
       }
       const result = await ctx.authn.completeSso(peeked.provider, code, state)
       if (result.kind === 'pending') {
         // 未命中身份链接：回登录页走「绑定已有账号 / 注册新账号」分支
-        render('首次登录', `<h2>首次使用该三方身份</h2><p>正在返回登录页完成绑定/注册…</p>`,
+        render(t('首次登录'), `<h2>${t('首次使用该三方身份')}</h2><p>${t('正在返回登录页完成绑定/注册…')}</p>`,
           `<script>localStorage.setItem('heng_ops_sso_pending', JSON.stringify({ pendingTicket: ${JSON.stringify(result.pendingTicket)}, profileName: ${JSON.stringify(result.profileName)} })); location.replace('${webBase}/#/login')</script>`)
         return
       }
@@ -203,7 +204,7 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
       }
       // 登录成功落库后按暂存的 OIDC 授权请求（heng_ops_sso_oidc_req，与授权请求同为 5 分钟有效）回到
       // 授权页继续 consent——AI 应用发起的「先登录再授权」流才能闭环；无暂存则进控制台
-      render('登录成功', `<div class="ok">✓</div><h2>欢迎回来，${escapeHtml(user.displayName)}</h2><p>正在继续…</p>`,
+      render(t('登录成功'), `<div class="ok">✓</div><h2>${t('欢迎回来，{name}', { name: escapeHtml(user.displayName) })}</h2><p>${t('正在继续…')}</p>`,
         `<script>localStorage.setItem('heng_ops_token', ${JSON.stringify(result.session.token)}); localStorage.setItem('heng_ops_refresh', ${JSON.stringify(result.session.refreshToken)}); localStorage.setItem('heng_ops_user', ${JSON.stringify(JSON.stringify(sessionUser))});
 var resume=null;try{resume=JSON.parse(localStorage.getItem('heng_ops_sso_oidc_req')||'null')}catch(e){resume=null}
 localStorage.removeItem('heng_ops_sso_oidc_req');
@@ -245,7 +246,7 @@ else if(nx&&/^https?:\\/\\/(localhost|127\\.|10\\.|192\\.168\\.|172\\.(1[6-9]|2[
           console.error('[sso-callback] 重授权发起失败：', retryError instanceof Error ? retryError.message : String(retryError))
         }
       }
-      render('操作失败', `<div class="bad">✕</div><h2>三方授权失败</h2><p>${escapeHtml(message)}</p><p><a href="/">返回控制台</a></p>`)
+      render(t('操作失败'), `<div class="bad">✕</div><h2>${t('三方授权失败')}</h2><p>${escapeHtml(message)}</p><p><a href="/">${t('返回控制台')}</a></p>`)
     }
   }
   http.register('GET', '/api/auth/sso', handleSsoCallback, { access: 'public' })
@@ -276,7 +277,7 @@ else if(nx&&/^https?:\\/\\/(localhost|127\\.|10\\.|192\\.168\\.|172\\.(1[6-9]|2[
   http.register('POST', '/api/auth/refresh', async (exchange) => {
     const { refreshToken } = body<{ refreshToken: string }>(exchange)
     if (!refreshToken) {
-      exchange.fail(400, 'BAD_REQUEST', 'refreshToken 必填')
+      exchange.fail(400, 'BAD_REQUEST', t('refreshToken 必填'))
       return
     }
     try {
@@ -318,9 +319,9 @@ else if(nx&&/^https?:\\/\\/(localhost|127\\.|10\\.|192\\.168\\.|172\\.(1[6-9]|2[
     try {
       const verified = ctx.authn.verify(token)
       if (verified.token.sid) {
-        ctx.authn.revokeSession(verified.token.sid, '用户主动登出')
+        ctx.authn.revokeSession(verified.token.sid, t('用户主动登出'))
       } else {
-        ctx.authn.revokeToken(verified.token.jti, '用户主动登出')
+        ctx.authn.revokeToken(verified.token.jti, t('用户主动登出'))
       }
     } catch { /* 令牌已失效也允许登出 */ }
     if (refreshToken) {

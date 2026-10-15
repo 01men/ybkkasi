@@ -24,6 +24,7 @@ import { PlatformEvents } from '../../platform-core/src/bus.ts'
 import { newId } from '../../platform-core/src/ids.ts'
 import { PanelService, TASK_LANES, type TaskLane, type DeptWidget, type DeptKpi, type DeptAgent } from './service.ts'
 import { seedPanel } from './seed/seed.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 
 export const name = 'panel-core'
 export const inject = [
@@ -48,11 +49,11 @@ export function apply(ctx: Context) {
   /** 部门参数解析 + 归属校验（部门范围权限：绑定组织后仅组织子树/管理员/机器凭证可访问）。 */
   const deptOf = (exchange: HttpExchange) => {
     const dept = String(exchange.params.dept ?? '')
-    if (!DEPT_RE.test(dept)) throw new Error(`部门标识非法：${dept}`)
+    if (!DEPT_RE.test(dept)) throw new Error(t('部门标识非法：{dept}', { dept }))
     const config = panel.dept(dept)
     if (!panel.deptScopeAllowed(caller(exchange), config)) {
-      exchange.fail(403, 'FORBIDDEN', `部门范围受限：${config.label} 已绑定组织治理，仅该组织子树成员可访问`, { permission: 'panel.read', deptScope: config.orgId })
-      throw new Error('部门范围受限')
+      exchange.fail(403, 'FORBIDDEN', t('部门范围受限：{label} 已绑定组织治理，仅该组织子树成员可访问', { label: config.label }), { permission: 'panel.read', deptScope: config.orgId })
+      throw new Error(t('部门范围受限'))
     }
     return config
   }
@@ -79,7 +80,7 @@ export function apply(ctx: Context) {
     ctx.platformBus.emit('audit.authz.denied', {
       actorId: info.userId, actorName: info.name, point: `scene:${sceneCode}#${action}`, path: exchange.path,
     })
-    exchange.fail(403, 'FORBIDDEN', `场景授权拒绝（${sceneCode} · ${action}）：${decision.reason}`)
+    exchange.fail(403, 'FORBIDDEN', t('场景授权拒绝（{scene} · {action}）：{reason}', { scene: sceneCode, action, reason: decision.reason }))
     return false
   }
 
@@ -106,7 +107,7 @@ export function apply(ctx: Context) {
     const dept = panel.dept(String(exchange.params.dept ?? ''))
     const input = body<{ orgId?: string | null }>(exchange)
     if (input.orgId !== undefined && input.orgId !== null && input.orgId !== '') {
-      if (!ctx.iam.orgs().get(input.orgId)) throw new Error(`组织不存在：${input.orgId}`)
+      if (!ctx.iam.orgs().get(input.orgId)) throw new Error(t('组织不存在：{id}', { id: input.orgId }))
       ctx.panel.deptConfigs().update(dept.id, { orgId: input.orgId })
     } else {
       ctx.panel.deptConfigs().update(dept.id, { orgId: undefined })
@@ -151,11 +152,11 @@ export function apply(ctx: Context) {
   guarded('PUT', '/api/panel/:dept/widgets', 'panel.config.write', (exchange) => {
     const dept = deptOf(exchange)
     const widgets = body<{ widgets?: DeptWidget[] }>(exchange).widgets
-    if (!Array.isArray(widgets)) throw new Error('body.widgets 必须是数组')
+    if (!Array.isArray(widgets)) throw new Error(t('body.widgets 必须是数组'))
     for (const widget of widgets) {
-      if (!widget.id || !widget.type || !widget.title) throw new Error('widget 必须包含 id/type/title')
-      if (!['bars', 'funnel', 'alerts', 'todos', 'feeds'].includes(widget.type)) throw new Error(`widget.type 非法：${widget.type}`)
-      if (!['manual', 'mock', 'connector', 'mcp'].includes(widget.source)) throw new Error(`widget.source 非法（来源徽标必填）：${widget.source}`)
+      if (!widget.id || !widget.type || !widget.title) throw new Error(t('widget 必须包含 id/type/title'))
+      if (!['bars', 'funnel', 'alerts', 'todos', 'feeds'].includes(widget.type)) throw new Error(t('widget.type 非法：{type}', { type: widget.type }))
+      if (!['manual', 'mock', 'connector', 'mcp'].includes(widget.source)) throw new Error(t('widget.source 非法（来源徽标必填）：{source}', { source: widget.source }))
     }
     ctx.panel.deptConfigs().update(dept.id, { widgets })
     changeLog(exchange, 'panel.widget.layout', 'panel_dept', dept.id, dept.label, `${widgets.length} 块 widget`)
@@ -167,10 +168,10 @@ export function apply(ctx: Context) {
   guarded('PUT', '/api/panel/:dept/kpis', 'panel.config.write', (exchange) => {
     const dept = deptOf(exchange)
     const kpis = body<{ kpis?: DeptKpi[] }>(exchange).kpis
-    if (!Array.isArray(kpis)) throw new Error('body.kpis 必须是数组')
+    if (!Array.isArray(kpis)) throw new Error(t('body.kpis 必须是数组'))
     for (const kpi of kpis) {
-      if (!kpi.label || kpi.value === undefined) throw new Error('kpi 必须包含 label/value')
-      if (!['manual', 'mock', 'connector'].includes(kpi.source)) throw new Error(`kpi.source 非法（来源徽标必填）：${kpi.source}`)
+      if (!kpi.label || kpi.value === undefined) throw new Error(t('kpi 必须包含 label/value'))
+      if (!['manual', 'mock', 'connector'].includes(kpi.source)) throw new Error(t('kpi.source 非法（来源徽标必填）：{source}', { source: kpi.source }))
     }
     ctx.panel.deptConfigs().update(dept.id, { kpis })
     changeLog(exchange, 'panel.kpi.layout', 'panel_dept', dept.id, dept.label, `${kpis.length} 个 KPI`)
@@ -180,10 +181,10 @@ export function apply(ctx: Context) {
   guarded('PUT', '/api/panel/:dept/agents', 'panel.config.write', (exchange) => {
     const dept = deptOf(exchange)
     const agents = body<{ agents?: DeptAgent[] }>(exchange).agents
-    if (!Array.isArray(agents) || agents.length === 0) throw new Error('body.agents 必须是非空数组')
+    if (!Array.isArray(agents) || agents.length === 0) throw new Error(t('body.agents 必须是非空数组'))
     for (const agent of agents) {
-      if (!agent.name || !agent.icon) throw new Error('agent 必须包含 name/icon')
-      if (agent.agentRef && !/^agent:[A-Za-z0-9._-]+$/.test(agent.agentRef)) throw new Error(`agentRef 格式非法（agent:<idOrSlug>）：${agent.agentRef}`)
+      if (!agent.name || !agent.icon) throw new Error(t('agent 必须包含 name/icon'))
+      if (agent.agentRef && !/^agent:[A-Za-z0-9._-]+$/.test(agent.agentRef)) throw new Error(t('agentRef 格式非法（agent:<idOrSlug>）：{ref}', { ref: agent.agentRef }))
     }
     ctx.panel.deptConfigs().update(dept.id, { agents })
     changeLog(exchange, 'panel.agent.roster', 'panel_dept', dept.id, dept.label, `${agents.length} 个 Agent 阵容位`)
@@ -205,10 +206,10 @@ export function apply(ctx: Context) {
   guarded('POST', '/api/panel/models', 'panel.config.write', (exchange) => {
     const input = body<{ slug?: string; displayName?: string; provider?: string; endpoint?: string; apiKey?: string; listCentsPerKTokens?: number; costCentsPerKTokens?: number; status?: string; dataClassLimit?: string }>(exchange)
     const slug = input.slug?.trim() ?? ''
-    if (!slug) throw new Error('模型 slug 必填（如 deepseek-chat）')
-    if (!/^[A-Za-z0-9._-]{2,64}$/.test(slug)) throw new Error(`slug 仅允许字母/数字/._-（2-64 位）：${slug}`)
-    if (!input.endpoint?.trim()) throw new Error('endpoint 必填（OpenAI 兼容基址；未配置不可调用，绝不造假回复）')
-    if (!Number.isFinite(input.listCentsPerKTokens) || (input.listCentsPerKTokens ?? -1) < 0) throw new Error('listCentsPerKTokens 必须是非负数（挂牌价，分/千 tokens）')
+    if (!slug) throw new Error(t('模型 slug 必填（如 deepseek-chat）'))
+    if (!/^[A-Za-z0-9._-]{2,64}$/.test(slug)) throw new Error(t('slug 仅允许字母/数字/._-（2-64 位）：{slug}', { slug }))
+    if (!input.endpoint?.trim()) throw new Error(t('endpoint 必填（OpenAI 兼容基址；未配置不可调用，绝不造假回复）'))
+    if (!Number.isFinite(input.listCentsPerKTokens) || (input.listCentsPerKTokens ?? -1) < 0) throw new Error(t('listCentsPerKTokens 必须是非负数（挂牌价，分/千 tokens）'))
     const status = input.status === 'offline' ? 'offline' as const : 'online' as const
     // 数据分级上限（IAW 交接 1-1）：公开/内部/秘密，缺省 internal（存量登记兼容）
     const dataClassLimit = input.dataClassLimit === 'public' || input.dataClassLimit === 'internal' || input.dataClassLimit === 'secret'
@@ -235,7 +236,7 @@ export function apply(ctx: Context) {
   guarded('DELETE', '/api/panel/models/:id', 'panel.config.write', (exchange) => {
     const id = exchange.params['id']!
     const model = ctx.modelGateway.models().get(id)
-    if (!model) throw new Error(`模型不存在：${id}`)
+    if (!model) throw new Error(t('模型不存在：{id}', { id }))
     ctx.modelGateway.models().remove(id)
     changeLog(exchange, 'panel.model.delete', 'model', id, model.slug)
     return { deleted: true }
@@ -246,7 +247,7 @@ export function apply(ctx: Context) {
     const slug = String(exchange.params.slug ?? '')
     const info = caller(exchange)
     const orgId = orgIdOf(exchange)
-    if (!orgId) throw new Error('无法确定计费组织（orgId），无法执行真实调用测试')
+    if (!orgId) throw new Error(t('无法确定计费组织（orgId），无法执行真实调用测试'))
     try {
       const result = await ctx.modelGateway.invoke({
         model: slug,
@@ -277,7 +278,7 @@ export function apply(ctx: Context) {
   guarded('POST', '/api/panel/:dept/channels', 'panel.write', (exchange) => {
     const dept = deptOf(exchange)
     const input = body<{ name?: string; desc?: string }>(exchange)
-    if (!input.name?.trim()) throw new Error('频道名必填')
+    if (!input.name?.trim()) throw new Error(t('频道名必填'))
     const info = caller(exchange)
     const channel = panel.channels().insert({
       id: newId('pchan'), dept: dept.id, name: input.name.trim(),
@@ -300,13 +301,13 @@ export function apply(ctx: Context) {
   guarded('POST', '/api/panel/:dept/messages', 'panel.write', async (exchange) => {
     const dept = deptOf(exchange)
     const input = body<{ channelId?: string; text?: string; ddSync?: boolean; uniqueKey?: string; model?: string }>(exchange)
-    if (!input.text?.trim()) throw new Error('消息内容必填')
+    if (!input.text?.trim()) throw new Error(t('消息内容必填'))
     const channelId = input.channelId || panel.channels().find((item) => item.dept === dept.id).at(0)?.id
-    if (!channelId) throw new Error('部门暂无频道，请先创建')
+    if (!channelId) throw new Error(t('部门暂无频道，请先创建'))
     // 对话框模型切换：显式指定 model 时必须是模型目录已登记的 slug（未指定则跟随 Agent 资产配置）
     const requestedModel = input.model?.trim() ?? ''
     if (requestedModel && !ctx.modelGateway.models().findOne((item) => item.slug === requestedModel)) {
-      throw new Error(`模型未在目录登记：${requestedModel}（可在「🧠 模型」中登记）`)
+      throw new Error(t('模型未在目录登记：{model}（可在「🧠 模型」中登记）', { model: requestedModel }))
     }
     const info = caller(exchange)
     const message = await panel.sendMessage({
@@ -320,14 +321,14 @@ export function apply(ctx: Context) {
 
   guarded('POST', '/api/panel/channels/:id/read', 'panel.read', (exchange) => {
     const info = caller(exchange)
-    if (!info.userId) throw new Error('仅平台账号可推进已读游标')
+    if (!info.userId) throw new Error(t('仅平台账号可推进已读游标'))
     panel.markRead(info.userId, String(exchange.params.id))
     return { ok: true }
   })
 
   guarded('POST', '/api/panel/messages/:id/card-action', 'panel.write', async (exchange) => {
     const input = body<{ opId?: string; reason?: string }>(exchange)
-    if (!input.opId) throw new Error('opId 必填')
+    if (!input.opId) throw new Error(t('opId 必填'))
     const info = caller(exchange)
     const result = await panel.cardAction({
       messageId: String(exchange.params.id), opId: input.opId,
@@ -356,14 +357,14 @@ export function apply(ctx: Context) {
     const input = body<{ skill?: string; message?: string; channelId?: string; model?: string; uniqueKey?: string }>(exchange)
     const skillName = input.skill?.trim() ?? ''
     const message = input.message?.trim() ?? ''
-    if (!skillName) throw new Error('skill 必填（技能名或 slug）')
-    if (!message) throw new Error('message 必填（要交给技能的输入/问题）')
-    if (message.length > 10_000) throw new Error('消息内容过长（上限 10000 字符）')
+    if (!skillName) throw new Error(t('skill 必填（技能名或 slug）'))
+    if (!message) throw new Error(t('message 必填（要交给技能的输入/问题）'))
+    if (message.length > 10_000) throw new Error(t('消息内容过长（上限 10000 字符）'))
     const channelId = input.channelId || panel.channels().find((item) => item.dept === dept.id).at(0)?.id
-    if (!channelId) throw new Error('部门暂无频道，请先创建')
+    if (!channelId) throw new Error(t('部门暂无频道，请先创建'))
     const requestedModel = input.model?.trim() ?? ''
     if (requestedModel && !ctx.modelGateway.models().findOne((item) => item.slug === requestedModel)) {
-      throw new Error(`模型未在目录登记：${requestedModel}（可在「模型管理」中登记）`)
+      throw new Error(t('模型未在目录登记：{model}（可在「模型管理」中登记）', { model: requestedModel }))
     }
     const info = caller(exchange)
     const trace = await panel.sendMessage({
@@ -379,8 +380,8 @@ export function apply(ctx: Context) {
     })
     if (!result.ok) {
       await panel.sendMessage({
-        dept: dept.id, channelId, senderType: 'system', senderName: '系统',
-        text: `⚡ 技能「${skillName}」调用失败：${result.reason}`, ddSync: false,
+        dept: dept.id, channelId, senderType: 'system', senderName: t('系统'),
+        text: t('⚡ 技能「{name}」调用失败：{reason}', { name: skillName, reason: result.reason }), ddSync: false,
       })
       return { ok: false as const, reason: result.reason, message: trace }
     }
@@ -404,8 +405,8 @@ export function apply(ctx: Context) {
   guarded('POST', '/api/panel/:dept/tasks', 'panel.task.write', (exchange) => {
     const dept = deptOf(exchange)
     const input = body<{ title?: string; detail?: string; lane?: string; assigneeName?: string; assigneeType?: string; sceneCode?: string }>(exchange)
-    if (!input.title?.trim()) throw new Error('任务标题必填')
-    if (input.lane !== undefined && !TASK_LANES.includes(input.lane as TaskLane)) throw new Error(`非法泳道：${input.lane}`)
+    if (!input.title?.trim()) throw new Error(t('任务标题必填'))
+    if (input.lane !== undefined && !TASK_LANES.includes(input.lane as TaskLane)) throw new Error(t('非法泳道：{lane}', { lane: input.lane }))
     // A-01：任务挂场景时按场景策略裁决创建动作（deny/fail-closed → 403），无策略维持放行
     if (!sceneGuard(exchange, input.sceneCode, 'panel.task.create')) return
     const info = caller(exchange)
@@ -423,7 +424,7 @@ export function apply(ctx: Context) {
 
   guarded('POST', '/api/panel/tasks/:id/transition', 'panel.task.write', (exchange) => {
     const lane = body<{ lane?: string }>(exchange).lane
-    if (!lane || !TASK_LANES.includes(lane as TaskLane)) throw new Error(`非法泳道：${lane}`)
+    if (!lane || !TASK_LANES.includes(lane as TaskLane)) throw new Error(t('非法泳道：{lane}', { lane }))
     const info = caller(exchange)
     return { task: panel.transitionTask(String(exchange.params.id), lane as TaskLane, info.userId ?? info.principalId) }
   })
@@ -437,7 +438,7 @@ export function apply(ctx: Context) {
   guarded('POST', '/api/panel/:dept/artifacts', 'panel.write', (exchange) => {
     const dept = deptOf(exchange)
     const input = body<{ title?: string; content?: string; kind?: string; sceneCode?: string }>(exchange)
-    if (!input.title?.trim() || !input.content?.trim()) throw new Error('标题与内容必填')
+    if (!input.title?.trim() || !input.content?.trim()) throw new Error(t('标题与内容必填'))
     const kind = (['report', 'order', 'quote', 'diagnosis', 'other'].includes(input.kind ?? '') ? input.kind : 'other') as 'report' | 'order' | 'quote' | 'diagnosis' | 'other'
     const info = caller(exchange)
     const artifact = panel.artifacts().insert({
@@ -464,13 +465,13 @@ export function apply(ctx: Context) {
     const { pack, sceneLabel } = panel.sceneContext(code)
     const info = caller(exchange)
     ctx.platformBus.emit(PlatformEvents.PanelCardAction, {
-      dept: dept.id, opId: 'scene-sync', opLabel: '同步钉钉群', action: 'dd.push', ddPush: true,
-      title: `🗺 ${pack.name}场景卡：${sceneLabel}`,
-      text: `【${pack.name} · ${code}】${sceneLabel}\n痛点与四清单详见部门面板「场景图谱」页。`,
+      dept: dept.id, opId: 'scene-sync', opLabel: t('同步钉钉群'), action: 'dd.push', ddPush: true,
+      title: t('🗺 {pack}场景卡：{scene}', { pack: pack.name, scene: sceneLabel }),
+      text: t('【{pack} · {code}】{scene}\n痛点与四清单详见部门面板「场景图谱」页。', { pack: pack.name, code, scene: sceneLabel }),
       actorId: info.userId ?? info.principalId, actorName: info.name, channelName: '',
     })
     changeLog(exchange, 'panel.scene.sync_dingtalk', 'panel_scene', code, sceneLabel)
-    return { ok: true, note: '已请求钉钉桥接投递（未绑定群桥时投递失败会留痕告警）' }
+    return { ok: true, note: t('已请求钉钉桥接投递（未绑定群桥时投递失败会留痕告警）') }
   })
 
   // -- 行业三态 + 激活申请 + 图谱 -----------------------------------------------------
@@ -486,17 +487,17 @@ export function apply(ctx: Context) {
   guarded('POST', '/api/panel/industries/:code/activate-requests', 'panel.write', (exchange) => {
     const code = String(exchange.params.code ?? '').toUpperCase()
     const registry = panel.industryStates('', []).find((item) => item.code === code)
-    if (!registry) throw new Error(`未登记行业：${code}`)
+    if (!registry) throw new Error(t('未登记行业：{code}', { code }))
     const orgId = orgIdOf(exchange)
-    if (!orgId) throw new Error('无法确定所属组织（组织账号缺失）')
+    if (!orgId) throw new Error(t('无法确定所属组织（组织账号缺失）'))
     const existing = panel.activations().findOne((item) => item.orgId === orgId && item.code === code && item.status === 'active')
-    if (existing) throw new Error(`行业 ${code} 对本组织已是激活态`)
+    if (existing) throw new Error(t('行业 {code} 对本组织已是激活态', { code }))
     const info = caller(exchange)
     const approval = ctx.audit.createApproval({
       kind: 'industry.activation',
       // WP-10/L1（QA A-06）：L4 高危统一高风险——通过需二次确认 + 公司级终审标记
       riskLevel: 'high',
-      title: `行业功能包授权激活：${registry.name}（${code}）`,
+      title: t('行业功能包授权激活：{name}（{code}）', { name: registry.name, code }),
       payload: { code, orgId, requestedBy: info.name, sub: registry.sub, graphLoaded: registry.graphLoaded },
       requesterId: info.userId ?? info.principalId,
       requesterName: info.name,
@@ -508,7 +509,7 @@ export function apply(ctx: Context) {
   guarded('GET', '/api/panel/scenegraph', 'scenegraph.read', (exchange) => {
     const code = (exchange.query.get('industry') ?? '').toUpperCase()
     const pack = ctx.scenegraphs.get(code)
-    if (!pack) throw new Error(`场景图谱未装载或未激活：${code}（已装载：${ctx.scenegraphs.all().map((item) => item.code).join('/') || '无'}）`)
+    if (!pack) throw new Error(t('场景图谱未装载或未激活：{code}（已装载：{loaded}）', { code, loaded: ctx.scenegraphs.all().map((item) => item.code).join('/') || t('无') }))
     return { pack, problems: ctx.scenegraphs.loadProblems() }
   })
 
@@ -554,10 +555,10 @@ export function apply(ctx: Context) {
 
   guarded('POST', '/api/panel/stream-ticket', 'panel.read', (exchange) => {
     const dept = String(body<{ dept?: string }>(exchange).dept ?? '')
-    if (!DEPT_RE.test(dept)) throw new Error(`部门标识非法：${dept}`)
+    if (!DEPT_RE.test(dept)) throw new Error(t('部门标识非法：{dept}', { dept }))
     const deptConfig = panel.dept(dept)
     if (!panel.deptScopeAllowed(caller(exchange), deptConfig)) {
-      exchange.fail(403, 'FORBIDDEN', `部门范围受限：${deptConfig.label} 已绑定组织治理，仅该组织子树成员可访问`, { permission: 'panel.read', deptScope: deptConfig.orgId })
+      exchange.fail(403, 'FORBIDDEN', t('部门范围受限：{label} 已绑定组织治理，仅该组织子树成员可访问', { label: deptConfig.label }), { permission: 'panel.read', deptScope: deptConfig.orgId })
       return
     }
     return { ticket: issueStreamTicket(caller(exchange), dept), expiresInSeconds: STREAM_TICKET_TTL_MS / 1000 }
@@ -568,25 +569,25 @@ export function apply(ctx: Context) {
     const fail = (status: number, message: string) => exchange.fail(status, 'STREAM_AUTH_FAILED', message)
     let dept = exchange.query.get('dept') ?? ''
     const ticketRaw = exchange.query.get('ticket') ?? ''
-    if (!ticketRaw && !exchange.query.get('token')) return fail(401, '缺少 ticket/token 查询参数')
+    if (!ticketRaw && !exchange.query.get('token')) return fail(401, t('缺少 ticket/token 查询参数'))
     if (ticketRaw) {
       // ticket 通道：签发时已完成鉴权 + 权限点 + 部门范围校验，这里只做一次性消费（兑换即焚）
       const key = createHash('sha256').update(ticketRaw).digest('hex')
       const entry = streamTickets.get(key)
       if (!entry || entry.expiresAt < Date.now()) {
         streamTickets.delete(key)
-        return fail(401, 'ticket 无效或已过期，请重新获取')
+        return fail(401, t('ticket 无效或已过期，请重新获取'))
       }
       streamTickets.delete(key)
       const queryDept = dept
       dept = entry.dept
-      if (queryDept && queryDept !== dept) return fail(400, `dept 查询参数与 ticket 签发部门不一致：${queryDept} ≠ ${dept}`)
+      if (queryDept && queryDept !== dept) return fail(400, t('dept 查询参数与 ticket 签发部门不一致：{query} ≠ {issued}', { query: queryDept, issued: dept }))
       exchange.principal = entry.principal
       if (!requirePermission(exchange, 'panel.read')) return
     } else {
       const token = exchange.query.get('token') ?? ''
-      if (!token) return fail(401, '缺少 token 查询参数')
-      if (!DEPT_RE.test(dept)) return fail(400, `部门标识非法：${dept}`)
+      if (!token) return fail(401, t('缺少 token 查询参数'))
+      if (!DEPT_RE.test(dept)) return fail(400, t('部门标识非法：{dept}', { dept }))
       try {
         const verified = ctx.authn.verify(token)
         // principal 形状与 console 鉴权中间件同规（human → userId=refId）：deptScopeAllowed
@@ -601,7 +602,7 @@ export function apply(ctx: Context) {
           actChain: verified.actChain,
         }
       } catch (error) {
-        return fail(401, `令牌无效：${error instanceof Error ? error.message : String(error)}`)
+        return fail(401, t('令牌无效：{message}', { message: error instanceof Error ? error.message : String(error) }))
       }
       if (!requirePermission(exchange, 'panel.read')) return
     }
@@ -611,9 +612,9 @@ export function apply(ctx: Context) {
     const deptConfig = (() => {
       try { return panel.dept(dept) } catch { return undefined }
     })()
-    if (!deptConfig) return fail(404, `部门不存在：${dept}`)
+    if (!deptConfig) return fail(404, t('部门不存在：{dept}', { dept }))
     if (!panel.deptScopeAllowed(caller(exchange), deptConfig)) {
-      exchange.fail(403, 'FORBIDDEN', `部门范围受限：${deptConfig.label} 已绑定组织治理，仅该组织子树成员可访问`, { permission: 'panel.read', deptScope: deptConfig.orgId })
+      exchange.fail(403, 'FORBIDDEN', t('部门范围受限：{label} 已绑定组织治理，仅该组织子树成员可访问', { label: deptConfig.label }), { permission: 'panel.read', deptScope: deptConfig.orgId })
       return
     }
     const res = exchange.res
@@ -652,7 +653,7 @@ export function apply(ctx: Context) {
     if (!message || (message.ddSync !== 'pending' && message.ddSync !== 'sent')) return
     panel.messages().update(messageId, { ddSync: ok ? 'sent' : 'failed' })
     if (!ok && error) {
-      ctx.audit.fire({ severity: 'warning', title: '钉钉桥接投递失败', message: `消息 ${messageId} 投递失败：${error}`, resourceType: 'panel_message', resourceId: messageId })
+      ctx.audit.fire({ severity: 'warning', title: t('钉钉桥接投递失败'), message: t('消息 {messageId} 投递失败：{error}', { messageId, error }), resourceType: 'panel_message', resourceId: messageId })
     }
   })
 
@@ -718,7 +719,7 @@ export function apply(ctx: Context) {
     async execute(args, exec) {
       const input = args as { dept: string; channel_id?: string; text: string; sync_dingtalk?: boolean }
       const channelId = input.channel_id || panel.channels().find((item) => item.dept === input.dept).at(0)?.id
-      if (!channelId) throw new Error(`部门 ${input.dept} 暂无频道`)
+      if (!channelId) throw new Error(t('部门 {dept} 暂无频道', { dept: input.dept }))
       const message = await panel.sendMessage({
         dept: input.dept, channelId, senderType: 'human',
         senderId: exec.principal?.userId, senderName: exec.principal?.name ?? '工具调用',

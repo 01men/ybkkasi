@@ -9,6 +9,7 @@ import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { newId } from '../../../platform-core/src/index.ts'
 import { ShareLinkError, SHARE_LINK_TTL_PRESETS } from '../../../plugin-nas/src/share-link.ts'
 import { RulesVersionConflictError } from '../../../plugin-nas/src/authz.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export interface NasRouteDeps extends ConsoleRouteDeps {
@@ -54,18 +55,18 @@ function parseNasMcpServersConfig(raw: string | object): NasImportEntry[] {
     try {
       config = JSON.parse(raw)
     } catch {
-      throw new Error('配置不是合法 JSON，请粘贴完整的 mcpServers 配置文本')
+      throw new Error(t('配置不是合法 JSON，请粘贴完整的 mcpServers 配置文本'))
     }
   } else {
     config = raw
   }
   const obj = config && typeof config === 'object' && !Array.isArray(config) ? config as Record<string, unknown> : null
-  if (!obj) throw new Error('配置须为 JSON 对象')
+  if (!obj) throw new Error(t('配置须为 JSON 对象'))
   const map = (obj.mcpServers && typeof obj.mcpServers === 'object' && !Array.isArray(obj.mcpServers)
     ? obj.mcpServers
     : obj) as Record<string, unknown>
   const entries = Object.entries(map).filter(([, value]) => value && typeof value === 'object')
-  if (entries.length === 0) throw new Error('未识别出任何服务条目：需要 {"mcpServers": {"名称": {"url": "…", "headers": {"Authorization": "Bearer …", "X-NAS-IP": "…"}}}}')
+  if (entries.length === 0) throw new Error(t('未识别出任何服务条目：需要 {"mcpServers": {"名称": {"url": "…", "headers": {"Authorization": "Bearer …", "X-NAS-IP": "…"}}}}'))
   return entries.map(([name, server]) => {
     const record = server as Record<string, unknown>
     const headers = (record.headers && typeof record.headers === 'object' ? record.headers : {}) as Record<string, string>
@@ -73,15 +74,15 @@ function parseNasMcpServersConfig(raw: string | object): NasImportEntry[] {
     const nasIp = Object.entries(headers).find(([key]) => key.toLowerCase() === 'x-nas-ip')?.[1] ?? ''
     const url = typeof record.url === 'string' ? record.url.trim() : ''
     const base = { name, url, token: authHeader.replace(/^Bearer\s+/i, '').trim(), nasIp: String(nasIp).trim() }
-    if (!url) return { ...base, error: '缺少 url 字段' }
+    if (!url) return { ...base, error: t('缺少 url 字段') }
     try {
       const parsed = new URL(url)
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { ...base, error: `仅支持 http(s) 地址，收到 ${parsed.protocol}` }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { ...base, error: t('仅支持 http(s) 地址，收到 {protocol}', { protocol: parsed.protocol }) }
     } catch {
-      return { ...base, error: `url 不是合法地址：${url}` }
+      return { ...base, error: t('url 不是合法地址：{url}', { url }) }
     }
-    if (!base.token) return { ...base, error: '缺少 headers.Authorization（Bearer 网关令牌）' }
-    if (!base.nasIp) return { ...base, error: '缺少 headers["X-NAS-IP"]（NAS 设备路由）' }
+    if (!base.token) return { ...base, error: t('缺少 headers.Authorization（Bearer 网关令牌）') }
+    if (!base.nasIp) return { ...base, error: t('缺少 headers["X-NAS-IP"]（NAS 设备路由）') }
     return base
   })
 }
@@ -105,7 +106,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
 
   guarded('GET', '/api/nas/:id', 'nas.read', (exchange) => {
     const nas = ctx.nasRegistry.get(exchange.params['id']!)
-    if (!nas) throw new Error(`NAS 资产不存在：${exchange.params['id']}`)
+    if (!nas) throw new Error(t('NAS 资产不存在：{id}', { id: exchange.params['id'] }))
     return {
       ...maskNasEntity(nas),
       health: ctx.nasRegistry.healthOf(nas.id),
@@ -142,10 +143,10 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
   guarded('DELETE', '/api/nas/:id', 'nas.write', (exchange) => {
     const id = exchange.params['id']!
     const nas = ctx.nasRegistry.get(id)
-    if (!nas) throw new Error(`NAS 资产不存在：${id}`)
+    if (!nas) throw new Error(t('NAS 资产不存在：{id}', { id }))
     const storage = ctx.nasRegistry.getSkillStorage()
     if (storage.mode === 'nas' && storage.nasId === id) {
-      throw new Error('该 NAS 正作为 Skill 包存储后端，请先在「Skill 包存储」切换为 local 或其他 NAS')
+      throw new Error(t('该 NAS 正作为 Skill 包存储后端，请先在「Skill 包存储」切换为 local 或其他 NAS'))
     }
     ctx.resourceCore.remove('nas', id, { allowStates: ['draft', 'archived'] })
     ctx.nasRegistry.purge(id)
@@ -163,7 +164,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
       return maskNasEntity(nas)
     }
     if (action === 'offline') {
-      if (!note?.trim()) throw new Error('下线必须填写原因（护栏要求）')
+      if (!note?.trim()) throw new Error(t('下线必须填写原因（护栏要求）'))
       const nas = ctx.nasRegistry.offline(id, info.name, note)
       changeLog(exchange, 'nas.offline', 'nas', id, nas.name, note)
       return maskNasEntity(nas)
@@ -173,7 +174,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
       changeLog(exchange, 'nas.archive', 'nas', id, nas.name)
       return maskNasEntity(nas)
     }
-    throw new Error(`未知操作：${action}`)
+    throw new Error(t('未知操作：{action}', { action }))
   })
 
   guarded('POST', '/api/nas/:id/health', 'nas.read', async (exchange) => {
@@ -204,7 +205,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
         const nas = ctx.nasRegistry.register({
           name: input.name && entries.length === 1 ? input.name : entry.name,
           attrs: {
-            description: input.description ?? `mcpServers JSON 导入（网关 ${entry.url}）`,
+            description: input.description ?? t('mcpServers JSON 导入（网关 {url}）', { url: entry.url }),
             gatewayUrl: entry.url,
             accessToken: entry.token,
             nasIp: entry.nasIp,
@@ -230,7 +231,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
           status = onlined.status
         }
         changeLog(exchange, 'nas.import', 'nas', nas.id, nas.name, `reachable=${reachable}`)
-        results.push({ name: entry.name, ok: true, nasId: nas.id, reachable, tools, status, ...(reachable ? {} : { error: '网关不可达：资产保留草稿，请检查地址/令牌/网络后重试上线' }) })
+        results.push({ name: entry.name, ok: true, nasId: nas.id, reachable, tools, status, ...(reachable ? {} : { error: t('网关不可达：资产保留草稿，请检查地址/令牌/网络后重试上线') }) })
       } catch (error) {
         results.push({ name: entry.name, ok: false, error: error instanceof Error ? error.message : String(error) })
       }
@@ -248,14 +249,14 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
 
   guarded('GET', '/api/nas/:id/fs/info', 'nas.read', async (exchange) => {
     const path = exchange.query.get('path')
-    if (!path) throw new Error('缺少 path 查询参数')
+    if (!path) throw new Error(t('缺少 path 查询参数'))
     const info = caller(exchange)
     return await ctx.nasRegistry.getInfo(exchange.params['id']!, path, { id: info.userId ?? info.principalId, name: info.name })
   })
 
   guarded('POST', '/api/nas/:id/fs/search', 'nas.read', async (exchange) => {
     const { pattern, path } = body<{ pattern: string; path?: string }>(exchange)
-    if (!pattern) throw new Error('缺少 pattern')
+    if (!pattern) throw new Error(t('缺少 pattern'))
     const info = caller(exchange)
     return await ctx.nasRegistry.search(exchange.params['id']!, pattern, path ?? '/', { id: info.userId ?? info.principalId, name: info.name })
   })
@@ -297,7 +298,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
   guarded('POST', '/api/nas/:id/fs/upload', 'nas.write', async (exchange) => {
     const input = body<{ localFile?: string; contentBase64?: string; destPath: string }>(exchange)
     const info = caller(exchange)
-    if (input.localFile && input.contentBase64) throw new Error('localFile 与 contentBase64 二选一')
+    if (input.localFile && input.contentBase64) throw new Error(t('localFile 与 contentBase64 二选一'))
     const buffer = input.contentBase64 !== undefined ? Buffer.from(input.contentBase64, 'base64') : undefined
     const result = await ctx.nasRegistry.uploadFile(exchange.params['id']!, {
       ...(buffer !== undefined ? { buffer } : { localFile: input.localFile }),
@@ -328,7 +329,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
   const downloadTickets = new Map<string, { nasId: string; path: string; userId?: string; principalId: string; userName: string; expiresAt: number; once: boolean }>()
   guarded('POST', '/api/nas/:id/fs/download-ticket', 'nas.read', (exchange) => {
     const { path, mode } = body<{ path: string; mode?: 'once' | 'link' }>(exchange)
-    if (!path) throw new Error('缺少 path')
+    if (!path) throw new Error(t('缺少 path'))
     const info = caller(exchange)
     const once = mode !== 'link'
     const ttlSec = once ? 15 : LINK_TICKET_TTL_SEC
@@ -344,7 +345,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     })
     // 清理过期票据
     for (const [key, value] of downloadTickets) if (value.expiresAt < Date.now()) downloadTickets.delete(key)
-    changeLog(exchange, 'nas.fs.download_ticket', 'nas', exchange.params['id']!, '', `${path}（${once ? '一次性票据' : `分享链接票据，${LINK_TICKET_TTL_SEC / 60} 分钟有效`}）`)
+    changeLog(exchange, 'nas.fs.download_ticket', 'nas', exchange.params['id']!, '', t('{path}（{mode}）', { path, mode: once ? t('一次性票据') : t('分享链接票据，{minutes} 分钟有效', { minutes: LINK_TICKET_TTL_SEC / 60 }) }))
     return { ticket, expiresInSec: ttlSec }
   })
 
@@ -355,7 +356,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     if (!requirePermission(exchange, 'nas.write')) return
     const input = body<{ path?: string; ttlSec?: number; permanent?: boolean; note?: string }>(exchange)
     if (!input.path) {
-      exchange.fail(400, 'BAD_REQUEST', '缺少 path')
+      exchange.fail(400, 'BAD_REQUEST', t('缺少 path'))
       return
     }
     const info = caller(exchange)
@@ -405,7 +406,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     try {
       const result = ctx.nasShareLinks.revoke(exchange.params['jti']!, caller(exchange).name, reason)
       changeLog(exchange, 'nas.fs.share_link_revoke', 'nas', exchange.params['id']!, '',
-        `${result.record.path}（${result.alreadyRevoked ? '已是吊销态，幂等返回' : `吊销人 ${caller(exchange).name}${reason ? `，事由：${reason}` : ''}`}）`)
+        t('{path}（{detail}）', { path: result.record.path, detail: result.alreadyRevoked ? t('已是吊销态，幂等返回') : t('吊销人 {name}{reason}', { name: caller(exchange).name, reason: reason ? t('，事由：{reason}', { reason }) : '' }) }))
       exchange.ok({ ...result.record, alreadyRevoked: result.alreadyRevoked })
     } catch (error) {
       if (error instanceof ShareLinkError) {
@@ -426,8 +427,8 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
         ...(input.path ? { path: String(input.path) } : {}),
         ...(input.all !== undefined ? { all: input.all === true } : {}),
       }, caller(exchange).name, String(input.reason ?? ''))
-      const scope = input.all === true ? '全部链接' : input.userId ? `签发者 ${input.userId}` : `路径 ${input.path}`
-      changeLog(exchange, 'nas.fs.share_link_revoke', 'nas', exchange.params['id']!, '', `批量吊销 ${scope}：${result.count} 条`)
+      const scope = input.all === true ? t('全部链接') : input.userId ? t('签发者 {userId}', { userId: input.userId }) : t('路径 {path}', { path: input.path })
+      changeLog(exchange, 'nas.fs.share_link_revoke', 'nas', exchange.params['id']!, '', t('批量吊销 {scope}：{n} 条', { scope, n: result.count }))
       exchange.ok({ revoked: result.count })
     } catch (error) {
       if (error instanceof ShareLinkError) {
@@ -458,7 +459,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
         ...(input.permanentPermission !== undefined ? { permanentPermission: String(input.permanentPermission) } : {}),
       }, input.ifVersion !== undefined ? Number(input.ifVersion) : undefined, caller(exchange).name)
       // 放权动作显式留痕（决策 ③：allowPermanent 的翻转属授权升级，必须可审）
-      changeLog(exchange, 'nas.authz.share_link_policy', 'nas_authz_rules', 'singleton', 'NAS 分享链接档位策略',
+      changeLog(exchange, 'nas.authz.share_link_policy', 'nas_authz_rules', 'singleton', t('NAS 分享链接档位策略'),
         `maxTtlSec=${saved.maxTtlSec} allowPermanent=${saved.allowPermanent} permanentPermission=${saved.permanentPermission}`)
       exchange.ok(saved)
     } catch (error) {
@@ -479,8 +480,8 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     const note = String(body<{ note?: string }>(exchange).note ?? '')
     try {
       const result = ctx.nasShareLinks.rotateSecret(note || undefined)
-      changeLog(exchange, 'nas.authz.share_link_secret_rotate', 'nas_authz_rules', 'singleton', 'NAS 分享链接签名密钥',
-        `新密钥 ${result.keyId}；退役 ${result.retiredKeyId ?? '-'}（永久保留验签，已发链接不失效）`)
+      changeLog(exchange, 'nas.authz.share_link_secret_rotate', 'nas_authz_rules', 'singleton', t('NAS 分享链接签名密钥'),
+        t('新密钥 {keyId}；退役 {retired}（永久保留验签，已发链接不失效）', { keyId: result.keyId, retired: result.retiredKeyId ?? '-' }))
       exchange.ok(result)
     } catch (error) {
       if (error instanceof ShareLinkError) {
@@ -519,7 +520,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
           point: 'nas.read',
           path: exchange.path,
         })
-        exchange.fail(403, 'FORBIDDEN', '缺少权限点 nas.read')
+        exchange.fail(403, 'FORBIDDEN', t('缺少权限点 nas.read'))
         return
       }
     } else if (exchange.query.get('sig')) {
@@ -537,11 +538,11 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
         sig: String(exchange.query.get('sig')),
       })
       if (verdict.outcome === 'invalid') {
-        exchange.fail(401, 'SHARE_LINK_INVALID', `下载链接无效：${verdict.reason}（请重新获取分享链接）`)
+        exchange.fail(401, 'SHARE_LINK_INVALID', t('下载链接无效：{reason}（请重新获取分享链接）', { reason: verdict.reason }))
         return
       }
       if (verdict.outcome === 'forbidden') {
-        exchange.fail(403, 'FORBIDDEN', `下载链接权限复核未通过：${verdict.reasons.join('；')}`)
+        exchange.fail(403, 'FORBIDDEN', t('下载链接权限复核未通过：{reasons}', { reasons: verdict.reasons.join('；') }))
         return
       }
       ctx.nasShareLinks.recordUse(verdict.record.id)
@@ -558,16 +559,16 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
       const ticket = downloadTickets.get(ticketStr)
       if (!ticket || ticket.expiresAt < Date.now()) {
         downloadTickets.delete(ticketStr)
-        exchange.fail(401, 'TICKET_INVALID', '下载票据缺失/过期（请重新发起下载）')
+        exchange.fail(401, 'TICKET_INVALID', t('下载票据缺失/过期（请重新发起下载）'))
         return
       }
       if (ticket.once) downloadTickets.delete(ticketStr) // 一次性票据即领即废；分享链接票据在 TTL 内可反复使用
       if (ticket.nasId !== exchange.params['id']!) {
-        exchange.fail(403, 'FORBIDDEN', '下载票据与资产不匹配')
+        exchange.fail(403, 'FORBIDDEN', t('下载票据与资产不匹配'))
         return
       }
       if ((exchange.query.get('path') ?? '') !== ticket.path) {
-        exchange.fail(403, 'FORBIDDEN', '下载票据与路径不匹配')
+        exchange.fail(403, 'FORBIDDEN', t('下载票据与路径不匹配'))
         return
       }
       info = {
@@ -583,7 +584,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     const filePath = exchange.query.get('path')
     const inline = exchange.query.get('inline') === '1'
     if (!filePath) {
-      exchange.fail(400, 'BAD_REQUEST', '缺少 path 查询参数')
+      exchange.fail(400, 'BAD_REQUEST', t('缺少 path 查询参数'))
       return
     }
     let resolved: { localFile: string; bytes: number }
@@ -591,7 +592,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
       // 先经网关 fs_download 落盘到平台 staging（幂等覆盖写），再基于网关回执的 saved_to 解析本地文件
       const downloaded = await ctx.nasRegistry.downloadFile(id, filePath, { id: info.userId ?? info.principalId, name: info.name })
       const fresh = await import('node:fs/promises').then((m) => m.stat(downloaded.localFile).catch(() => null))
-      if (!fresh?.isFile()) throw new Error(`下载后仍无法读取落盘文件：${downloaded.localFile}`)
+      if (!fresh?.isFile()) throw new Error(t('下载后仍无法读取落盘文件：{file}', { file: downloaded.localFile }))
       resolved = { localFile: downloaded.localFile, bytes: fresh.size }
     } catch (error) {
       exchange.fail(502, 'DOWNLOAD_FAILED', error instanceof Error ? error.message : String(error))
@@ -613,14 +614,14 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
   /** 批量上传（保留目录结构）：files = [{ relativePath, contentBase64 }]，destDir=目标目录。 */
   guarded('POST', '/api/nas/:id/fs/upload-many', 'nas.write', async (exchange) => {
     const input = body<{ files: Array<{ relativePath: string; contentBase64: string }>; destDir: string }>(exchange)
-    if (!Array.isArray(input.files) || input.files.length === 0) throw new Error('files 不能为空')
-    if (!input.destDir) throw new Error('缺少 destDir')
+    if (!Array.isArray(input.files) || input.files.length === 0) throw new Error(t('files 不能为空'))
+    if (!input.destDir) throw new Error(t('缺少 destDir'))
     const info = caller(exchange)
     const result = await ctx.nasRegistry.uploadMany(exchange.params['id']!, input.files.map((f) => ({
       relativePath: String(f.relativePath ?? '').replace(/^\/+/, ''),
       contentBase64: String(f.contentBase64 ?? ''),
     })), String(input.destDir).replace(/^\/+|\/+$/g, ''), { id: info.userId ?? info.principalId, name: info.name })
-    changeLog(exchange, 'nas.fs.upload_many', 'nas', exchange.params['id']!, '', `成功 ${result.uploaded.length} / 失败 ${result.failed.length} → ${input.destDir}`)
+    changeLog(exchange, 'nas.fs.upload_many', 'nas', exchange.params['id']!, '', t('成功 {ok} / 失败 {failed} → {destDir}', { ok: result.uploaded.length, failed: result.failed.length, destDir: input.destDir }))
     return result
   })
 
@@ -635,9 +636,9 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
 
   guarded('POST', '/api/nas/authz/check', 'nas.authz.check', async (exchange) => {
     const input = body<{ nasId: string; userId?: string; paths: string[] | string; op: string; override?: boolean }>(exchange)
-    if (!input.nasId) throw new Error('缺少 nasId')
+    if (!input.nasId) throw new Error(t('缺少 nasId'))
     const userId = onBehalfUser(exchange) ?? input.userId
-    if (!userId) throw new Error('缺少 userId（或 X-On-Behalf-User 头）')
+    if (!userId) throw new Error(t('缺少 userId（或 X-On-Behalf-User 头）'))
     const info = caller(exchange)
     if (input.override === true) {
       // 破窗：仅持 nas.authz.write 的运维可强制 P 判定（强制留痕在 nasAuthz 内完成）
@@ -655,7 +656,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
   guarded('GET', '/api/nas/authz/scope', 'nas.authz.check', (exchange) => {
     const nasId = exchange.query.get('nasId')
     const userId = onBehalfUser(exchange) ?? exchange.query.get('userId') ?? ''
-    if (!nasId || !userId) throw new Error('缺少 nasId 或 userId 查询参数')
+    if (!nasId || !userId) throw new Error(t('缺少 nasId 或 userId 查询参数'))
     return ctx.nasAuthz.scopeOf(nasId, userId)
   })
 
@@ -673,7 +674,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
         ...(input.observeOnly !== undefined ? { observeOnly: input.observeOnly } : {}),
         ...(input.degradeAllToReadonly !== undefined ? { degradeAllToReadonly: input.degradeAllToReadonly } : {}),
       }, Number(input.ifVersion), caller(exchange).name)
-      changeLog(exchange, 'nas.authz.rules_update', 'nas_authz_rules', 'singleton', 'NAS 数据权限规则', `version → ${saved.version}`)
+      changeLog(exchange, 'nas.authz.rules_update', 'nas_authz_rules', 'singleton', t('NAS 数据权限规则'), `version → ${saved.version}`)
       exchange.ok(saved)
     } catch (error) {
       if (error instanceof RulesVersionConflictError) {
@@ -687,8 +688,8 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
   guarded('POST', '/api/nas/authz/rules/import', 'nas.authz.write', (exchange) => {
     const seed = body<Record<string, unknown>>(exchange)
     const result = ctx.nasAuthz.importRules(seed as never, caller(exchange).name)
-    changeLog(exchange, 'nas.authz.rules_import', 'nas_authz_rules', 'singleton', 'NAS 数据权限规则',
-      `${result.changed ? `version → ${result.version}` : '内容一致（幂等跳过）'}${result.unresolvedGroups.length > 0 ? `；未解析组：${result.unresolvedGroups.join(',')}` : ''}`)
+    changeLog(exchange, 'nas.authz.rules_import', 'nas_authz_rules', 'singleton', t('NAS 数据权限规则'),
+      `${result.changed ? `version → ${result.version}` : t('内容一致（幂等跳过）')}${result.unresolvedGroups.length > 0 ? t('；未解析组：{groups}', { groups: result.unresolvedGroups.join(',') }) : ''}`)
     return result
   })
 
@@ -704,12 +705,12 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     if (input.status === 'pending') {
       if (!requirePermission(exchange, 'nas.authz.check')) return
       if (!input.nasId || !input.path) {
-        exchange.fail(400, 'BAD_REQUEST', 'share 申请缺少 nasId/path')
+        exchange.fail(400, 'BAD_REQUEST', t('share 申请缺少 nasId/path'))
         return
       }
       const userId = onBehalfUser(exchange) ?? input.userId
       if (!userId) {
-        exchange.fail(400, 'BAD_REQUEST', '缺少 userId（或 X-On-Behalf-User 头）')
+        exchange.fail(400, 'BAD_REQUEST', t('缺少 userId（或 X-On-Behalf-User 头）'))
         return
       }
       try {
@@ -717,8 +718,8 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
           nasId: String(input.nasId), userId: String(userId), path: String(input.path),
           ...(input.reason !== undefined ? { reason: String(input.reason) } : {}),
         })
-        changeLog(exchange, 'nas.authz.share_request', 'nas_authz_rules', request.approvalId, 'share 分享申请',
-          `审批人路由：${request.escalated ? 'resource_admin 兜底' : request.approverSuggestion.orgName ?? ''}`)
+        changeLog(exchange, 'nas.authz.share_request', 'nas_authz_rules', request.approvalId, t('share 分享申请'),
+          t('审批人路由：{approver}', { approver: request.escalated ? t('resource_admin 兜底') : request.approverSuggestion.orgName ?? '' }))
         exchange.ok({ kind: 'approval', ...request })
       } catch (error) {
         exchange.fail(400, 'BAD_REQUEST', error instanceof Error ? error.message : String(error))
@@ -727,7 +728,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     }
     if (!requirePermission(exchange, 'nas.authz.write')) return
     if (!input.effect || !input.nasId || !input.path || !Array.isArray(input.ops)) {
-      exchange.fail(400, 'BAD_REQUEST', '例外直写需要 effect/nasId/path/ops')
+      exchange.fail(400, 'BAD_REQUEST', t('例外直写需要 effect/nasId/path/ops'))
       return
     }
     try {
@@ -738,7 +739,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
         ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
         ...(input.note ? { note: input.note } : {}),
       }, caller(exchange).name)
-      changeLog(exchange, 'nas.authz.exception_add', 'nas_authz_rules', exception.id, 'NAS 数据权限例外', `${input.effect} ${input.path} [${input.ops.join(',')}]`)
+      changeLog(exchange, 'nas.authz.exception_add', 'nas_authz_rules', exception.id, t('NAS 数据权限例外'), `${input.effect} ${input.path} [${input.ops.join(',')}]`)
       exchange.ok(exception)
     } catch (error) {
       exchange.fail(400, 'BAD_REQUEST', error instanceof Error ? error.message : String(error))
@@ -755,7 +756,7 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     if (!requirePermission(exchange, 'nas.ownership.write')) return
     const input = body<{ nasId: string; userId: string; tool: string; args?: { path?: string | string[]; folder_path?: string | string[]; dest_path?: string; local_file?: string; name?: string | string[]; dest_folder_path?: string; remove_src?: boolean } }>(exchange)
     if (!input.nasId || !input.userId || !input.tool) {
-      exchange.fail(400, 'BAD_REQUEST', '缺少 nasId/userId/tool')
+      exchange.fail(400, 'BAD_REQUEST', t('缺少 nasId/userId/tool'))
       return
     }
     const listOf = (v: string | string[] | undefined): string[] => (Array.isArray(v) ? v : v ? [String(v)] : []).map(String).filter(Boolean)
@@ -810,13 +811,13 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
 
   guarded('POST', '/api/nas/authz/reconcile', 'nas.authz.read', async (exchange) => {
     const report = await ctx.nasAuthz.dailyReconcile()
-    changeLog(exchange, 'nas.authz.reconcile', 'nas_authz_rules', '', '组织目录对账', `${report.length} 台在线 NAS`)
+    changeLog(exchange, 'nas.authz.reconcile', 'nas_authz_rules', '', t('组织目录对账'), t('{n} 台在线 NAS', { n: report.length }))
     return { report }
   })
 
   guarded('POST', '/api/nas/authz/leader-vacancy-scan', 'nas.authz.read', (exchange) => {
     const vacant = ctx.nasAuthz.scanLeaderVacancy()
-    changeLog(exchange, 'nas.authz.leader_vacancy_scan', 'nas_authz_rules', '', '负责人悬空扫描', `悬空 ${vacant.length} 个组织`)
+    changeLog(exchange, 'nas.authz.leader_vacancy_scan', 'nas_authz_rules', '', t('负责人悬空扫描'), t('悬空 {n} 个组织', { n: vacant.length }))
     return { vacant }
   })
 

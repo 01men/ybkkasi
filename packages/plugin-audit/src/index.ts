@@ -9,6 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { PlatformEvents, newId, scanSensitiveKeys, maskSensitivePayload, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import * as auditTools from './tools.ts'
 
 // ---------------------------------------------------------------------------
@@ -267,8 +268,8 @@ export class AuditService extends Service {
       })
       this.fire({
         severity: 'critical',
-        title: '[连接器] 权限组策略镜像失败',
-        message: `权限组「${p.groupName ?? p.groupId ?? '?'}」策略镜像至网关失败，已 fail-closed 并吊销旧运行时令牌：${p.reason ?? ''}`,
+        title: t('[连接器] 权限组策略镜像失败'),
+        message: t('权限组「{name}」策略镜像至网关失败，已 fail-closed 并吊销旧运行时令牌：{reason}', { name: p.groupName ?? p.groupId ?? '?', reason: p.reason ?? '' }),
         resourceType: 'connector_permgroup', ...(p.groupId !== undefined ? { resourceId: p.groupId } : {}),
       })
     })
@@ -282,8 +283,8 @@ export class AuditService extends Service {
       })
       this.fire({
         severity: 'warning',
-        title: '[连接器] 权限组策略快照漂移',
-        message: `权限组「${p.groupName ?? p.groupId ?? '?'}」调用时检出策略快照漂移，本次调用已拒绝（重试即按新快照走授权）：${p.reason ?? ''}`,
+        title: t('[连接器] 权限组策略快照漂移'),
+        message: t('权限组「{name}」调用时检出策略快照漂移，本次调用已拒绝（重试即按新快照走授权）：{reason}', { name: p.groupName ?? p.groupId ?? '?', reason: p.reason ?? '' }),
         resourceType: 'connector_permgroup', ...(p.groupId !== undefined ? { resourceId: p.groupId } : {}),
       })
     })
@@ -343,7 +344,7 @@ export class AuditService extends Service {
       this.record({
         type: 'authz', actorType: 'human', actorId: p.approverId ?? '', actorName: p.approverName ?? '',
         action: 'approval.decide', resourceType: 'approval', resourceId: p.approvalId, resourceName: p.title,
-        result: 'ok', detail: p.approved ? '审批通过' : '审批驳回',
+        result: 'ok', detail: p.approved ? t('审批通过') : t('审批驳回'),
       })
     })
     ctx.platformBus.on('audit.authz.denied', (payload) => {
@@ -351,7 +352,7 @@ export class AuditService extends Service {
       this.record({
         type: 'authz', actorType: 'human', actorId: p.actorId, actorName: p.actorName,
         action: 'console.authz.denied', resourceType: 'api', resourceId: p.path, resourceName: p.path,
-        result: 'denied', detail: `缺少权限点 ${p.point}`,
+        result: 'denied', detail: t('缺少权限点 {point}', { point: p.point }),
       })
       const key = `denied:${p.actorId}`
       const now = Date.now()
@@ -400,8 +401,8 @@ export class AuditService extends Service {
       if (!Number.isFinite(rawCostCents) && !this.warnedDirtyCostResources.has(event.resource)) {
         this.warnedDirtyCostResources.add(event.resource)
         this.fire({
-          severity: 'warning', title: '[计量] 脏事件成本按 0 归集（REL-11 加固）',
-          message: `资源 ${event.resource} 的事件 ${event.event_id} pricing.cost_cents=${String(rawCostCents)} 为非有限值，成本归集按 0 处理；请修正价格簿后按时间窗重放`,
+          severity: 'warning', title: t('[计量] 脏事件成本按 0 归集（REL-11 加固）'),
+          message: t('资源 {resource} 的事件 {id} pricing.cost_cents={value} 为非有限值，成本归集按 0 处理；请修正价格簿后按时间窗重放', { resource: event.resource, id: event.event_id, value: String(rawCostCents) }),
           resourceType: 'usage_event', resourceId: event.resource,
         })
       }
@@ -466,14 +467,14 @@ export class AuditService extends Service {
     subject?: string
     note?: string
   }): EvidenceRecord {
-    if (!Array.isArray(input.anchors) || input.anchors.length === 0) throw new Error('证据锚点至少一项（anchors）')
-    if (input.anchors.length > 20) throw new Error('证据锚点过多（≤20）：结论级证据应引用事实，不是搬运数据')
+    if (!Array.isArray(input.anchors) || input.anchors.length === 0) throw new Error(t('证据锚点至少一项（anchors）'))
+    if (input.anchors.length > 20) throw new Error(t('证据锚点过多（≤20）：结论级证据应引用事实，不是搬运数据'))
     for (const anchor of input.anchors) {
-      if (!['dataset', 'field', 'window', 'query', 'doc'].includes(anchor.kind)) throw new Error(`证据锚点 kind 非法：${anchor.kind}（dataset/field/window/query/doc）`)
-      if (!anchor.id?.trim()) throw new Error('证据锚点 id 必填（数据集编号/字段路径/查询 id 等）')
-      if (anchor.timeWindow && (!anchor.timeWindow.from || !anchor.timeWindow.to)) throw new Error('证据锚点 timeWindow 需要 from/to')
-      if (anchor.hitRows !== undefined && (!Number.isFinite(anchor.hitRows) || anchor.hitRows < 0)) throw new Error('证据锚点 hitRows 应为非负数')
-      if (anchor.qualityScore !== undefined && (!Number.isFinite(anchor.qualityScore) || anchor.qualityScore < 0 || anchor.qualityScore > 100)) throw new Error('证据锚点 qualityScore 应为 0-100')
+      if (!['dataset', 'field', 'window', 'query', 'doc'].includes(anchor.kind)) throw new Error(t('证据锚点 kind 非法：{kind}（dataset/field/window/query/doc）', { kind: anchor.kind }))
+      if (!anchor.id?.trim()) throw new Error(t('证据锚点 id 必填（数据集编号/字段路径/查询 id 等）'))
+      if (anchor.timeWindow && (!anchor.timeWindow.from || !anchor.timeWindow.to)) throw new Error(t('证据锚点 timeWindow 需要 from/to'))
+      if (anchor.hitRows !== undefined && (!Number.isFinite(anchor.hitRows) || anchor.hitRows < 0)) throw new Error(t('证据锚点 hitRows 应为非负数'))
+      if (anchor.qualityScore !== undefined && (!Number.isFinite(anchor.qualityScore) || anchor.qualityScore < 0 || anchor.qualityScore > 100)) throw new Error(t('证据锚点 qualityScore 应为 0-100'))
     }
     return this.evidence().insert({
       id: newId('evd'),
@@ -604,10 +605,10 @@ export class AuditService extends Service {
   createAlertRule(input: Omit<AlertRuleRecord, 'id' | 'createdAt' | 'updatedAt'>): AlertRuleRecord {
     // REL-12：创建入口入参校验收口——此前缺 name、非有限 threshold 也能 200 建档（无 name 规则
     // 告警不可读，非法阈值使「>阈值」比较语义失真）。非法即抛错（路由 guarded 统一映射 400 BAD_REQUEST）
-    if (typeof input.name !== 'string' || input.name.trim() === '') throw new Error('告警规则 name 必填（非空字符串）')
-    if (typeof input.metric !== 'string' || input.metric.trim() === '') throw new Error('告警规则 metric 必填（非空字符串）')
-    if (!Number.isFinite(input.threshold)) throw new Error(`告警规则 threshold 必须为有限数值，收到：${String(input.threshold)}`)
-    if (input.operator !== undefined && input.operator !== 'gt') throw new Error(`告警规则 operator 非法：${String(input.operator)}（当前仅支持 gt）`)
+    if (typeof input.name !== 'string' || input.name.trim() === '') throw new Error(t('告警规则 name 必填（非空字符串）'))
+    if (typeof input.metric !== 'string' || input.metric.trim() === '') throw new Error(t('告警规则 metric 必填（非空字符串）'))
+    if (!Number.isFinite(input.threshold)) throw new Error(t('告警规则 threshold 必须为有限数值，收到：{value}', { value: String(input.threshold) }))
+    if (input.operator !== undefined && input.operator !== 'gt') throw new Error(t('告警规则 operator 非法：{value}（当前仅支持 gt）', { value: String(input.operator) }))
     return this.alertRules().insert({ id: newId('rule'), ...input })
   }
 
@@ -619,8 +620,8 @@ export class AuditService extends Service {
       this.fire({
         ruleId: rule.id,
         severity: rule.severity,
-        title: `[${rule.name}] 触发`,
-        message: `${rule.metric} = ${value}（阈值 ${rule.threshold}），上下文：${JSON.stringify(context).slice(0, 200)}`,
+        title: t('[{name}] 触发', { name: rule.name }),
+        message: t('{metric} = {value}（阈值 {threshold}），上下文：{context}', { metric: rule.metric, value, threshold: rule.threshold, context: JSON.stringify(context).slice(0, 200) }),
         ...(context.resourceType !== undefined ? { resourceType: String(context.resourceType) } : {}),
         ...(context.resourceId !== undefined ? { resourceId: String(context.resourceId) } : {}),
       })
@@ -671,11 +672,11 @@ export class AuditService extends Service {
       if (from && cost.date < from) continue
       if (to && cost.date > to) continue
       let key = cost.date
-      if (groupBy === 'app') key = cost.appId ? this.ctx.resourceCore?.collection('app').get(cost.appId)?.name ?? cost.appId : '（未归集应用）'
-      if (groupBy === 'agent') key = cost.agentId ? this.ctx.resourceCore?.collection('agent').get(cost.agentId)?.name ?? cost.agentId : '（未归集 Agent）'
+      if (groupBy === 'app') key = cost.appId ? this.ctx.resourceCore?.collection('app').get(cost.appId)?.name ?? cost.appId : t('（未归集应用）')
+      if (groupBy === 'agent') key = cost.agentId ? this.ctx.resourceCore?.collection('agent').get(cost.agentId)?.name ?? cost.agentId : t('（未归集 Agent）')
       if (groupBy === 'org') {
         const entity = cost.agentId ? this.ctx.resourceCore?.collection('agent').get(cost.agentId) : undefined
-        key = entity ? this.ctx.iam?.orgs().get(entity.orgId)?.name ?? entity.orgId : '（未归集组织）'
+        key = entity ? this.ctx.iam?.orgs().get(entity.orgId)?.name ?? entity.orgId : t('（未归集组织）')
       }
       const bucket = buckets.get(key) ?? { key, llmTokens: 0, toolCalls: 0, costYuan: 0 }
       bucket.llmTokens += cost.llmTokens
@@ -717,7 +718,7 @@ export class AuditService extends Service {
     const rule = approvalKindRule(input.kind)
     const sensitivePaths = scanSensitiveKeys(input.payload)
     if (rule.sensitiveInputPolicy === 'reject' && sensitivePaths.length > 0) {
-      throw new Error(`审批拒绝：该类审批以原文入参执行，检出敏感命名入参（${sensitivePaths.join('、')}）。敏感值不得进入审批存储，请调整入参后重试（OPT-P2-02）`)
+      throw new Error(t('审批拒绝：该类审批以原文入参执行，检出敏感命名入参（{paths}）。敏感值不得进入审批存储，请调整入参后重试（OPT-P2-02）', { paths: sensitivePaths.join('、') }))
     }
     const { masked, maskedKeys } = maskSensitivePayload(input.payload)
     const riskLevel = input.riskLevel ?? (HIGH_RISK_APPROVAL_KINDS.has(input.kind) ? 'high' as const : undefined)
@@ -761,20 +762,20 @@ export class AuditService extends Service {
     // REL-01：decision 入参收口——只接受 approve/reject。此前其余值（如 "maybe"）会被
     // 当作 approve 落入执行器分支真实执行；服务层单点拦截（路由层 guarded 统一转 400）。
     if (decision !== 'approve' && decision !== 'reject') {
-      throw new Error(`非法的审批决策：${String(decision)}（只允许 approve 或 reject）`)
+      throw new Error(t('非法的审批决策：{decision}（只允许 approve 或 reject）', { decision: String(decision) }))
     }
     const approval = this.approvals().get(id)
-    if (!approval) throw new Error(`审批单不存在：${id}`)
-    if (approval.status !== 'pending') throw new Error(`审批单已处理（${approval.status}）`)
+    if (!approval) throw new Error(t('审批单不存在：{id}', { id }))
+    if (approval.status !== 'pending') throw new Error(t('审批单已处理（{status}）', { status: approval.status }))
     // 同人审批放开（原 QA A-05「提交人与审批人不得为同一账号」自审自批拦截已按业务决策取消，
     // 2026-09-15）——2026-10-14 R12 复议收窄：仅 agent.online（雇佣语义）恢复职责分离，
     // 提交人不得自行通过/驳回自己的 Agent 上线单；其余类型维持放开，权限点校验不变。
     if (approval.kind === 'agent.online' && approverId && approverId === approval.requesterId) {
-      throw new Error('职责分离（R12 复议恢复，2026-10-14）：Agent 上线（雇佣语义）审批的提交人与审批人不得为同一账号')
+      throw new Error(t('职责分离（R12 复议恢复，2026-10-14）：Agent 上线（雇佣语义）审批的提交人与审批人不得为同一账号'))
     }
     const isHighRisk = approval.riskLevel === 'high'
     if (decision === 'approve' && isHighRisk && options.confirmed !== true) {
-      throw new Error('高风险审批通过需二次确认（confirmed=true），请在前端确认弹窗中复核后提交')
+      throw new Error(t('高风险审批通过需二次确认（confirmed=true），请在前端确认弹窗中复核后提交'))
     }
     if (decision === 'reject') {
       const updated = this.approvals().update(id, {
@@ -795,19 +796,19 @@ export class AuditService extends Service {
         execution = { result: JSON.stringify(result ?? { ok: true }).slice(0, 500), at: new Date().toISOString() }
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error))
-        execution = { result: '执行失败', error: err.message, at: new Date().toISOString() }
+        execution = { result: t('执行失败'), error: err.message, at: new Date().toISOString() }
         // OPT-P2-02：executor 失败不再只有 approval.execution.error——按注册表编排补偿并回写
         const compensation = this.compensations.get(approval.kind)
         if (compensation) {
           try {
             const compResult = await compensation(approval.payload, err)
             execution = {
-              result: `执行失败，已完成补偿：${JSON.stringify(compResult ?? { ok: true }).slice(0, 200)}`,
+              result: t('执行失败，已完成补偿：{result}', { result: JSON.stringify(compResult ?? { ok: true }).slice(0, 200) }),
               error: err.message, at: new Date().toISOString(),
             }
           } catch (compError) {
             const compMessage = compError instanceof Error ? compError.message : String(compError)
-            execution = { result: '执行失败且补偿失败（需人工介入）', error: `${err.message}；补偿失败：${compMessage}`, at: new Date().toISOString() }
+            execution = { result: t('执行失败且补偿失败（需人工介入）'), error: t('{message}；补偿失败：{compensation}', { message: err.message, compensation: compMessage }), at: new Date().toISOString() }
           }
           this.record({
             type: 'change', actorType: 'machine', actorId: 'approval-engine', actorName: '审批引擎',
@@ -817,7 +818,7 @@ export class AuditService extends Service {
         }
       }
     } else {
-      execution = { result: '（无注册执行器，仅记录审批结果）', at: new Date().toISOString() }
+      execution = { result: t('（无注册执行器，仅记录审批结果）'), at: new Date().toISOString() }
     }
     const status: ApprovalRecord['status'] = execution.error ? 'failed' : 'executed'
     const needsFinalReview = isHighRisk || options.finalReview === true
@@ -848,9 +849,9 @@ export class AuditService extends Service {
    */
   deleteApproval(id: string): void {
     const approval = this.approvals().get(id)
-    if (!approval) throw new Error(`审批单不存在：${id}`)
+    if (!approval) throw new Error(t('审批单不存在：{id}', { id }))
     if (approval.status !== 'rejected') {
-      throw new Error(`仅已驳回的审批单可删除，当前状态：${approval.status}`)
+      throw new Error(t('仅已驳回的审批单可删除，当前状态：{status}', { status: approval.status }))
     }
     this.approvals().remove(id)
   }
@@ -896,7 +897,7 @@ export class AuditService extends Service {
       withinSla,
       achievementRate: decidedRecords.length === 0 ? 1 : Math.round((withinSla / decidedRecords.length) * 1000) / 1000,
       breached: breached.sort((a, b) => b.businessDays - a.businessDays),
-      calendarNote: '工作日=跳过周六/周日（未扣法定节假日，v1 口径）',
+      calendarNote: t('工作日=跳过周六/周日（未扣法定节假日，v1 口径）'),
     }
   }
 }

@@ -9,6 +9,7 @@
  * 已落地；网关仍不回传调用 ID/usage 事件 ID——gatewayRef 诚实降级记录，不伪造证据）。
  */
 import { sha256Hex } from '../../../platform-core/src/ids.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type {
   AdapterInvokeInput,
   AdapterInvokeResult,
@@ -45,13 +46,13 @@ export function createMcpAdapter(ctx: {
     async probeGrant(spec: ResourceGrantSpec, resolution: IdentityResolution): Promise<AdapterProbeResult> {
       const hub = registry()
       if (typeof hub.authorize !== 'function') {
-        return { ok: false, message: 'mcpRegistry 未提供 authorize 探测能力，无法核验 MCP 授权' }
+        return { ok: false, message: t('mcpRegistry 未提供 authorize 探测能力，无法核验 MCP 授权') }
       }
       const caller = gatewayCaller(resolution)
       for (const action of spec.actions) {
         const verdict = hub.authorize(caller, spec.registryId, action)
         if (!verdict.ok) {
-          return { ok: false, message: `MCP 授权探针未通过（${spec.registryId}.${action}）：${verdict.reason}` }
+          return { ok: false, message: t('MCP 授权探针未通过（{handle}）：{reason}', { handle: `${spec.registryId}.${action}`, reason: verdict.reason }) }
         }
       }
       // 权限组证据：结构化探测 permGroups；拿不到则诚实记录 authorize-only
@@ -73,13 +74,13 @@ export function createMcpAdapter(ctx: {
     async invoke(input: AdapterInvokeInput): Promise<AdapterInvokeResult> {
       const hub = registry()
       if (typeof hub.invoke !== 'function') {
-        return { ok: false, message: 'mcpRegistry 未提供 invoke 能力', gatewayRef: { outcome: 'denied' } }
+        return { ok: false, message: t('mcpRegistry 未提供 invoke 能力'), gatewayRef: { outcome: 'denied' } }
       }
       const work: WorkExecutionContext = input.work
       const caller = {
         type: 'agent' as const,
         id: work.agentId || work.principalId,
-        name: `数字员工:${work.employeeId}`,
+        name: t('数字员工:{id}', { id: work.employeeId }),
       }
       // 工作引用索引（§10.4 / D1 修复）：网关工作闸门按 permitId 核验工作级授权（V28），
       // 并把 permit/run/employee 关联进网关调用记录与 usage（D11）。仅作索引透传，
@@ -109,7 +110,7 @@ export function createMcpAdapter(ctx: {
       }
       return {
         ok: false,
-        message: result.error ?? 'MCP 网关拒绝或调用失败',
+        message: result.error ?? t('MCP 网关拒绝或调用失败'),
         // denied/breaker_open＝资源级拒绝（停止，不换入口重试）；error＝执行失败
         gatewayRef: {
           status: result.status,

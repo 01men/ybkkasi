@@ -19,6 +19,7 @@ import { Service } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../platform-core/src/index.ts'
 import { createRestGate } from '../../platform-core/src/index.ts'
 import { PlatformEvents, newId, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type { AuditLogRecord } from '../../plugin-audit/src/index.ts'
 
 // ---------------------------------------------------------------------------
@@ -95,7 +96,7 @@ const STEP_TRANSITIONS: Record<FlowStepAction, { from: FlowStepStatus[]; to: Flo
 
 /** SLA 校验（C-07）：必须为正数——非法值会让 dueAt 早于 createdAt（出生即逾期/overdueMinutes 为负）。 */
 const assertSlaMinutes = (value: number): void => {
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`slaMinutes 必须为正数（分钟），收到：${value}`)
+  if (!Number.isFinite(value) || value <= 0) throw new Error(t('slaMinutes 必须为正数（分钟），收到：{value}', { value }))
 }
 
 // ---------------------------------------------------------------------------
@@ -136,8 +137,8 @@ export class FlowService extends Service {
     createdBy: string
   }): FlowTemplateRecord {
     this.validateStepDraft(input.steps)
-    if (!input.code?.trim() || !/^[A-Za-z0-9._-]{2,64}$/.test(input.code)) throw new Error(`模板 code 非法（字母/数字/._-，2-64 位）：${input.code}`)
-    if (!input.name?.trim()) throw new Error('模板名称必填')
+    if (!input.code?.trim() || !/^[A-Za-z0-9._-]{2,64}$/.test(input.code)) throw new Error(t('模板 code 非法（字母/数字/._-，2-64 位）：{code}', { code: input.code }))
+    if (!input.name?.trim()) throw new Error(t('模板名称必填'))
     if (input.slaMinutes !== undefined) assertSlaMinutes(input.slaMinutes)
     const existing = this.templates().findOne((item) => item.code === input.code)
     const payload = {
@@ -166,7 +167,7 @@ export class FlowService extends Service {
 
   deleteTemplate(code: string): { deleted: boolean } {
     const template = this.templates().findOne((item) => item.code === code)
-    if (!template) throw new Error(`模板不存在：${code}`)
+    if (!template) throw new Error(t('模板不存在：{code}', { code }))
     this.templates().remove(template.id)
     this.ctx.platformBus.emit(PlatformEvents.FlowTemplateChanged, { code, action: 'deleted' })
     return { deleted: true }
@@ -181,15 +182,15 @@ export class FlowService extends Service {
   // -- TF 编排（3-1） -----------------------------------------------------------
 
   private validateStepDraft(steps: Array<{ key?: string; name?: string; actorType?: string }>): void {
-    if (!Array.isArray(steps) || steps.length === 0) throw new Error('事务流至少一个步骤（steps）')
-    if (steps.length > 30) throw new Error('事务流步骤过多（≤30）：编排请拆分阶段')
+    if (!Array.isArray(steps) || steps.length === 0) throw new Error(t('事务流至少一个步骤（steps）'))
+    if (steps.length > 30) throw new Error(t('事务流步骤过多（≤30）：编排请拆分阶段'))
     const keys = new Set<string>()
     for (const step of steps) {
-      if (!step.key?.trim() || !/^[A-Za-z0-9._-]{1,40}$/.test(step.key)) throw new Error(`步骤 key 非法：${step.key}（字母/数字/._-）`)
-      if (keys.has(step.key)) throw new Error(`步骤 key 重复：${step.key}`)
+      if (!step.key?.trim() || !/^[A-Za-z0-9._-]{1,40}$/.test(step.key)) throw new Error(t('步骤 key 非法：{key}（字母/数字/._-）', { key: step.key }))
+      if (keys.has(step.key)) throw new Error(t('步骤 key 重复：{key}', { key: step.key }))
       keys.add(step.key)
-      if (!step.name?.trim()) throw new Error(`步骤 ${step.key} 缺少名称`)
-      if (!['human', 'agent', 'gateway'].includes(step.actorType ?? '')) throw new Error(`步骤 ${step.key} 的 actorType 非法（human/agent/gateway）`)
+      if (!step.name?.trim()) throw new Error(t('步骤 {key} 缺少名称', { key: step.key }))
+      if (!['human', 'agent', 'gateway'].includes(step.actorType ?? '')) throw new Error(t('步骤 {key} 的 actorType 非法（human/agent/gateway）', { key: step.key }))
     }
   }
 
@@ -208,13 +209,13 @@ export class FlowService extends Service {
     slaMinutes?: number
     createdBy: string
   }): FlowRecord & { contextPack?: Record<string, unknown> } {
-    if (!input.name?.trim()) throw new Error('事务流名称必填')
+    if (!input.name?.trim()) throw new Error(t('事务流名称必填'))
     let steps: Array<{ key: string; name: string; actorType: FlowStepActorType; assignee?: string; note?: string }>
     let template: FlowTemplateRecord | undefined
     let slaMinutes = input.slaMinutes
     if (input.templateCode) {
       template = this.templates().findOne((item) => item.code === input.templateCode)
-      if (!template) throw new Error(`事务流模板不存在：${input.templateCode}（GET /api/flow/templates?sceneCode= 可查在库模板）`)
+      if (!template) throw new Error(t('事务流模板不存在：{code}（GET /api/flow/templates?sceneCode= 可查在库模板）', { code: input.templateCode }))
       steps = template.steps
       if (slaMinutes === undefined && template.slaMinutes !== undefined) slaMinutes = template.slaMinutes
     } else {
@@ -291,16 +292,16 @@ export class FlowService extends Service {
    */
   stepTransition(flowId: string, stepKey: string, action: FlowStepAction, actor: string, note?: string): { flow: FlowRecord & FlowView; completed: boolean } {
     const rule = STEP_TRANSITIONS[action]
-    if (!rule) throw new Error(`未知步骤动作：${action}（${FLOW_STEP_ACTIONS.join('/')}）`)
+    if (!rule) throw new Error(t('未知步骤动作：{action}（{allowed}）', { action, allowed: FLOW_STEP_ACTIONS.join('/') }))
     const collection = this.flows()
     const flow = collection.get(flowId) ?? collection.findOne((item) => item.code === flowId)
-    if (!flow) throw new Error(`事务流不存在：${flowId}`)
-    if (flow.status !== 'running') throw new Error(`事务流已结束（${flow.status}），步骤不可流转`)
+    if (!flow) throw new Error(t('事务流不存在：{id}', { id: flowId }))
+    if (flow.status !== 'running') throw new Error(t('事务流已结束（{status}），步骤不可流转', { status: flow.status }))
     const index = flow.steps.findIndex((step) => step.key === stepKey)
-    if (index === -1) throw new Error(`步骤不存在：${stepKey}`)
+    if (index === -1) throw new Error(t('步骤不存在：{key}', { key: stepKey }))
     const step = flow.steps[index]!
     if (!rule.from.includes(step.status)) {
-      throw new Error(`步骤 ${stepKey} 当前状态 ${step.status} 不允许 ${action}（允许自：${rule.from.join('/')})`)
+      throw new Error(t('步骤 {key} 当前状态 {status} 不允许 {action}（允许自：{allowed}）', { key: stepKey, status: step.status, action, allowed: rule.from.join('/') }))
     }
     const now = new Date().toISOString()
     const updatedStep: FlowStepRecord = {
@@ -339,7 +340,7 @@ export class FlowService extends Service {
     if (stalled) {
       this.ctx.platformBus.emit(PlatformEvents.FlowStalled, {
         flowId: flow.id, code: flow.code, name: flow.name, dept: flow.dept, sceneCode: flow.sceneCode,
-        stalledAt: now, reason: `running 态但无 running 步骤（步骤 ${stepKey} → ${rule.to} 后无自动推进）`,
+        stalledAt: now, reason: t('running 态但无 running 步骤（步骤 {key} → {to} 后无自动推进）', { key: stepKey, to: rule.to }),
       })
     }
     if (allSettled) {
@@ -355,8 +356,8 @@ export class FlowService extends Service {
   cancelFlow(flowId: string, actor: string, note?: string): FlowRecord & FlowView {
     const collection = this.flows()
     const flow = collection.get(flowId) ?? collection.findOne((item) => item.code === flowId)
-    if (!flow) throw new Error(`事务流不存在：${flowId}`)
-    if (flow.status !== 'running') throw new Error(`事务流已结束（${flow.status}），不可取消`)
+    if (!flow) throw new Error(t('事务流不存在：{id}', { id: flowId }))
+    if (flow.status !== 'running') throw new Error(t('事务流已结束（{status}），不可取消', { status: flow.status }))
     const now = new Date().toISOString()
     const updated = collection.update(flow.id, { status: 'cancelled', finishedAt: now })
     this.ctx.platformBus.emit(PlatformEvents.FlowStepUpdated, {
@@ -407,7 +408,7 @@ export function apply(ctx: Context) {
     ctx.platformBus.emit('audit.authz.denied', {
       actorId: info.userId, actorName: info.name, point: `scene:${sceneCode}#${action}`, path: exchange.path,
     })
-    exchange.fail(403, 'FORBIDDEN', `场景授权拒绝（${sceneCode} · ${action}）：${decision.reason}`)
+    exchange.fail(403, 'FORBIDDEN', t('场景授权拒绝（{scene} · {action}）：{reason}', { scene: sceneCode, action, reason: decision.reason }))
     return false
   }
   /** 审计留痕（audit 缺席时静默跳过——dsh-bridge softRead 同款防御）。 */
@@ -474,7 +475,7 @@ export function apply(ctx: Context) {
   guarded('GET', '/api/flow/flows/:id', 'flow.read', (exchange) => {
     const record = flow.getFlow(exchange.params['id']!)
     if (!record) {
-      exchange.fail(404, 'NOT_FOUND', `事务流不存在：${exchange.params['id']}`)
+      exchange.fail(404, 'NOT_FOUND', t('事务流不存在：{id}', { id: exchange.params['id'] ?? '' }))
       return
     }
     return { ...record, ...flow.viewOf(record) }

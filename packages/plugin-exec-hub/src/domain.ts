@@ -5,7 +5,9 @@
  * 因此可以表驱动穷举边界（对齐其 policy.test.ts 的测试强度思路）。
  * 这里只放决策函数与纯工具；任何「读库/读时钟」的逻辑一律留在服务层
  * （application），把事实（facts）算好再喂进来。
+ * 例外：面向用户的拒绝文案经 platform-i18n t()（以请求/安装级 locale 输出，词典未命中降级中文）。
  */
+import { t } from '../../platform-i18n/src/index.ts'
 
 // ---------------------------------------------------------------------------
 // 唤醒准入（Paperclip decideWakeAdmission 三态）
@@ -360,10 +362,10 @@ export type CompleteOwnershipDecision =
 export function decideCompleteOwnership(f: CompleteOwnershipFacts): CompleteOwnershipDecision {
   if (!f.hasLeaseRecord) return { kind: 'allow' }
   if (f.status !== 'active' || f.expired) {
-    return { kind: 'deny', code: 'LEASE_STALE', reason: '执行租约已过期或被更高版本取代（旧租约），请先重新认领' }
+    return { kind: 'deny', code: 'LEASE_STALE', reason: t('执行租约已过期或被更高版本取代（旧租约），请先重新认领') }
   }
   if (!f.callerPrincipalId || f.callerPrincipalId !== f.leasePrincipalId) {
-    return { kind: 'deny', code: 'RUN_NOT_OWNED', reason: '该 run 不归属当前调用主体，禁止代他人交回执行回执' }
+    return { kind: 'deny', code: 'RUN_NOT_OWNED', reason: t('该 run 不归属当前调用主体，禁止代他人交回执行回执') }
   }
   return { kind: 'allow' }
 }

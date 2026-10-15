@@ -342,7 +342,9 @@ var zh = {
   // ── 反馈条 ──
   "fb.like": "\u6709\u5E2E\u52A9",
   "fb.dislike": "\u6CA1\u5E2E\u52A9",
-  "fb.done": "\u5DF2\u8BB0\u5F55\uFF0C\u611F\u8C22\u53CD\u9988"
+  "fb.done": "\u5DF2\u8BB0\u5F55\uFF0C\u611F\u8C22\u53CD\u9988",
+  // ── 降级角标（shell.overlay）──
+  "badge.degraded": "\u5143\u51B0\u53EF\u5361\u7247\u672A\u751F\u6548\uFF08\u7EAF\u6587\u672C\u6A21\u5F0F\uFF09"
 };
 var en = {
   "card.state.calling": "Calling",
@@ -373,7 +375,40 @@ var en = {
   "card.action.invoke-error": "Platform status",
   "fb.like": "Helpful",
   "fb.dislike": "Not helpful",
-  "fb.done": "Recorded \u2014 thanks for the feedback"
+  "fb.done": "Recorded \u2014 thanks for the feedback",
+  "badge.degraded": "RongQi cards inactive (plain-text mode)"
+};
+var ja = {
+  "card.state.calling": "\u547C\u3073\u51FA\u3057\u4E2D",
+  "card.state.executing": "\u5B9F\u884C\u4E2D",
+  "card.state.done": "\u5B8C\u4E86",
+  "card.state.blocked": "\u30D6\u30ED\u30C3\u30AF\u4E2D",
+  "card.state.idle": "\u5F85\u6A5F\u4E2D",
+  "card.args.summary": "\u547C\u3073\u51FA\u3057\u5F15\u6570",
+  "card.result.title": "\u5B9F\u884C\u7D50\u679C",
+  "card.result.truncated": "\uFF08\u5185\u5BB9\u304C\u9577\u3044\u305F\u3081\u5207\u308A\u6368\u3066\u307E\u3057\u305F\uFF09",
+  "card.console.link": "\u30B3\u30F3\u30BD\u30FC\u30EB\u3067\u958B\u304F",
+  "card.cancel.button": "\u30AD\u30E3\u30F3\u30BB\u30EB",
+  "card.cancel.hint": "\u30AD\u30E3\u30F3\u30BB\u30EB\u306F\u30DB\u30B9\u30C8\u5074\u306E\u63A5\u7D9A\u5F8C\u306B\u6709\u52B9\u306B\u306A\u308A\u307E\u3059",
+  "card.degraded.hint": "\u6642\u9593\u304C\u304B\u304B\u3063\u3066\u3044\u307E\u3059\u3002\u30D0\u30C3\u30AF\u30B0\u30E9\u30A6\u30F3\u30C9\u3067\u51E6\u7406\u4E2D\u3067\u3059",
+  "card.blocked.nas-authz-deny": "\u30A2\u30AF\u30BB\u30B9\u6A29\u304C\u3042\u308A\u307E\u305B\u3093\u3002\u5148\u306B\u6A29\u9650\u3092\u7533\u8ACB\u3057\u3066\u304F\u3060\u3055\u3044",
+  "card.blocked.quota-exhausted": "\u30A6\u30A9\u30EC\u30C3\u30C8\u6B8B\u9AD8\u3092\u4F7F\u3044\u5207\u308A\u307E\u3057\u305F\u3002\u8FFD\u52A0\u3092\u7533\u8ACB\u3057\u3066\u304F\u3060\u3055\u3044",
+  "card.blocked.pdp-unreachable": "\u30DD\u30EA\u30B7\u30FC\u5224\u5B9A\u30DD\u30A4\u30F3\u30C8\uFF08PDP\uFF09\u306B\u5230\u9054\u3067\u304D\u306A\u3044\u305F\u3081\u3001\u4FDD\u8B77\u7684\u306B\u4E00\u6642\u505C\u6B62\u4E2D\u3067\u3059",
+  "card.blocked.breaker-open": "\u30B5\u30FC\u30AD\u30C3\u30C8\u30D6\u30EC\u30FC\u30AB\u30FC\u304C\u4F5C\u52D5\u4E2D\u3067\u3059\u3002\u5FA9\u65E7\u5F8C\u306B\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044",
+  "card.blocked.down": "\u30B5\u30FC\u30D3\u30B9\u306F\u73FE\u5728\u5229\u7528\u3067\u304D\u307E\u305B\u3093\u3002\u5FA9\u65E7\u5F8C\u306B\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044",
+  "card.blocked.binding-invalid": "ID \u30D0\u30A4\u30F3\u30C7\u30A3\u30F3\u30B0\u306E\u6709\u52B9\u671F\u9650\u304C\u5207\u308C\u3066\u3044\u307E\u3059\u3002\u518D\u30D0\u30A4\u30F3\u30C9\u3057\u3066\u304F\u3060\u3055\u3044",
+  "card.blocked.invoke-error": "\u5B9F\u884C\u30A8\u30E9\u30FC\u304C\u767A\u751F\u3057\u307E\u3057\u305F\u3002\u8A73\u7D30\u306F\u7D50\u679C\u60C5\u5831\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044",
+  "card.action.nas-authz-deny": "\u30A2\u30AF\u30BB\u30B9\u7533\u8ACB",
+  "card.action.quota-exhausted": "\u6B8B\u9AD8\u3092\u7533\u8ACB",
+  "card.action.pdp-unreachable": "\u30D7\u30E9\u30C3\u30C8\u30D5\u30A9\u30FC\u30E0\u72B6\u614B\u3092\u78BA\u8A8D",
+  "card.action.breaker-open": "\u30B5\u30FC\u30D3\u30B9\u72B6\u614B\u3092\u78BA\u8A8D",
+  "card.action.down": "\u30B5\u30FC\u30D3\u30B9\u72B6\u614B\u3092\u78BA\u8A8D",
+  "card.action.binding-invalid": "\u518D\u30D0\u30A4\u30F3\u30C9",
+  "card.action.invoke-error": "\u30D7\u30E9\u30C3\u30C8\u30D5\u30A9\u30FC\u30E0\u72B6\u614B\u3092\u78BA\u8A8D",
+  "fb.like": "\u5F79\u306B\u7ACB\u3063\u305F",
+  "fb.dislike": "\u5F79\u306B\u7ACB\u305F\u306A\u304B\u3063\u305F",
+  "fb.done": "\u8A18\u9332\u3057\u307E\u3057\u305F\u3002\u30D5\u30A3\u30FC\u30C9\u30D0\u30C3\u30AF\u3042\u308A\u304C\u3068\u3046\u3054\u3056\u3044\u307E\u3059",
+  "badge.degraded": "RongQi \u30AB\u30FC\u30C9\u304C\u7121\u52B9\u3067\u3059\uFF08\u30C6\u30AD\u30B9\u30C8\u30E2\u30FC\u30C9\uFF09"
 };
 
 // src/client/styles.ts
@@ -535,7 +570,7 @@ function apply(ctx) {
     ensureStyles();
   });
   safely("locale", () => {
-    ctx.effect(() => ctx.locale.register(NS, { zh, en }), "rq-card: dictionaries");
+    ctx.effect(() => ctx.locale.register(NS, { zh, en, ja }), "rq-card: dictionaries");
   });
   const toolviewSpec = probeSpec(ctx, SLOT_TOOLVIEW);
   if (toolviewSpec?.kind !== "keyed") {
@@ -598,9 +633,12 @@ function apply(ctx) {
         ctx.slots.inject(SLOT_OVERLAY, () => ctx.slots.register({
           name: SLOT_OVERLAY,
           id: DEGRADED_BADGE_ID,
-          order: 90
-        }, function RqCardDegradedBadge() {
-          return (0, import_react2.createElement)("span", { className: "rq-badge" }, "\u6995\u5668\u5361\u7247\u672A\u751F\u6548\uFF08\u7EAF\u6587\u672C\u6A21\u5F0F\uFF09");
+          order: 90,
+          locale: NS
+        }, function RqCardDegradedBadge(props) {
+          const maybeT = props?.t;
+          const translate = typeof maybeT === "function" ? maybeT : (key) => zh[key] ?? key;
+          return (0, import_react2.createElement)("span", { className: "rq-badge" }, translate("badge.degraded"));
         }));
       });
     }

@@ -6,6 +6,7 @@
  * 旧路由兼容：#/connect → #/access?tab=enroll（connect.js 薄重定向壳），#/connections 保留独立页。
  */
 import { api } from '../api.js'
+import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import {
   h, $, $$, esc, toast, openModal, confirmDialog, copyText,
@@ -149,9 +150,7 @@ async function renderEnroll(host, params) {
       <div class="card-head"><span class="card-title">${icon('fingerprint', 15)} 远程 dsh 一键接入（三步）</span></div>
       <div class="card-body fs-13" style="line-height:2">
         <div><b>1. 安装插件</b>（远程电脑执行）：<code class="mono">dsh plugin --profile web add github:01men/ybkkasi</code></div>
-        <div><b>2. 申请口令</b>（任选其一）：
-          ① 在 dsh 界面对 Agent 说「<span class="mono">接入宿主 &lt;本机局域网地址&gt;，接入码 &lt;下方创建的码&gt;</span>」，Agent 调 <span class="mono">connect_setup</span> 自动完成；
-          ② 浏览器打开远程电脑的 <span class="mono">http://127.0.0.1:7390</span> 配置页可视化填写（可随时更新/断开）</div>
+        <div><b>2. 申请口令</b>（任选其一）：① 在 dsh 界面对 Agent 说「<span class="mono">接入宿主 &lt;本机局域网地址&gt;，接入码 &lt;下方创建的码&gt;</span>」，Agent 调 <span class="mono">connect_setup</span> 自动完成；② 浏览器打开远程电脑的 <span class="mono">http://127.0.0.1:7390</span> 配置页可视化填写（可随时更新/断开）</div>
         <div><b>3. 验证</b>：远程 Agent 执行 <span class="mono">connect_status</span> / <span class="mono">agent_list</span>，工具已转发宿主执行并在下方「已接入客户端」出现记录。</div>
       </div>
     </div>
@@ -255,8 +254,8 @@ async function renderEnroll(host, params) {
 
     <div class="tabs">
       ${hasOverview ? '<div class="tab" data-tab="overview">外部接入总览</div>' : ''}
-      <div class="tab ${hasOverview ? '' : 'active'}" data-tab="codes">接入码 (${codes.codes.length})</div>
-      <div class="tab" data-tab="clients">已接入客户端 (${clients.clients.length})</div>
+      <div class="tab ${hasOverview ? '' : 'active'}" data-tab="codes">${esc(rqI18n.t('接入码 ({n})', { n: codes.codes.length }))}</div>
+      <div class="tab" data-tab="clients">${esc(rqI18n.t('已接入客户端 ({n})', { n: clients.clients.length }))}</div>
     </div>
     <div id="connect-body"></div>`
 
@@ -306,7 +305,7 @@ async function renderEnroll(host, params) {
     const refCard = (title, list, jump, icon2) => `
       <div class="card card-pad" style="flex:1;min-width:280px">
         <div class="flex-between mb-8">
-          <div class="card-title">${icon(icon2, 14)} ${title}（${list.length}）</div>
+          <div class="card-title">${icon(icon2, 14)} ${esc(rqI18n.t('{title}（{n}）', { title: rqI18n.t(title), n: list.length }))}</div>
           <button class="btn btn-ghost btn-sm" data-jump="${esc(jump)}">前往管理 ${icon('chevronRight', 12)}</button>
         </div>
         ${list.slice(0, 6).map((item) => `
@@ -315,7 +314,7 @@ async function renderEnroll(host, params) {
             <span class="fs-11 text-4 mono">${esc(item.id)}</span>
             ${statusBadge(item.status === 'active' ? 'active' : 'frozen', item.status === 'active' ? '正常' : '禁用')}
           </div>`).join('') || '<div class="text-4 fs-12" style="padding:6px 0">暂无</div>'}
-        ${list.length > 6 ? `<div class="fs-12 text-4 mt-8">… 共 ${list.length} 项</div>` : ''}
+        ${list.length > 6 ? `<div class="fs-12 text-4 mt-8">${esc(rqI18n.t('… 共 {n} 项', { n: list.length }))}</div>` : ''}
       </div>`
     body.innerHTML = `
       <div class="muted-box mb-14" style="display:flex;gap:8px">${icon('info', 15)}<span>三类「外部接入身份」一处盘点：<b>机器凭证</b>（API 调用方，按绑定资源分组）、<b>OIDC 客户端</b>（应用 SSO 登录接入）、<b>远程 dsh</b>（接入码换牌的工具代理客户端）。</span></div>
@@ -332,7 +331,7 @@ async function renderEnroll(host, params) {
       <div class="flex mb-14" style="gap:14px;flex-wrap:wrap;align-items:stretch">
         <div class="card card-pad" style="flex:1;min-width:280px">
           <div class="flex-between mb-8">
-            <div class="card-title">${icon('plug', 14)} OIDC 客户端（应用 SSO / 外部登记，${oidc.length}）</div>
+            <div class="card-title">${icon('plug', 14)} ${esc(rqI18n.t('OIDC 客户端（应用 SSO / 外部登记，{n}）', { n: oidc.length }))}</div>
             <button class="btn btn-ghost btn-sm" data-jump="#/authn">前往管理 ${icon('chevronRight', 12)}</button>
           </div>
           ${oidc.slice(0, 6).map((c) => `
@@ -341,7 +340,7 @@ async function renderEnroll(host, params) {
               <span class="badge ${c.clientType === 'public' ? 'badge-purple' : 'badge-info'} no-dot">${c.clientType === 'public' ? 'public' : 'confidential'}</span>
               ${statusBadge(c.status === 'active' ? 'active' : 'frozen', c.status === 'active' ? '使用中' : '已禁用')}
             </div>`).join('') || '<div class="text-4 fs-12" style="padding:6px 0">暂无；在「AI 应用 → SSO 配置」或「认证与令牌 → OIDC 客户端」登记</div>'}
-          ${oidc.length > 6 ? `<div class="fs-12 text-4 mt-8">… 共 ${oidc.length} 项</div>` : ''}
+          ${oidc.length > 6 ? `<div class="fs-12 text-4 mt-8">${esc(rqI18n.t('… 共 {n} 项', { n: oidc.length }))}</div>` : ''}
         </div>
         ${refCard('远程 dsh 已接入客户端', clients.clients, '#/access?tab=enroll&sub=clients', 'terminal')}
       </div>`
@@ -386,7 +385,7 @@ async function renderEnroll(host, params) {
         if (!result) return
         try {
           await api.delete(`/api/connect/codes/${btn.dataset.revoke}`)
-          toast('接入码已作废')
+          toast(rqI18n.t('接入码已作废'))
           void refresh()
         } catch (error) { toast(error.message, 'error') }
       }
@@ -411,7 +410,7 @@ async function renderEnroll(host, params) {
         { title: '来源主机', render: (c) => `<span class="mono fs-12">${esc(c.hostname || '—')}</span><div class="col-sub fs-11">${esc(c.platform || '')}</div>` },
         { title: '接入时间', width: 150, render: (c) => `<span class="fs-12 text-3">${fmtTime(c.enrolledAt)}</span>` },
         { title: '最近使用', width: 120, render: (c) => `<span class="fs-12 ${c.lastUsedAt ? '' : 'text-4'}">${c.lastUsedAt ? timeAgo(c.lastUsedAt) : '未调用'}</span>` },
-        { title: '最近心跳', width: 120, render: (c) => `<span class="fs-12 ${c.lastHeartbeatAt ? '' : 'text-4'}">${c.lastHeartbeatAt ? timeAgo(c.lastHeartbeatAt) : '未上报'}</span>${c.heartbeat?.tools !== undefined ? `<div class="col-sub fs-11">工具 ${c.heartbeat.tools}${c.heartbeat?.uptimeSec !== undefined ? ` · 运行 ${Math.floor(c.heartbeat.uptimeSec / 60)}min` : ''}</div>` : ''}` },
+        { title: '最近心跳', width: 120, render: (c) => `<span class="fs-12 ${c.lastHeartbeatAt ? '' : 'text-4'}">${c.lastHeartbeatAt ? timeAgo(c.lastHeartbeatAt) : '未上报'}</span>${c.heartbeat?.tools !== undefined ? `<div class="col-sub fs-11">${esc(rqI18n.t('工具 {n}', { n: c.heartbeat.tools }))}${c.heartbeat?.uptimeSec !== undefined ? esc(rqI18n.t(' · 运行 {n}min', { n: Math.floor(c.heartbeat.uptimeSec / 60) })) : ''}</div>` : ''}` },
         { title: '状态', width: 100, render: (c) => statusBadge(c.status === 'active' ? 'active' : 'frozen', c.status === 'active' ? '正常' : '已禁用') },
         {
           title: '', width: 90,
@@ -430,14 +429,14 @@ async function renderEnroll(host, params) {
       btn.onclick = async (event) => {
         event.stopPropagation()
         const result = await confirmDialog({
-          title: `禁用客户端「${btn.dataset.name}」`,
+          title: rqI18n.t('禁用客户端「{name}」', { name: btn.dataset.name }),
           message: '将联动吊销其全部机器令牌，远程工具调用立即失效。',
           requireReason: true, danger: true, confirmText: '禁用',
         })
         if (!result) return
         try {
           await api.post(`/api/connect/clients/${btn.dataset.disable}/disable`, { reason: result.reason ?? '' })
-          toast('客户端已禁用，令牌已联动吊销')
+          toast(rqI18n.t('客户端已禁用，令牌已联动吊销'))
           void refresh()
         } catch (error) { toast(error.message, 'error') }
       }
@@ -447,7 +446,7 @@ async function renderEnroll(host, params) {
         event.stopPropagation()
         try {
           await api.post(`/api/connect/clients/${btn.dataset.enable}/enable`, {})
-          toast('客户端已恢复')
+          toast(rqI18n.t('客户端已恢复'))
           void refresh()
         } catch (error) { toast(error.message, 'error') }
       }
@@ -455,18 +454,18 @@ async function renderEnroll(host, params) {
   }
 
   function openClientDetail(client) {
-    const scopeText = client.scopes.length > 12 ? `${client.scopes.slice(0, 12).join('、')} 等 ${client.scopes.length} 项` : client.scopes.join('、')
+    const scopeText = client.scopes.length > 12 ? rqI18n.t('{scopes} 等 {n} 项', { scopes: client.scopes.slice(0, 12).join('、'), n: client.scopes.length }) : client.scopes.join('、')
     openModal({
-      title: `接入客户端：${client.name}`,
+      title: rqI18n.t('接入客户端：{name}', { name: client.name }),
       body: h(`
         <div class="kv-list fs-13" style="line-height:2.2">
           <div><span class="text-4">ClientId：</span><span class="mono">${esc(client.clientId)}</span></div>
-          <div><span class="text-4">权限模板：</span>${esc(TEMPLATE_LABEL[client.template] ?? (client.template || '手工凭证'))}（${client.scopes.includes('*') ? '全部权限' : `${client.scopes.length} 个权限点`}）</div>
+          <div><span class="text-4">权限模板：</span>${esc(rqI18n.t(TEMPLATE_LABEL[client.template] ?? (client.template || '手工凭证')))}（${client.scopes.includes('*') ? esc(rqI18n.t('全部权限')) : esc(rqI18n.t('{n} 个权限点', { n: client.scopes.length }))}）</div>
           <div><span class="text-4">生效权限：</span><span class="fs-12">${esc(scopeText)}</span></div>
           <div><span class="text-4">来源主机：</span><span class="mono">${esc(client.hostname || '—')}</span>（${esc(client.platform || '未知平台')}）</div>
           <div><span class="text-4">接入时间：</span>${fmtTime(client.enrolledAt)}</div>
-          <div><span class="text-4">最近使用：</span>${client.lastUsedAt ? timeAgo(client.lastUsedAt) : '未调用'} · 活跃令牌 ${client.activeTokens} 个</div>
-          <div><span class="text-4">最近心跳：</span>${client.lastHeartbeatAt ? timeAgo(client.lastHeartbeatAt) : '未上报'}${client.heartbeat?.tools !== undefined ? ` · 工具 ${client.heartbeat.tools} 个` : ''}${client.heartbeat?.version ? ` · ${esc(client.heartbeat.version)}` : ''}${client.heartbeat?.uptimeSec !== undefined ? ` · 在线 ${Math.floor(client.heartbeat.uptimeSec / 60)} 分钟` : ''}</div>
+          <div><span class="text-4">最近使用：</span>${client.lastUsedAt ? timeAgo(client.lastUsedAt) : '未调用'} · ${esc(rqI18n.t('活跃令牌 {n} 个', { n: client.activeTokens }))}</div>
+          <div><span class="text-4">最近心跳：</span>${client.lastHeartbeatAt ? timeAgo(client.lastHeartbeatAt) : '未上报'}${client.heartbeat?.tools !== undefined ? esc(rqI18n.t(' · 工具 {n} 个', { n: client.heartbeat.tools })) : ''}${client.heartbeat?.version ? ` · ${esc(client.heartbeat.version)}` : ''}${client.heartbeat?.uptimeSec !== undefined ? esc(rqI18n.t(' · 在线 {n} 分钟', { n: Math.floor(client.heartbeat.uptimeSec / 60) })) : ''}</div>
         </div>`),
       foot: '<button class="btn btn-default" data-cancel>关闭</button>',
     })
@@ -506,7 +505,7 @@ async function renderEnroll(host, params) {
       title: '接入码已创建（仅展示这一次）',
       // body 传字符串：含多个顶层元素（h() 只取 firstElementChild 会丢内容）
       body: `
-        <div class="fs-13 text-4 mb-8">请立即复制并发送给远程电脑的使用者（有效至 ${fmtTime(created.expiresAt)}）：</div>
+        <div class="fs-13 text-4 mb-8">${esc(rqI18n.t('请立即复制并发送给远程电脑的使用者（有效至 {time}）：', { time: fmtTime(created.expiresAt) }))}</div>
         <div class="flex" style="gap:8px;align-items:center">
           <code class="mono" id="connect-one-time-code" style="flex:1;padding:12px;border-radius:8px;background:var(--bg-2);font-size:14px;word-break:break-all">${esc(created.code)}</code>
           <button class="btn btn-default" id="connect-copy-code">${icon('check', 12)}复制</button>
@@ -554,7 +553,7 @@ async function renderConnectorSummary(host) {
       </div>
       <div class="page-actions">
         <span class="badge ${available ? 'badge-ok' : 'badge-warn'} no-dot" title="${esc(gateway?.reason ?? '')}">
-          ${icon(available ? 'check' : 'alert', 12)} 网关${available ? `在线 ${gateway.latencyMs ?? 0}ms` : (gateway ? '不可用' : '状态未知')}
+          ${icon(available ? 'check' : 'alert', 12)} ${available ? esc(rqI18n.t('网关在线 {ms}ms', { ms: gateway.latencyMs ?? 0 })) : esc(gateway ? rqI18n.t('网关不可用') : rqI18n.t('网关状态未知'))}
         </span>
         <a class="btn btn-primary" href="#/connectors">${icon('plug', 14)}完整目录</a>
       </div>
@@ -564,12 +563,12 @@ async function renderConnectorSummary(host) {
       <div class="card card-pad">
         <div class="fs-12 text-3">目录同步</div>
         <div class="col-num" style="font-size:20px;font-weight:700">${syncedAt ? '已同步' : '未同步'}</div>
-        <div class="fs-11 text-4 mt-4">${syncedAt ? `最近同步 ${timeAgo(syncedAt)}` : '在完整目录页点「同步目录」拉取'}</div>
+        <div class="fs-11 text-4 mt-4">${syncedAt ? esc(rqI18n.t('最近同步 {time}', { time: timeAgo(syncedAt) })) : '在完整目录页点「同步目录」拉取'}</div>
       </div>
       <div class="card card-pad">
         <div class="fs-12 text-3">连接引用</div>
         <div class="col-num" style="font-size:20px;font-weight:700">${refs.length}</div>
-        <div class="fs-11 text-4 mt-4">启用 ${activeCount} · 待授权 ${refs.length - activeCount}</div>
+        <div class="fs-11 text-4 mt-4">${esc(rqI18n.t('启用 {a} · 待授权 {b}', { a: activeCount, b: refs.length - activeCount }))}</div>
       </div>
       <div class="card card-pad">
         <div class="fs-12 text-3">权限组</div>
@@ -585,7 +584,7 @@ async function renderConnectorSummary(host) {
 
     <div class="card">
       <div class="card-head">
-        <span class="card-title">${icon('link', 15)} 连接引用摘要（${refs.length}）</span>
+        <span class="card-title">${icon('link', 15)} ${esc(rqI18n.t('连接引用摘要（{n}）', { n: refs.length }))}</span>
         <span class="card-sub">完整管理（新建连接 / 权限组 / 运行日志 / 对账）在连接器页</span>
       </div>
       <div class="card-body" style="padding-top:8px">
@@ -594,13 +593,13 @@ async function renderConnectorSummary(host) {
             <span style="color:var(--brand-500)">${icon('plug', 14)}</span>
             <span class="fs-13" style="font-weight:600">${esc(ref.provider)}</span>
             <span class="mono fs-11 text-4" style="word-break:break-all">${esc(ref.alias)}</span>
-            <span class="fs-11 text-3" style="margin-left:auto">${esc(AUTH_LABEL[ref.authType] ?? ref.authType ?? '—')}${ref.bridge ? ' · 桥接过渡' : ''}</span>
+            <span class="fs-11 text-3" style="margin-left:auto">${esc(rqI18n.t(AUTH_LABEL[ref.authType] ?? ref.authType ?? '—'))}${ref.bridge ? esc(rqI18n.t(' · 桥接过渡')) : ''}</span>
             ${statusBadge(ref.status === 'active' ? 'active' : 'pending', ref.status === 'active' ? '已启用' : '待授权')}
           </div>`).join('') || `
           <div class="empty-hint" style="padding:16px">
             ${icon('plug', 16)} 还没有连接引用——到 <a href="#/connectors" style="color:var(--brand-500)">完整目录</a> 按三形态向导（免凭证 / OAuth / API Key）新建。
           </div>`}
-        ${refs.length > 8 ? `<div class="fs-12 text-4 mt-8">… 共 ${refs.length} 条，<a href="#/connectors" style="color:var(--brand-500)">查看完整目录</a></div>` : ''}
+        ${refs.length > 8 ? `<div class="fs-12 text-4 mt-8">${esc(rqI18n.t('… 共 {n} 条，', { n: refs.length }))}<a href="#/connectors" style="color:var(--brand-500)">查看完整目录</a></div>` : ''}
       </div>
     </div>`
 }

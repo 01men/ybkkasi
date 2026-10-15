@@ -6,6 +6,7 @@ import { copyFile, mkdir, readdir, readFile, rename, open } from 'node:fs/promis
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
+import { t } from '../../platform-i18n/src/index.ts'
 
 export interface RecordBase {
   id: string
@@ -107,9 +108,9 @@ class CollectionImpl<T extends RecordBase> implements Collection<T> {
   insert(data: Omit<T, 'createdAt' | 'updatedAt'> & { createdAt?: string; updatedAt?: string }): T {
     const now = new Date().toISOString()
     const record = { createdAt: now, updatedAt: now, ...data, updatedAt: now } as T
-    if (this.records.has(record.id)) throw new Error(`[storage] 集合 ${this.name} 中已存在 id=${record.id}`)
+    if (this.records.has(record.id)) throw new Error(t('[storage] 集合 {name} 中已存在 id={id}', { name: this.name, id: record.id }))
     const conflict = this.conflictOf(record)
-    if (conflict) throw new Error(`[storage] 唯一约束冲突（${conflict.label}）：与既有记录 ${conflict.existing.id} 重复`)
+    if (conflict) throw new Error(t('[storage] 唯一约束冲突（{label}）：与既有记录 {id} 重复', { label: conflict.label, id: conflict.existing.id }))
     this.records.set(record.id, record)
     this.emit({ kind: 'insert', record })
     this.persist(this.name)
@@ -118,10 +119,10 @@ class CollectionImpl<T extends RecordBase> implements Collection<T> {
 
   update(id: string, patch: Partial<T>): T {
     const current = this.records.get(id)
-    if (!current) throw new Error(`[storage] 集合 ${this.name} 中不存在 id=${id}`)
+    if (!current) throw new Error(t('[storage] 集合 {name} 中不存在 id={id}', { name: this.name, id }))
     const next = { ...current, ...patch, id: current.id, createdAt: current.createdAt, updatedAt: new Date().toISOString() } as T
     const conflict = this.conflictOf(next, id)
-    if (conflict) throw new Error(`[storage] 唯一约束冲突（${conflict.label}）：与既有记录 ${conflict.existing.id} 重复`)
+    if (conflict) throw new Error(t('[storage] 唯一约束冲突（{label}）：与既有记录 {id} 重复', { label: conflict.label, id: conflict.existing.id }))
     this.records.set(id, next)
     this.emit({ kind: 'update', record: next })
     this.persist(this.name)

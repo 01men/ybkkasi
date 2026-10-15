@@ -3,6 +3,8 @@
  * BASE 由 boot.js 传入（/rq/panel/ 挂载形态推导修正）。全部请求收口于此，
  * 页面代码零裸 fetch（RBAC 走查铁律同样适用于面板前端）。
  */
+import rqI18n from './i18n.js'
+
 export let BASE = ''
 
 export function setBase(value) {
@@ -83,7 +85,7 @@ async function request(method, path, body, retried = false) {
   }
   if (!response.ok || payload?.ok === false) {
     const err = payload?.error ?? {}
-    throw new ApiError(err.code ?? `HTTP_${response.status}`, err.message ?? `请求失败（${response.status}）`, response.status)
+    throw new ApiError(err.code ?? `HTTP_${response.status}`, err.message ?? rqI18n.t('请求失败（{status}）', { status: response.status }), response.status)
   }
   return payload?.data
 }

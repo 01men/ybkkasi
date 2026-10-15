@@ -50,11 +50,19 @@ RongQi (ybkk-AIOS) is a self-hosted enterprise AI resource management platform: 
 - [QA 优化批次交付说明](https://github.com/01men/ybkkasi/blob/main/docs/release-notes-2026-09-13-qa-fixes.md)：15 项安全与正确性修复、验证结论与防复发（2026-09-13）
 - [M2 迭代发布说明](https://github.com/01men/ybkkasi/blob/main/docs/release-notes-2026-09-16-m2.md)：FinOps 报告 v1、首启体验产品化、技术债收尾与契约变更登记（2026-09-16）
 
+## 国际化文档（International Docs，2026-10-15 起）
+
+面向美/欧/印/非/澳/日/新市场的官方多语言文档，唯一出处 docs/i18n/（治理：docs/i18n/README.md，术语契约：docs/i18n/GLOSSARY.md）。运行时界面自 2026-10-16 起内置三语切换（zh-CN 默认 / en-US / ja-JP）；文档译稿中 UI 位置带中文原文括注，协议层 ASCII 键不改写，中文原文为权威版本。
+
+- English（Tier 1 全量版 9 份，en-US 基线；覆盖美/澳/新/印商务/非洲英语区/欧洲商务）：https://github.com/01men/ybkkasi/tree/main/docs/i18n/en （README.md 产品全景 · product-introduction.md 产品介绍 · getting-started.md 快速开始 · dsh-ecosystem.md DSH 生态 · user-guide.md 功能使用指南 · deploy-enterprise.md 企业部署 · app-sso-integration.md App SSO 接入 · usage-reporting.md 用量报表 · release-notes-summary.md 发布史摘要）
+- 日本語（Tier 1 全量版 9 份，与英文版同集）：https://github.com/01men/ybkkasi/tree/main/docs/i18n/ja
+- Tier 2 产品一页纸：Deutsch docs/i18n/de/product-overview.md · Français docs/i18n/fr/product-overview.md · Español docs/i18n/es/product-overview.md · Português docs/i18n/pt/product-overview.md · हिन्दी docs/i18n/hi/product-overview.md
+
 ## 边界与口径
 
 - 商业模式为按「团队 + 领域资产」定价（行业图谱包/场景包等，制造业客户可走私有化交付项目制）；平台对外只呈现用量与内部成本穿透（价格簿零价快照 charge 恒 0 + 内部采购成本参考），钱包/充值/分账等结算语义已整体下线封存
 - 生产部署默认基线初始化（零演示数据）；演示数据仅 `DEMO_SEED=1` 显式注入，请勿在生产启用
 - 全部文件操作经 MCP 文件网关并按真实用户身份（X-On-Behalf-User）留痕；测试内 stub 均为进程内真实 HTTP 服务，不降级为 mock
-- 全中文单语产品（2026-10-13 起）：表现层（UI/CLI/通知/错误提示）一律中文，不维护英文版本；协议层例外——事件名/权限点/错误原因码/API 信封字段/环境变量名/浏览器存储键保留 ASCII 键（跨系统机器契约），逐键中文释义见 docs/协议键中文对照总表.md
+- 运行时表现层多语言（2026-10-16 起）：UI/CLI/通知与审批文案/错误提示支持 简体中文（默认）/ English (US) / 日本語 实时切换——Web 顶栏语言选择器（偏好 localStorage `rq_lang`）、请求级 `?lang=` 与 Accept-Language 协商、CLI `--lang` 旗标或 `DSHCTL_LANG`、安装级 `PLATFORM_LOCALE`、企业定制词条 `I18N_EXTRA_DIR`；词典未覆盖文案优雅降级中文，默认 zh-CN 输出与历史版本逐字节一致；协议层 ASCII 键不改写（事件名/权限点/错误原因码/API 信封字段/环境变量名/浏览器存储键，逐键中文释义见 docs/协议键中文对照总表.md）。文档层自 2026-10-15 起提供官方多语言版（docs/i18n/，英文与日文全量 + 德/法/西/葡/印地概览），中文原文为权威版本，术语契约见 docs/i18n/GLOSSARY.md
 
-（最近更新：2026-10-15 · 数字员工二期 W 批次整体交付——MCP 工具可信风险登记流程（V11 根治）、REST/Panel 接入面等价收敛、usage 代报白名单、workforce.admin 运维面、灰度交付包（六门验证：lint 全绿 · selftest ≥1380 · drill ≥37，详见批次提交）。此前：2026-10-15 · 审查反馈整体整改批次——组织隔离 fail-closed、MCP 工具权限最小化（存量工具逐一补声明最小权限 permission，/mcp tools/call 的 console.login 基线收敛为漏声明 fail-safe）、模型渠道降级链预算守卫、/docs 白名单公开、内核韧性十项收口；控制台 ⌘K 命令面板页面索引补齐 6 条真实路由，sceneCode 全链路口径补注面板任务创建入口（本批次接线）。更新日期：2026-10-15）
+（最近更新：2026-10-16 · 功能层全球化批次——运行时表现层内置三语切换（zh-CN 默认/en-US/ja-JP）：新增 packages/platform-i18n 内核（中文原文为键的词典、AsyncLocalStorage 请求级 locale、?lang=/rq_lang/Accept-Language/PLATFORM_LOCALE 协商、I18N_EXTRA_DIR 企业覆盖层、/locales/:locale 合并端点）、控制台/面板顶栏语言切换器与 DOM 级翻译引擎、CLI dshctl --lang/DSHCTL_LANG、约 2,700 处 t() 接入与约 4,800 词条×2 语言（en/ja 术语对齐 docs/i18n/GLOSSARY.md）；默认 zh-CN 输出逐字节不变，协议层 ASCII 键不改写，新增协议键已登记协议键对照表。此前：2026-10-15 · 数字员工二期 W 批次整体交付——MCP 工具可信风险登记流程（V11 根治）、REST/Panel 接入面等价收敛、usage 代报白名单、workforce.admin 运维面、灰度交付包（六门验证：lint 全绿 · selftest ≥1380 · drill ≥37，详见批次提交）。更新日期：2026-10-16）

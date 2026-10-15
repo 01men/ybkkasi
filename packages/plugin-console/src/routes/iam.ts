@@ -8,6 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { OrgScopeDeniedError, PermissionCatalog, type UserManageActor } from '../../../plugin-iam/src/index.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 /**
@@ -49,6 +50,9 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const info = caller(exchange)
     return { userId: info.userId, permissions: info.permissions }
   }
+
+  /** 权限点目录展示视图：Catalog 常量为中文数据（t() 的键），回显处按请求语言即时翻译。 */
+  const permissionCatalogView = () => PermissionCatalog.map((item) => ({ ...item, label: t(item.label), group: t(item.group) }))
 
   /**
    * 管理面处理器包扎（N4）：跨组织拒绝（iam 服务层 OrgScopeDeniedError）在此回写 403 FORBIDDEN——
@@ -119,7 +123,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     }
     if (Array.isArray(input.leaderUserIds)) {
       const org = ctx.iam.setOrgLeaders(exchange.params['id']!, input.leaderUserIds)
-      changeLog(exchange, 'iam.org.leaders', 'org', org.id, org.name, `负责人：${input.leaderUserIds.join(',') || '（清空）'}`)
+      changeLog(exchange, 'iam.org.leaders', 'org', org.id, org.name, t('负责人：{leaders}', { leaders: input.leaderUserIds.join(',') || t('（清空）') }))
     }
     return ctx.iam.orgs().get(exchange.params['id']!)
   }))
@@ -128,7 +132,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const input = body<{ cascade?: boolean }>(exchange)
     const result = ctx.iam.deleteOrg(exchange.params['id']!, { cascade: input.cascade === true }, manageActor(exchange))
     changeLog(exchange, 'iam.org.delete', 'org', exchange.params['id']!, '',
-      input.cascade ? `级联一键删除：移除组织 ${result.removedOrgs} 个，账号上移 ${result.movedUsers} 人` : '')
+      input.cascade ? t('级联一键删除：移除组织 {orgs} 个，账号上移 {users} 人', { orgs: result.removedOrgs, users: result.movedUsers }) : '')
     return result
   }))
 
@@ -140,7 +144,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const q = exchange.query.get('q') ?? undefined
     const scope = scopedOrgIds(exchange)
     if (orgId && scope !== null && !scope.includes(orgId)) {
-      exchange.fail(403, 'FORBIDDEN', '查询组织超出调用者的组织子树（组织隔离）')
+      exchange.fail(403, 'FORBIDDEN', t('查询组织超出调用者的组织子树（组织隔离）'))
       return
     }
     // 分页（测试 §9）：page/pageSize 可选，缺省返回全量保持旧客户端兼容
@@ -176,14 +180,14 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   guarded('POST', '/api/iam/users/:id/reset-password', 'iam.user.write', manageScope((exchange) => {
     const { password } = body<{ password?: string }>(exchange)
     const { user, initialPassword } = ctx.iam.resetPassword(exchange.params['id']!, password, manageActor(exchange))
-    changeLog(exchange, 'iam.user.reset_password', 'user', user.id, user.displayName, password ? '设置为指定口令' : '重置为随机初始口令')
+    changeLog(exchange, 'iam.user.reset_password', 'user', user.id, user.displayName, password ? t('设置为指定口令') : t('重置为随机初始口令'))
     return { id: user.id, username: user.username, initialPassword }
   }))
 
   guarded('POST', '/api/iam/users/import', 'iam.user.write', manageScope((exchange) => {
     const { items } = body<{ items: Array<{ username: string; displayName: string; orgId: string; title?: string; email?: string }> }>(exchange)
     const result = ctx.iam.importUsers(items ?? [], manageActor(exchange))
-    changeLog(exchange, 'iam.user.import', 'user', '', '', `新建 ${result.created.length}，跳过 ${result.skipped.length}`)
+    changeLog(exchange, 'iam.user.import', 'user', '', '', t('新建 {created}，跳过 {skipped}', { created: result.created.length, skipped: result.skipped.length }))
     return { created: result.created.map((user) => decorateUser(ctx, user)), skipped: result.skipped }
   }))
 
@@ -235,25 +239,25 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const id = exchange.params['id']!
     const target = ctx.iam.users().get(id)
     if (!target) {
-      exchange.fail(404, 'NOT_FOUND', `账号不存在：${id}`)
+      exchange.fail(404, 'NOT_FOUND', t('账号不存在：{id}', { id }))
       return
     }
     if (target.status !== 'deactivated') {
-      exchange.fail(400, 'BAD_REQUEST', `仅已注销账号可物理删除（当前状态 ${target.status}；请先执行 deactivate）`)
+      exchange.fail(400, 'BAD_REQUEST', t('仅已注销账号可物理删除（当前状态 {status}；请先执行 deactivate）', { status: target.status }))
       return
     }
     ctx.iam.deleteUser(id, manageActor(exchange))
-    changeLog(exchange, 'iam.user.delete', 'user', id, target.displayName, '物理删除（已注销账号）')
+    changeLog(exchange, 'iam.user.delete', 'user', id, target.displayName, t('物理删除（已注销账号）'))
     return { deleted: true }
   }))
 
   guarded('GET', '/api/iam/roles', 'iam.org.read', () => ({
     roles: ctx.iam.roles().all(),
-    catalog: PermissionCatalog,
+    catalog: permissionCatalogView(),
   }))
 
   guarded('GET', '/api/iam/permissions', 'iam.org.read', () => {
-    return { catalog: PermissionCatalog }
+    return { catalog: permissionCatalogView() }
   })
 
   guarded('POST', '/api/iam/roles', 'iam.role.write', (exchange) => {
@@ -295,7 +299,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       ...(input.note !== undefined ? { note: input.note } : {}),
       ...(input.expectedVersion !== undefined ? { expectedVersion: input.expectedVersion } : {}),
     })
-    changeLog(exchange, 'iam.scene_policy.upsert', 'scene_policy', policy.id, policy.sceneCode, `${policy.entries.length} 条，v${policy.version}`)
+    changeLog(exchange, 'iam.scene_policy.upsert', 'scene_policy', policy.id, policy.sceneCode, t('{n} 条，v{version}', { n: policy.entries.length, version: policy.version }))
     return policy
   })
 
@@ -313,23 +317,23 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const info = caller(exchange)
     const input = body<{ sceneCode: string; action: string; userId?: string }>(exchange)
     if (!input.sceneCode?.trim() || !input.action?.trim()) {
-      exchange.fail(400, 'BAD_REQUEST', 'sceneCode 与 action 必填')
+      exchange.fail(400, 'BAD_REQUEST', t('sceneCode 与 action 必填'))
       return
     }
     let targetUserId = info.userId ?? ''
     if (input.userId && input.userId !== info.userId) {
       if (!info.permissions.includes('*') && !info.permissions.includes('iam.user.read')) {
-        exchange.fail(403, 'FORBIDDEN', '代查他人场景判定需要 iam.user.read')
+        exchange.fail(403, 'FORBIDDEN', t('代查他人场景判定需要 iam.user.read'))
         return
       }
       targetUserId = input.userId
     }
     if (!targetUserId) {
-      exchange.fail(403, 'FORBIDDEN', '机器主体请携带 userId 参数且调用方需持有 iam.user.read')
+      exchange.fail(403, 'FORBIDDEN', t('机器主体请携带 userId 参数且调用方需持有 iam.user.read'))
       return
     }
     const decision = ctx.iam.checkScene(targetUserId, input.sceneCode, input.action)
-    changeLog(exchange, 'iam.scene_policy.check', 'scene_policy', input.sceneCode, input.action, `${decision.decision}（${targetUserId}）`)
+    changeLog(exchange, 'iam.scene_policy.check', 'scene_policy', input.sceneCode, input.action, t('{decision}（{userId}）', { decision: decision.decision, userId: targetUserId }))
     return { ...decision, checkedUser: targetUserId }
   })
 
@@ -362,7 +366,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   /** 动态用户组重算快照 + 漂移告警（dev-plan-nas-authz §2.2；连接器同步收尾亦自动执行）。 */
   guarded('POST', '/api/iam/groups/refresh-snapshots', 'iam.user.write', (exchange) => {
     const drifts = ctx.iam.refreshGroupSnapshots(caller(exchange).name)
-    changeLog(exchange, 'iam.group.refresh_snapshots', 'user_group', '', '', `漂移 ${drifts.length} 组`)
+    changeLog(exchange, 'iam.group.refresh_snapshots', 'user_group', '', '', t('漂移 {n} 组', { n: drifts.length }))
     return { drifts }
   })
 
@@ -379,7 +383,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   guarded('POST', '/api/iam/connectors', 'iam.connector.write', (exchange) => {
     const input = body<{ provider: 'dingtalk' | 'feishu' | 'wecom'; name: string; corpId: string; appKey: string; appSecret?: string; enabled?: boolean; syncOrgRoot?: string; intervalMinutes?: number; callbackUrl?: string; loginEnabled?: boolean; conflictStrategy?: 'third_party_wins' | 'platform_wins' | 'manual'; mode?: 'real' | 'mock'; apiBase?: string; oapiBase?: string; targetOrgId?: string }>(exchange)
     if (!input.provider || !input.name || !input.corpId || !input.appKey) {
-      exchange.fail(400, 'BAD_REQUEST', 'provider、name、corpId、appKey 必填')
+      exchange.fail(400, 'BAD_REQUEST', t('provider、name、corpId、appKey 必填'))
       return
     }
     const config = ctx.iam.createConnectorConfig(input)
@@ -396,7 +400,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const input = body<{ name?: string; corpId: string; appKey: string; appSecret?: string; enabled?: boolean; syncOrgRoot?: string; intervalMinutes?: number; callbackUrl?: string; loginEnabled?: boolean; conflictStrategy?: 'third_party_wins' | 'platform_wins' | 'manual'; mode?: 'real' | 'mock'; apiBase?: string; oapiBase?: string; targetOrgId?: string }>(exchange)
     const existing = ctx.iam.resolveConnectorConfig(param)
     if (!existing && !['dingtalk', 'feishu', 'wecom'].includes(param)) {
-      exchange.fail(400, 'BAD_REQUEST', `连接器配置不存在：${param}`)
+      exchange.fail(400, 'BAD_REQUEST', t('连接器配置不存在：{param}', { param }))
       return
     }
     const config = existing
@@ -411,7 +415,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   guarded('DELETE', '/api/iam/connectors/:id', 'iam.connector.write', (exchange) => {
     const config = ctx.iam.connectorConfigById(exchange.params['id']!)
     if (!config) {
-      exchange.fail(400, 'BAD_REQUEST', `连接器配置不存在：${exchange.params['id']}`)
+      exchange.fail(400, 'BAD_REQUEST', t('连接器配置不存在：{param}', { param: exchange.params['id'] }))
       return
     }
     ctx.iam.deleteConnectorConfig(config.id)
@@ -436,7 +440,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   // IAM_CONNECTOR_AUTO_SYNC=off 停用定时器后可改由外部调度调本端点）。
   guarded('POST', '/api/iam/connectors/auto-sync', 'iam.connector.write', async (exchange) => {
     const results = await ctx.iam.runDueAutoSyncs()
-    changeLog(exchange, 'iam.connector.auto-sync', 'connector', 'auto-sync', '连接器到期巡检', `处理 ${results.length} 条（${results.filter((item) => item.ok).length} 成功）`)
+    changeLog(exchange, 'iam.connector.auto-sync', 'connector', 'auto-sync', t('连接器到期巡检'), t('处理 {total} 条（{ok} 成功）', { total: results.length, ok: results.filter((item) => item.ok).length }))
     return { processed: results.length, results }
   })
 
@@ -454,7 +458,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       action: 'iam.roster.pull',
       resourceType: 'roster',
       resourceId: 'roster',
-      resourceName: '全员名册',
+      resourceName: t('全员名册'),
       result: 'ok',
       detail: `orgs=${roster.orgs.length} users=${roster.users.length}`,
       ...(info.actChain.length > 0 ? { actChain: info.actChain } : {}),
@@ -470,7 +474,7 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     const { keep } = body<{ keep: 'third_party' | 'platform' }>(exchange)
     const info = caller(exchange)
     const conflict = ctx.iam.resolveConflict(exchange.params['id']!, keep, info.userId ?? info.principalId)
-    changeLog(exchange, 'iam.conflict.resolve', 'sync_conflict', conflict.id, '', `保留 ${keep}`)
+    changeLog(exchange, 'iam.conflict.resolve', 'sync_conflict', conflict.id, '', t('保留 {keep}', { keep }))
     return conflict
   })
 }

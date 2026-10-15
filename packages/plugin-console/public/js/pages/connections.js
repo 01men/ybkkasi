@@ -12,6 +12,7 @@ import { $, esc, toast } from '../ui.js'
 import {
   loadConnections, upsertConnection, removeConnection, activeConnection, setActiveId, LOCAL_ID,
 } from '../connections.js'
+import rqI18n from '../i18n.js'
 
 /** 本机连接的展示地址（页面源 + 部署前缀）。 */
 const PAGE_BASE = location.origin + new URL('.', document.baseURI).pathname.replace(/\/$/, '')
@@ -79,7 +80,7 @@ export function renderConnections(content, params, { standalone = false } = {}) 
       const base = $('#conn-new-base').value
       const result = upsertConnection(localStorage, { name, base })
       if (!result.ok) return toast(result.error, 'error')
-      toast(`已保存连接「${result.connection.name}」，点击其「切换」启用`)
+      toast(rqI18n.t('已保存连接「{name}」，点击其「切换」启用', { name: result.connection.name }))
       render()
     })
 
@@ -119,9 +120,9 @@ export function renderConnections(content, params, { standalone = false } = {}) 
       row.querySelector('[data-act="probe"]')?.addEventListener('click', async (event) => {
         event.currentTarget.disabled = true
         const cell = row.querySelector('.conn-probe')
-        cell.textContent = '测活中…'
+        cell.textContent = rqI18n.t('测活中…')
         const result = await probeHostBase(item.base)
-        cell.innerHTML = `${result.ok ? '<span style="color:#067647">● 可达 ' : '<span style="color:#b42318">● 不可达：'}${esc(result.message)}</span>`
+        cell.innerHTML = `${result.ok ? `<span style="color:#067647">● ${esc(rqI18n.t('可达'))} ` : `<span style="color:#b42318">● ${esc(rqI18n.t('不可达：'))}`}${esc(result.message)}</span>`
         event.currentTarget.disabled = false
       })
       row.querySelector('[data-act="switch"]')?.addEventListener('click', () => {
@@ -133,14 +134,14 @@ export function renderConnections(content, params, { standalone = false } = {}) 
       row.querySelector('[data-act="remove"]')?.addEventListener('click', (event) => {
         if (!armed) {
           armed = true
-          event.currentTarget.title = '再次点击确认删除'
+          event.currentTarget.title = rqI18n.t('再次点击确认删除')
           event.currentTarget.style.color = '#d0342c'
-          toast('再点一次确认删除该连接')
+          toast(rqI18n.t('再点一次确认删除该连接'))
           return
         }
         const result = removeConnection(localStorage, id)
         if (result.removedActive) switchTo(LOCAL_ID) // 删的是活动连接：回落本机并刷新
-        else { toast('已删除'); render() }
+        else { toast(rqI18n.t('已删除')); render() }
       })
     })
   }
@@ -169,7 +170,7 @@ export function renderConnections(content, params, { standalone = false } = {}) 
         base: row.querySelector('[data-edit="base"]').value,
       })
       if (!result.ok) return toast(result.error, 'error')
-      toast(active().id === item.id ? '已保存。点击「重新应用」以生效' : '已保存')
+      toast(active().id === item.id ? rqI18n.t('已保存。点击「重新应用」以生效') : rqI18n.t('已保存'))
       render()
     })
   }

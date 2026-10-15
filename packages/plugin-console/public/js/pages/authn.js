@@ -1,5 +1,6 @@
 /** 认证与令牌：机器凭证 + 令牌生命周期 + on-behalf-of 说明。 */
 import { api, session } from '../api.js'
+import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import {
   h, $, $$, esc, toast, openDrawer, openModal, confirmDialog,
@@ -33,9 +34,9 @@ export async function renderAuthn(content, params, ctx) {
     </div>
 
     <div class="tabs">
-      <div class="tab active" data-tab="principals">身份主体 (${principals.principals.length})</div>
-      <div class="tab" data-tab="tokens">访问令牌 (${tokens.total})</div>
-      ${canOidc ? `<div class="tab" data-tab="oidc">OIDC 客户端 (${oidcClients.clients.length})</div>` : ''}
+      <div class="tab active" data-tab="principals">${esc(rqI18n.t('身份主体 ({n})', { n: principals.principals.length }))}</div>
+      <div class="tab" data-tab="tokens">${esc(rqI18n.t('访问令牌 ({n})', { n: tokens.total }))}</div>
+      ${canOidc ? `<div class="tab" data-tab="oidc">${esc(rqI18n.t('OIDC 客户端 ({n})', { n: oidcClients.clients.length }))}</div>` : ''}
     </div>
     <div id="authn-body"></div>`
 
@@ -71,13 +72,13 @@ export async function renderAuthn(content, params, ctx) {
               if (p.type !== 'machine') return '<span class="text-4">—</span>'
               const resolved = p.resolvedScopes ?? p.scopes ?? []
               if (!resolved.length) return '<span class="text-4">—</span>'
-              const tip = resolved.includes('*') ? "'*' 全部权限" : resolved.join(', ')
+              const tip = resolved.includes('*') ? rqI18n.t("'*' 全部权限") : resolved.join(', ')
               if (resolved.includes('*')) return `<span class="badge badge-danger no-dot" title="${esc(tip)}">全部权限（*）</span>`
               const roleTags = (p.roleNames ?? []).map((name) => `<span class="badge badge-purple no-dot">${esc(name)}</span>`).join(' ')
               const extra = p.scopes?.length ?? 0
-              const extraTag = extra ? `<span class="fs-11 text-3">附加 ${extra} 项</span>` : ''
+              const extraTag = extra ? `<span class="fs-11 text-3">${esc(rqI18n.t('附加 {n} 项', { n: extra }))}</span>` : ''
               const summary = [roleTags, extraTag].filter(Boolean).join(' ')
-              return `<span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;max-width:300px" title="生效权限点：${esc(tip)}">${summary || `<span class="mono fs-11">${esc(tip)}</span>`}</span>`
+              return `<span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;max-width:300px" title="${esc(rqI18n.t('生效权限点：{tip}', { tip }))}">${summary || `<span class="mono fs-11">${esc(tip)}</span>`}</span>`
             },
           },
           { title: '客户端 ID', render: (p) => p.clientId ? `<span class="mono fs-12">${esc(p.clientId)}</span>` : '<span class="text-4">—</span>' },
@@ -139,7 +140,7 @@ export async function renderAuthn(content, params, ctx) {
           })
           if (!result) return
           await api.delete(`/api/authn/tokens/${btn.dataset.revoke}`, { reason: result.reason })
-          toast('令牌已吊销'); ctx.rerender()
+          toast(rqI18n.t('令牌已吊销')); ctx.rerender()
         }
       })
     } else if (tab === 'oidc') {
@@ -155,8 +156,8 @@ export async function renderAuthn(content, params, ctx) {
       ;[bindable, authz] = await Promise.all([api.get('/api/authn/bindable-resources'), fetchAuthzOptions()])
     } catch (error) { toast(error.message, 'error'); return }
     const entries = [
-      ...bindable.agents.map((a) => ({ value: `agent:${a.id}`, refType: 'agent', refId: a.id, name: a.name, label: `Agent · ${a.name}（${a.status}）`, search: `${a.name} agent ${a.id}`.toLowerCase() })),
-      ...bindable.apps.map((a) => ({ value: `app:${a.id}`, refType: 'app', refId: a.id, name: a.name, label: `AI 应用 · ${a.name}（${a.status}）`, search: `${a.name} app 应用 ${a.id}`.toLowerCase() })),
+      ...bindable.agents.map((a) => ({ value: `agent:${a.id}`, refType: 'agent', refId: a.id, name: a.name, label: rqI18n.t('Agent · {name}（{status}）', { name: a.name, status: a.status }), search: `${a.name} agent ${a.id}`.toLowerCase() })),
+      ...bindable.apps.map((a) => ({ value: `app:${a.id}`, refType: 'app', refId: a.id, name: a.name, label: rqI18n.t('AI 应用 · {name}（{status}）', { name: a.name, status: a.status }), search: `${a.name} app 应用 ${a.id}`.toLowerCase() })),
     ]
     const modal = openModal({
       title: '签发机器凭证（Client Credentials）', wide: true,
@@ -192,7 +193,7 @@ export async function renderAuthn(content, params, ctx) {
           <label class="form-label">自动关联</label>
           <div class="muted-box" style="display:flex;align-items:center;gap:8px">
             ${icon('link', 14)}
-            <span>主体名称 <code class="mono">${esc(`${entry.refType}:${entry.name}`)}</code> · 关联 ${esc(entry.refType)} <code class="mono">${esc(entry.refId)}</code></span>
+            <span>${esc(rqI18n.t('主体名称'))} <code class="mono">${esc(`${entry.refType}:${entry.name}`)}</code> · ${esc(rqI18n.t('关联'))} ${esc(entry.refType)} <code class="mono">${esc(entry.refId)}</code></span>
           </div>`
       } else {
         nameHolder.innerHTML = field('主体名称', inputField('name', { placeholder: '如 external:ci-system' }), { required: true })
@@ -207,11 +208,11 @@ export async function renderAuthn(content, params, ctx) {
       const data = collectForm(modal.body)
       const entry = current()
       const authzPick = collectAuthzPicker(modal)
-      if (!authzPick) return toast('授权不能为空：至少选择机器角色、附加权限点或 *', 'error')
+      if (!authzPick) return toast(rqI18n.t('授权不能为空：至少选择机器角色、附加权限点或 *'), 'error')
       const payload = entry
         ? { name: `${entry.refType}:${entry.name}`, refType: entry.refType, refId: entry.refId, ...authzPick }
         : { name: data.name, refType: 'external', ...authzPick }
-      if (!payload.name) return toast('外部系统需填写主体名称', 'error')
+      if (!payload.name) return toast(rqI18n.t('外部系统需填写主体名称'), 'error')
       try {
         const result = await api.post('/api/authn/principals', payload)
         modal.close()
@@ -236,7 +237,7 @@ client_secret: ${esc(result.clientSecret)}</div>
     })
     if (!result) return
     await api.post('/api/authn/rotate-secret')
-    toast('签名密钥已轮换，存量令牌全部吊销')
+    toast(rqI18n.t('签名密钥已轮换，存量令牌全部吊销'))
     setTimeout(() => ctx.rerender(), 500)
   }
 
@@ -249,7 +250,7 @@ client_secret: ${esc(result.clientSecret)}</div>
     if (!result) return
     try {
       const rotated = await api.post('/api/authn/oidc/keys/rotate')
-      toast(`OIDC 签名密钥已轮换（新 kid=${rotated.kid}，旧 key ${rotated.graceHours}h 宽限）`)
+      toast(rqI18n.t('OIDC 签名密钥已轮换（新 kid={kid}，旧 key {h}h 宽限）', { kid: rotated.kid, h: rotated.graceHours }))
     } catch (error) { toast(error.message, 'error') }
   }
 
@@ -260,7 +261,7 @@ client_secret: ${esc(result.clientSecret)}</div>
     const tokens2 = await api.get('/api/authn/tokens' + api.qs({ principalId: principal.id }))
     const drawer = openDrawer({
       title: principal.name,
-      sub: `${principal.type === 'human' ? '人员身份' : '机器身份'} · ${principal.id}`,
+      sub: `${principal.type === 'human' ? rqI18n.t('人员身份') : rqI18n.t('机器身份')} · ${principal.id}`,
       body: `
         <div class="desc-grid mb-14">
           <div class="desc-item"><span class="k">类型</span><span class="v">${principal.type === 'human' ? '人员' : '机器'}</span></div>
@@ -278,7 +279,7 @@ client_secret: ${esc(result.clientSecret)}</div>
             <div class="flex mb-14" style="flex-wrap:wrap;gap:6px">${principal.scopes.map((s) => `<span class="badge badge-brand no-dot mono">${esc(s)}</span>`).join('')}</div>` : '<div class="mb-14"></div>'}` : principal.type === 'human' && principal.scopes.length ? `
           <div class="card-title mb-8">权限范围（角色解析）</div>
           <div class="flex mb-14" style="flex-wrap:wrap;gap:6px">${principal.scopes.map((s) => `<span class="badge badge-brand no-dot mono">${esc(s)}</span>`).join('')}</div>` : ''}
-        <div class="card-title mb-8">令牌（${tokens2.total}）</div>
+        <div class="card-title mb-8">${esc(rqI18n.t('令牌（{n}）', { n: tokens2.total }))}</div>
         ${tokens2.tokens.slice(0, 8).map((t) => `
           <div class="flex" style="padding:8px 0;border-bottom:1px solid var(--border)">
             <span class="mono fs-12 grow">${esc(t.jti.slice(0, 22))}…</span>
@@ -298,16 +299,16 @@ client_secret: ${esc(result.clientSecret)}</div>
     if (priRotateBtn) priRotateBtn.onclick = () => { drawer.close(); rotateCredential(principal, ctx) }
     const disableBtn = drawer.el.querySelector('#pri-disable')
     if (disableBtn) disableBtn.onclick = async () => {
-      const result = await confirmDialog({ title: '禁用身份', requireReason: true, danger: true, message: `禁用 <b>${esc(principal.name)}</b> 后其全部令牌立即失效。` })
+      const result = await confirmDialog({ title: '禁用身份', requireReason: true, danger: true, message: rqI18n.t('禁用 <b>{name}</b> 后其全部令牌立即失效。', { name: esc(principal.name) }) })
       if (!result) return
       await api.post(`/api/authn/principals/${principal.id}/disable`, { reason: result.reason })
-      toast('身份已禁用'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('身份已禁用')); drawer.close(); ctx.rerender()
     }
     const enableBtn = drawer.el.querySelector('#pri-enable')
     if (enableBtn) enableBtn.onclick = async () => {
       try {
         await api.post(`/api/authn/principals/${principal.id}/enable`)
-        toast('身份已启用'); drawer.close(); ctx.rerender()
+        toast(rqI18n.t('身份已启用')); drawer.close(); ctx.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
   }
@@ -390,7 +391,7 @@ client_secret: ${esc(result.clientSecret)}</div>
     const selectedRoles = principal.roleIds ?? []
     const selectedScopes = (principal.scopes ?? []).filter((scope) => scope !== '*')
     const modal = openModal({
-      title: `编辑权限范围 · ${principal.name}`, wide: true,
+      title: rqI18n.t('编辑权限范围 · {name}', { name: principal.name }), wide: true,
       body: `
         <div class="muted-box mb-14" style="display:flex;gap:8px">${icon('info', 15)}<span>调整保存后该主体<b>全部存量令牌立即吊销</b>（收权即时生效），机器侧需用凭证重新换牌，新令牌按新范围签发。机器角色的权限点随角色编辑<b>实时同步</b>，无需重新换牌。</span></div>
         ${authzPickerHtml(authz, selectedRoles, selectedScopes)}`,
@@ -400,11 +401,11 @@ client_secret: ${esc(result.clientSecret)}</div>
     modal.el.querySelector('[data-cancel]').onclick = () => modal.close()
     modal.el.querySelector('[data-ok]').onclick = async () => {
       const authzPick = collectAuthzPicker(modal)
-      if (!authzPick) return toast('授权不能为空：至少选择机器角色、附加权限点或 *', 'error')
+      if (!authzPick) return toast(rqI18n.t('授权不能为空：至少选择机器角色、附加权限点或 *'), 'error')
       try {
         await api.patch(`/api/authn/principals/${principal.id}`, authzPick)
         modal.close()
-        toast('权限范围已更新；存量令牌已联动吊销，机器侧需重新换牌')
+        toast(rqI18n.t('权限范围已更新；存量令牌已联动吊销，机器侧需重新换牌'))
         ctx2.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
@@ -414,7 +415,7 @@ client_secret: ${esc(result.clientSecret)}</div>
   async function rotateCredential(principal, ctx2) {
     const result = await confirmDialog({
       title: '轮换 clientSecret', danger: true, confirmText: '确认轮换',
-      message: `<b>${esc(principal.name)}</b> 的旧 clientSecret <b>立即失效</b>，存量令牌<b>全部吊销</b>；clientId 保持不变，新 clientSecret 仅展示一次。`,
+      message: rqI18n.t('<b>{name}</b> 的旧 clientSecret <b>立即失效</b>，存量令牌<b>全部吊销</b>；clientId 保持不变，新 clientSecret 仅展示一次。', { name: esc(principal.name) }),
     })
     if (!result) return
     try {
@@ -435,8 +436,8 @@ client_secret: ${esc(rotated.clientSecret)}</div>
 
 function refLabel(principal) {
   if (principal.type === 'human') return '平台账号'
-  if (principal.refType === 'agent') return `Agent 本体（${principal.refId ?? '—'}）`
-  if (principal.refType === 'app') return `AI 应用（${principal.refId ?? '—'}）`
+  if (principal.refType === 'agent') return rqI18n.t('Agent 本体（{id}）', { id: principal.refId ?? '—' })
+  if (principal.refType === 'app') return rqI18n.t('AI 应用（{id}）', { id: principal.refId ?? '—' })
   return '外部系统'
 }
 
@@ -519,7 +520,7 @@ async function openOidcClientDetail(client, ctx) {
   const active = client.status === 'active'
   const drawer = openDrawer({
     title: client.name,
-    sub: `OIDC 客户端 · ${client.clientId}${client.refAppName ? ` · 关联应用 ${client.refAppName}` : ''}`,
+    sub: rqI18n.t('OIDC 客户端 · {id}', { id: client.clientId }) + (client.refAppName ? rqI18n.t(' · 关联应用 {name}', { name: client.refAppName }) : ''),
     body: `
       <div class="desc-grid mb-14">
         <div class="desc-item"><span class="k">类型</span><span class="v">${client.clientType === 'public' ? 'public（免 secret · 强制 PKCE）' : 'confidential'}</span></div>
@@ -567,14 +568,14 @@ client_secret: ${esc(rotated.clientSecret)}</div>
     if (!result) return
     try {
       await api.post(`/api/authn/oidc/clients/${client.id}/disable`, { reason: result.reason })
-      toast('客户端已禁用'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('客户端已禁用')); drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') }
   }
   const enableBtn = drawer.el.querySelector('#oc-enable')
   if (enableBtn) enableBtn.onclick = async () => {
     try {
       await api.post(`/api/authn/oidc/clients/${client.id}/enable`)
-      toast('客户端已启用'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('客户端已启用')); drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') }
   }
 }

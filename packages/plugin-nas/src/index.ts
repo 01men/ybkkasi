@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { PlatformEvents, newId, type RecordBase } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type { ResourceEntity } from '../../plugin-resource-core/src/index.ts'
 import { NasMcpClient, type McpToolInfo } from './client.ts'
 import { NAS_TYPE_SPEC } from './schema.ts'
@@ -129,7 +130,7 @@ export class NasRegistryService extends Service {
     const nas = this.requireNas(id)
     const probe = await this.probe(id)
     if (probe.status === 'down') {
-      throw new Error(`网关不可达，暂不能上线（${nas.attrs['gatewayUrl']}）`)
+      throw new Error(t('网关不可达，暂不能上线（{url}）', { url: String(nas.attrs['gatewayUrl'] ?? '') }))
     }
     const result = this.ctx.resourceCore.transition('nas', id, 'online', actor)
     this.ctx.platformBus.emit(PlatformEvents.NasOnlined, { id, name: result.entity.name, slug: result.entity.slug, actor, type: 'nas' })
@@ -186,8 +187,8 @@ export class NasRegistryService extends Service {
     if (fails === 3) {
       this.ctx.audit.fire({
         severity: 'warning',
-        title: `NAS「${nas.name}」网关连续探活失败`,
-        message: `${nas.attrs['gatewayUrl']} 连续 3 次 initialize 探活失败，资产已标记 down，请检查网关服务与网络。`,
+        title: t('NAS「{name}」网关连续探活失败', { name: nas.name }),
+        message: t('{url} 连续 3 次 initialize 探活失败，资产已标记 down，请检查网关服务与网络。', { url: String(nas.attrs['gatewayUrl'] ?? '') }),
         resourceType: 'nas',
         resourceId: id,
       })
@@ -287,7 +288,7 @@ export class NasRegistryService extends Service {
       stagingFile = input.localFile
       sizeBytes = (await readFile(stagingFile)).length
     } else {
-      throw new Error('uploadFile 需要 buffer 或 localFile 之一')
+      throw new Error(t('uploadFile 需要 buffer 或 localFile 之一'))
     }
     const fullPath = this.toFullPath(id, input.destPath)
     const destDir = `/${fullPath.split('/').filter(Boolean).slice(0, -1).join('/')}`
@@ -342,7 +343,7 @@ export class NasRegistryService extends Service {
           const result = await this.uploadFile(id, { localFile: item.localPath, destPath, actor }, opts)
           uploaded.push(result)
         } else {
-          failed.push({ relativePath: item.relativePath, error: '缺少 contentBase64/localPath' })
+          failed.push({ relativePath: item.relativePath, error: t('缺少 contentBase64/localPath') })
         }
       } catch (error) {
         failed.push({ relativePath: item.relativePath, error: error instanceof Error ? error.message : String(error) })
@@ -363,7 +364,7 @@ export class NasRegistryService extends Service {
       const stat = await import('node:fs/promises').then((m) => m.stat(candidate))
       bytes = stat.size
     } catch {
-      throw new Error(`网关落盘文件不存在：${candidate}（请先调用 downloadFile 让网关写入）`)
+      throw new Error(t('网关落盘文件不存在：{file}（请先调用 downloadFile 让网关写入）', { file: candidate }))
     }
     return { localFile: candidate, bytes }
   }
@@ -379,7 +380,7 @@ export class NasRegistryService extends Service {
     // REL-06：mode 枚举收口——只接受小写 local/nas（与运行时 mode!=='nas' 判定一致）；
     // 此前 "NAS"/任意串都能入库，运行时静默回落本地存储
     if (patch.mode !== undefined && patch.mode !== 'local' && patch.mode !== 'nas') {
-      throw new Error(`非法的存储模式：${String(patch.mode)}（只允许 local 或 nas）`)
+      throw new Error(t('非法的存储模式：{value}（只允许 local 或 nas）', { value: String(patch.mode) }))
     }
     const current = this.getSkillStorage()
     const next: SkillStorageConfigRecord = {
@@ -391,10 +392,10 @@ export class NasRegistryService extends Service {
       updatedBy: actor,
     }
     if (next.mode === 'nas') {
-      if (!next.nasId) throw new Error('NAS 存储模式必须指定 nasId（先在 NAS 存储页纳管资产）')
+      if (!next.nasId) throw new Error(t('NAS 存储模式必须指定 nasId（先在 NAS 存储页纳管资产）'))
       const nas = this.get(next.nasId)
-      if (!nas) throw new Error(`NAS 资产不存在：${next.nasId}`)
-      if (!next.basePath || !next.basePath.startsWith('/')) throw new Error('basePath 必须是以 / 开头的绝对路径')
+      if (!nas) throw new Error(t('NAS 资产不存在：{id}', { id: next.nasId }))
+      if (!next.basePath || !next.basePath.startsWith('/')) throw new Error(t('basePath 必须是以 / 开头的绝对路径'))
     }
     if (this.skillStorage().get('singleton')) return this.skillStorage().update('singleton', next)
     return this.skillStorage().insert(next)
@@ -404,13 +405,13 @@ export class NasRegistryService extends Service {
 
   private requireNas(id: string): ResourceEntity {
     const nas = this.ctx.resourceCore.get('nas', id)
-    if (!nas) throw new Error(`NAS 资产不存在：${id}`)
+    if (!nas) throw new Error(t('NAS 资产不存在：{id}', { id }))
     return nas
   }
 
   private requireOnline(id: string): ResourceEntity {
     const nas = this.requireNas(id)
-    if (nas.status !== 'online') throw new Error(`NAS「${nas.name}」当前状态 ${nas.status}，仅已上线资产可执行文件操作`)
+    if (nas.status !== 'online') throw new Error(t('NAS「{name}」当前状态 {status}，仅已上线资产可执行文件操作', { name: nas.name, status: nas.status }))
     return nas
   }
 
@@ -418,7 +419,7 @@ export class NasRegistryService extends Service {
     const endpoint = String(nas.attrs['gatewayUrl'] ?? '')
     const token = String(nas.attrs['accessToken'] ?? '')
     const nasIp = String(nas.attrs['nasIp'] ?? '')
-    if (!endpoint || !token || !nasIp) throw new Error(`NAS「${nas.name}」接入属性未配全（gatewayUrl/accessToken/nasIp）`)
+    if (!endpoint || !token || !nasIp) throw new Error(t('NAS「{name}」接入属性未配全（gatewayUrl/accessToken/nasIp）', { name: nas.name }))
     const signature = `${endpoint}|${token}|${nasIp}`
     const cached = this.clients.get(nas.id)
     if (cached && cached.signature === signature) return cached.client
@@ -500,10 +501,10 @@ export class NasRegistryService extends Service {
     const root = normalize(String(nas.attrs['rootPath'] ?? '/')).replace(/\\/g, '/').replace(/\/+$/, '') || '/'
     const compareRoot = root === '/' ? '/' : root
     if (compareRoot !== '/' && !normalized.startsWith(compareRoot === '/' ? '/' : compareRoot.endsWith('/') ? compareRoot : `${compareRoot}/`) && normalized !== compareRoot) {
-      throw new Error(`路径 ${normalized} 超出授权根路径 ${root}`)
+      throw new Error(t('路径 {path} 超出授权根路径 {root}', { path: normalized, root }))
     }
     const segments = normalized.split('/').filter(Boolean)
-    if (segments.some((s) => s === '..')) throw new Error('路径不允许包含 ..')
+    if (segments.some((s) => s === '..')) throw new Error(t('路径不允许包含 ..'))
     if (segments.length === 0) return root
     return root === '/' ? `/${segments.join('/')}` : normalized
   }
@@ -512,7 +513,7 @@ export class NasRegistryService extends Service {
   private parentAndName(id: string, path: string): { parent: string; name: string } {
     const full = this.toFullPath(id, path)
     const segments = full.split('/').filter(Boolean)
-    if (segments.length < 1) throw new Error('新建目录必须形如 /<share>/name')
+    if (segments.length < 1) throw new Error(t('新建目录必须形如 /<share>/name'))
     const name = segments.pop()!
     const parent = `/${segments.join('/')}`
     return { parent, name }

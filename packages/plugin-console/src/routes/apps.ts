@@ -4,6 +4,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 import { scopedOrgFilterOf } from './iam.ts'
 
@@ -54,8 +55,8 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     const id = typeof raw === 'string' ? raw.trim() : ''
     if (id) {
       const user = ctx.iam.users().get(id)
-      if (!user) throw new Error(`开发者不存在：${id}（developerId 须为平台用户 ID）`)
-      if (user.status !== 'active') throw new Error(`开发者「${user.displayName}」非在编状态，不能登记为应用开发者`)
+      if (!user) throw new Error(t('开发者不存在：{id}（developerId 须为平台用户 ID）', { id }))
+      if (user.status !== 'active') throw new Error(t('开发者「{name}」非在编状态，不能登记为应用开发者', { name: user.displayName }))
       attrs['developerId'] = user.id
       attrs['developerName'] = user.displayName
       return
@@ -72,7 +73,7 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
   guarded('GET', '/api/apps/:id', 'app.read', (exchange) => {
     const id = exchange.params['id']!
     const app = ctx.resourceCore.get('app', id)
-    if (!app) throw new Error(`应用不存在：${id}`)
+    if (!app) throw new Error(t('应用不存在：{id}', { id }))
     // SSO 配置块（不含 secret；供详情页「SSO 配置」tab 与门禁提示使用）
     const ssoClients = ctx.oidc.clientsForApp(id)
     const ssoClient = ssoClients[0]
@@ -132,7 +133,7 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     const info = caller(exchange)
     if (info.permissions.includes('*')) return true
     const app = ctx.resourceCore.get('app', appId)
-    if (!app) throw new Error(`应用不存在：${appId}`)
+    if (!app) throw new Error(t('应用不存在：{id}', { id: appId }))
     const isOwner = info.kind === 'human' && info.userId !== undefined && app.ownerId === info.userId
     const isBoundMachine = info.kind === 'machine' && info.refType === 'app' && info.refId === appId
     if (isOwner || isBoundMachine) return true
@@ -142,7 +143,7 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
       point: `app.write(owner:${appId})`,
       path: exchange.path,
     })
-    exchange.fail(403, 'FORBIDDEN', `仅平台管理员与应用负责人可变更「${app.name}」（owner 校验，QA A-04）`)
+    exchange.fail(403, 'FORBIDDEN', t('仅平台管理员与应用负责人可变更「{name}」（owner 校验，QA A-04）', { name: app.name }))
     return false
   }
 
@@ -163,7 +164,7 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     const { rotate } = body<{ rotate?: boolean }>(exchange)
     const id = exchange.params['id']!
     const result = ctx.appRegistry.buildOnboardingPrompt(id, requestOrigin(exchange) ?? 'http://127.0.0.1:7300', { rotate: rotate === true })
-    changeLog(exchange, 'app.onboarding-prompt', 'app', id, result.appName, result.rotated ? '轮换机器凭证并生成接入提示词（旧 secret 立即失效）' : '生成接入提示词（未轮换，不含 secret）')
+    changeLog(exchange, 'app.onboarding-prompt', 'app', id, result.appName, result.rotated ? t('轮换机器凭证并生成接入提示词（旧 secret 立即失效）') : t('生成接入提示词（未轮换，不含 secret）'))
     return result
   })
 
@@ -172,7 +173,7 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     if (!assertAppOwner(exchange, exchange.params['id']!)) return
     const id = exchange.params['id']!
     const app = ctx.resourceCore.get('app', id)
-    if (!app) throw new Error(`应用不存在：${id}`)
+    if (!app) throw new Error(t('应用不存在：{id}', { id }))
     ctx.resourceCore.remove('app', id, { allowStates: ['draft', 'archived'] })
     ctx.appRegistry.purge(id)
     changeLog(exchange, 'app.delete', 'app', id, app.name)
@@ -186,7 +187,7 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     const input = body<{ dau?: number; sessions?: number; avgDepth?: number; retention7?: number; pv?: number; uv?: number; date?: string }>(exchange)
     ctx.appRegistry.recordUsage(id, input)
     const app = ctx.resourceCore.get('app', id)!
-    changeLog(exchange, 'app.metrics.report', 'app', id, app.name, `pv=${input.pv ?? '-'} uv=${input.uv ?? '-'} dau=${input.dau ?? '-'} sessions=${input.sessions ?? '-'} date=${input.date ?? '当日'}`)
+    changeLog(exchange, 'app.metrics.report', 'app', id, app.name, `pv=${input.pv ?? '-'} uv=${input.uv ?? '-'} dau=${input.dau ?? '-'} sessions=${input.sessions ?? '-'} date=${input.date ?? t('当日')}`)
     return ctx.appRegistry.metrics(id)
   })
 
@@ -225,22 +226,22 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     const id = exchange.params['id']!
     if (action === 'online') {
       const approval = ctx.appRegistry.requestOnline(id, { id: info.userId ?? info.principalId, name: info.name })
-      return { approval, note: '发布为 L4 操作，已创建审批单' }
+      return { approval, note: t('发布为 L4 操作，已创建审批单') }
     }
     if (action === 'offline') {
       const approval = ctx.appRegistry.requestOffline(id, { id: info.userId ?? info.principalId, name: info.name }, note ?? '')
-      return { approval, note: '下架为 L4 操作，已创建审批单' }
+      return { approval, note: t('下架为 L4 操作，已创建审批单') }
     }
     if (action === 'submit_trial') return ctx.resourceCore.transition('app', id, 'submit_trial', info.name).entity
     if (action === 'retrial') return ctx.resourceCore.transition('app', id, 'retrial', info.name).entity
     if (action === 'archive') return ctx.appRegistry.archive(id, info.name)
-    throw new Error(`未知操作：${action}`)
+    throw new Error(t('未知操作：{action}', { action }))
   })
 
   // -- 应用 ↔ SSO 打通（owner 自助签发 + 机器环回自助，口径见 ssoManageGuard） ----
   const ssoApp = (exchange: HttpExchange): { id: string; name: string; ownerId: string } => {
     const app = ctx.resourceCore.get('app', exchange.params['id']!)
-    if (!app) throw new Error(`应用不存在：${exchange.params['id']}`)
+    if (!app) throw new Error(t('应用不存在：{id}', { id: exchange.params['id'] }))
     return { id: app.id, name: app.name, ownerId: app.ownerId }
   }
 
@@ -249,12 +250,12 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     if (!appSsoGuard(exchange, 'create', { redirectUris: input.redirectUris, postLogoutUris: input.postLogoutUris })) return
     const app = ssoApp(exchange)
     const created = ctx.appRegistry.createSsoClient(app.id, input)
-    changeLog(exchange, 'app.sso.create', 'oidc_client', created.client.id, created.client.name, `应用 ${app.name} 签发（${input.clientType ?? 'confidential'}）`)
+    changeLog(exchange, 'app.sso.create', 'oidc_client', created.client.id, created.client.name, t('应用 {name} 签发（{clientType}）', { name: app.name, clientType: input.clientType ?? 'confidential' }))
     return {
       clientId: created.client.clientId,
       clientSecret: created.clientSecret,
       redirectUris: created.client.redirectUris,
-      note: created.client.clientType === 'public' ? 'public 客户端无 secret（强制 PKCE、不发 refresh）' : 'clientSecret 仅此一次返回',
+      note: created.client.clientType === 'public' ? t('public 客户端无 secret（强制 PKCE、不发 refresh）') : t('clientSecret 仅此一次返回'),
     }
   })
 
@@ -271,8 +272,8 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     if (!appSsoGuard(exchange, 'rotate')) return
     const app = ssoApp(exchange)
     const rotated = ctx.appRegistry.rotateSsoSecret(app.id)
-    changeLog(exchange, 'app.sso.rotate', 'oidc_client', rotated.client.id, rotated.client.name, '旧 secret 立即失效')
-    return { clientId: rotated.client.clientId, clientSecret: rotated.clientSecret, note: '新 clientSecret 仅此一次返回，旧值立即失效' }
+    changeLog(exchange, 'app.sso.rotate', 'oidc_client', rotated.client.id, rotated.client.name, t('旧 secret 立即失效'))
+    return { clientId: rotated.client.clientId, clientSecret: rotated.clientSecret, note: t('新 clientSecret 仅此一次返回，旧值立即失效') }
   })
 
   for (const action of ['disable', 'enable'] as const) {
@@ -281,7 +282,7 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
       const app = ssoApp(exchange)
       const { reason } = body<{ reason?: string }>(exchange)
       const client = action === 'disable'
-        ? ctx.appRegistry.disableSsoClient(app.id, reason ?? `owner 手动禁用`)
+        ? ctx.appRegistry.disableSsoClient(app.id, reason ?? t('owner 手动禁用'))
         : ctx.appRegistry.enableSsoClient(app.id)
       changeLog(exchange, `app.sso.${action}`, 'oidc_client', client.id, client.name, reason ?? '')
       return client

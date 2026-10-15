@@ -14,6 +14,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
+import { t } from '../../platform-i18n/src/index.ts'
 
 // ---------------------------------------------------------------------------
 // 统一业务密级（D14）：与 Agent schema / ModelGateway 的同名枚举语义不同，
@@ -227,7 +228,7 @@ export async function gateManagedWork(
     managed = await port.resolveManagedEmployee(caller)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { mode: 'denied', code: 'POLICY_INTERNAL_ERROR', message: `工作策略反查失败（fail-closed）：${message}` }
+    return { mode: 'denied', code: 'POLICY_INTERNAL_ERROR', message: t('工作策略反查失败（fail-closed）：{message}', { message }) }
   }
   if (!managed) return { mode: 'legacy' }
   try {
@@ -235,7 +236,7 @@ export async function gateManagedWork(
     return decision.allow ? { mode: 'managed', work: decision.work } : { mode: 'denied', code: decision.code, message: decision.message }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { mode: 'denied', code: 'POLICY_INTERNAL_ERROR', message: `工作策略校验异常（fail-closed）：${message}` }
+    return { mode: 'denied', code: 'POLICY_INTERNAL_ERROR', message: t('工作策略校验异常（fail-closed）：{message}', { message }) }
   }
 }
 

@@ -14,6 +14,7 @@ import {
   type Collection, type RecordBase,
   type WorkCallerRef, type WorkDenyCode, type WorkExecutionContext, type WorkRefIndex, type WorkforcePolicyRegistry,
 } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import * as mcpTools from './tools.ts'
 import { McpToolRiskRegistry } from './risk-registry.ts'
 
@@ -181,13 +182,13 @@ export function parseMcpServersConfig(raw: string | object): McpConfigEntry[] {
     try {
       config = JSON.parse(raw)
     } catch {
-      throw new Error('配置不是合法 JSON，请粘贴完整的 mcpServers 配置文本')
+      throw new Error(t('配置不是合法 JSON，请粘贴完整的 mcpServers 配置文本'))
     }
   } else {
     config = raw
   }
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
-    throw new Error('配置须为 JSON 对象，形如 {"mcpServers": {"服务名": {"type": "streamableHttp", "url": "https://…"}}}')
+    throw new Error(t('配置须为 JSON 对象，形如 {"mcpServers": {"服务名": {"type": "streamableHttp", "url": "https://…"}}}'))
   }
   const obj = config as Record<string, unknown>
   let map: Record<string, unknown> | undefined
@@ -204,7 +205,7 @@ export function parseMcpServersConfig(raw: string | object): McpConfigEntry[] {
     }
   }
   if (!map || Object.keys(map).length === 0) {
-    throw new Error('未识别出任何服务条目：需要 {"mcpServers": {"服务名": {"type": "...", "url": "..."}}} 形态')
+    throw new Error(t('未识别出任何服务条目：需要 {"mcpServers": {"服务名": {"type": "...", "url": "..."}}} 形态'))
   }
   return Object.entries(map).map(([name, server]) => normalizeServerEntry(name, server))
 }
@@ -224,17 +225,17 @@ function normalizeServerEntry(name: string, server: unknown): McpConfigEntry {
   if (!url) {
     const localProcess = type === 'stdio' || type === 'command' || typeof record.command === 'string'
     return { ...base, error: localProcess
-      ? 'stdio/command 形态需在本地拉起进程，平台仅支持 http(streamableHttp)/sse 远程地址接入'
-      : '缺少 url 字段' }
+      ? t('stdio/command 形态需在本地拉起进程，平台仅支持 http(streamableHttp)/sse 远程地址接入')
+      : t('缺少 url 字段') }
   }
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
-    return { ...base, error: `url 不是合法地址：${url}` }
+    return { ...base, error: t('url 不是合法地址：{url}', { url }) }
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { ...base, error: `仅支持 http(s) 地址，收到 ${parsed.protocol}` }
+    return { ...base, error: t('仅支持 http(s) 地址，收到 {protocol}', { protocol: parsed.protocol }) }
   }
   return { ...base, transport: type === 'sse' ? 'sse' : 'http' }
 }
@@ -320,9 +321,9 @@ export class McpService extends Service {
     /** M0 数据面桥接来源标记（open-connector 等），控制台打「桥接过渡」徽章。 */
     bridgeFrom?: string
   }): McpServiceRecord {
-    if (!input.name?.trim()) throw new Error('服务名称不能为空')
+    if (!input.name?.trim()) throw new Error(t('服务名称不能为空'))
     const slug = input.slug ?? input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-    if (this.services().findOne((item) => item.slug === slug)) throw new Error(`服务标识已存在：${slug}`)
+    if (this.services().findOne((item) => item.slug === slug)) throw new Error(t('服务标识已存在：{slug}', { slug }))
     if (input.mode !== 'external' && !input.endpoint) input.endpoint = `mcp+${input.transport ?? 'http'}://platform-hosted/${slug}`
     const toolSpecs = input.tools?.length ? input.tools : defaultToolsFor(slug)
     return this.services().insert({
@@ -353,7 +354,7 @@ export class McpService extends Service {
   updateService(id: string, patch: Partial<Pick<McpServiceRecord, 'name' | 'description' | 'icon' | 'endpoint' | 'tools' | 'headers' | 'rateLimitPerMin'>>): McpServiceRecord {
     const service = this.requireService(id)
     if (service.status === 'online' && patch.tools) {
-      throw new Error('在线服务修改 Tool Schema 需先灰度新版本（版本不可变原则）')
+      throw new Error(t('在线服务修改 Tool Schema 需先灰度新版本（版本不可变原则）'))
     }
     return this.services().update(id, patch)
   }
@@ -367,7 +368,7 @@ export class McpService extends Service {
       method: 'tools/list',
       params: {},
     }, REAL_TRANSPORT_TIMEOUT_MS, sessionId)
-    if (payload?.error) throw new Error(`tools/list 失败：${payload.error.message ?? '未知错误'}`)
+    if (payload?.error) throw new Error(t('tools/list 失败：{reason}', { reason: payload.error.message ?? t('未知错误') }))
     const tools = Array.isArray(payload?.result?.tools) ? payload.result.tools : []
     return tools
       .map((tool: { name?: unknown; description?: unknown; inputSchema?: unknown }) => ({
@@ -390,10 +391,10 @@ export class McpService extends Service {
    */
   async syncTools(serviceId: string): Promise<McpServiceRecord> {
     const service = this.requireService(serviceId)
-    if (service.mode !== 'external') throw new Error('仅外部注册服务支持工具同步')
-    if (service.exec !== 'real') throw new Error('演示传输层服务不支持工具同步')
+    if (service.mode !== 'external') throw new Error(t('仅外部注册服务支持工具同步'))
+    if (service.exec !== 'real') throw new Error(t('演示传输层服务不支持工具同步'))
     const tools = await this.listRemoteTools(service.endpoint, service.headers)
-    if (!tools.length) throw new Error('远端服务未返回任何工具')
+    if (!tools.length) throw new Error(t('远端服务未返回任何工具'))
     const updated = this.services().update(serviceId, { tools })
     this.noteBusinessSuccess(updated)
     return updated
@@ -440,7 +441,7 @@ export class McpService extends Service {
           tools = await this.listRemoteTools(service.endpoint, service.headers)
           reachable = true
         } catch (error) {
-          message = `工具自动发现失败：${error instanceof Error ? error.message : String(error)}`
+          message = t('工具自动发现失败：{reason}', { reason: error instanceof Error ? error.message : String(error) })
         }
         this.services().update(service.id, {
           // 不可达时清空默认三件套，避免伪工具清单进入权限组
@@ -454,7 +455,7 @@ export class McpService extends Service {
             const deployed = await this.deployService(service.id, { grayPercent: 100, changelog: 'mcpServers 配置导入自动发布', actor: input.owner })
             status = deployed.status
           } catch (error) {
-            message = `${message ? `${message}；` : ''}自动发布失败：${error instanceof Error ? error.message : String(error)}`
+            message = `${message ? `${message}；` : ''}${t('自动发布失败：{reason}', { reason: error instanceof Error ? error.message : String(error) })}`
           }
         }
         results.push({
@@ -472,12 +473,12 @@ export class McpService extends Service {
   /** 测试环境验证：real 服务做真实 initialize 探测；demo 服务模拟探测。 */
   async verifyService(id: string): Promise<McpServiceRecord> {
     const service = this.requireService(id)
-    if (service.status !== 'draft') throw new Error('仅草稿状态可执行测试验证')
+    if (service.status !== 'draft') throw new Error(t('仅草稿状态可执行测试验证'))
     this.services().update(id, { status: 'verifying' })
     const latency = service.exec === 'real' ? await this.realProbe(service) : 200
     if (latency < 0) {
       this.services().update(id, { status: 'draft' })
-      throw new Error(`测试验证失败：endpoint ${service.endpoint} 不可达`)
+      throw new Error(t('测试验证失败：endpoint {endpoint} 不可达', { endpoint: service.endpoint }))
     }
     return this.services().update(id, { health: { lastProbeAt: now(), status: 'healthy', latencyMs: latency, consecutiveFails: 0, breakerOpen: false } })
   }
@@ -486,7 +487,7 @@ export class McpService extends Service {
   async deployService(id: string, options: { grayPercent?: number; version?: string; changelog?: string; actor: string }): Promise<McpServiceRecord> {
     const service = this.requireService(id)
     if (!['draft', 'verifying', 'gray', 'online', 'unhealthy'].includes(service.status)) {
-      throw new Error(`当前状态 ${service.status} 不允许发布`)
+      throw new Error(t('当前状态 {status} 不允许发布', { status: service.status }))
     }
     const version = options.version ?? bumpVersion(service.currentVersion)
     const gray = Math.min(100, Math.max(0, options.grayPercent ?? 100))
@@ -497,7 +498,7 @@ export class McpService extends Service {
       currentVersion: version,
       versions: [
         ...service.versions.map((item) => ({ ...item, status: item.status === 'current' ? 'previous' : item.status })),
-        { version, changelog: options.changelog ?? '例行更新', publishedAt: now(), status: 'current' },
+        { version, changelog: options.changelog ?? t('例行更新'), publishedAt: now(), status: 'current' },
       ],
       health: { ...service.health, status: 'healthy', consecutiveFails: 0, breakerOpen: false },
     })
@@ -510,9 +511,9 @@ export class McpService extends Service {
   async rollbackService(id: string, targetVersion: string, actor: string): Promise<McpServiceRecord> {
     const service = this.requireService(id)
     const target = service.versions.find((item) => item.version === targetVersion)
-    if (!target) throw new Error(`目标版本不存在：${targetVersion}`)
-    if (target.status === 'current') throw new Error(`目标版本 ${targetVersion} 即当前版本，无需回滚`)
-    if (target.status === 'rolled-back') throw new Error(`目标版本 ${targetVersion} 已被回滚过，不允许作为回滚目标（版本不可变原则）`)
+    if (!target) throw new Error(t('目标版本不存在：{version}', { version: targetVersion }))
+    if (target.status === 'current') throw new Error(t('目标版本 {version} 即当前版本，无需回滚', { version: targetVersion }))
+    if (target.status === 'rolled-back') throw new Error(t('目标版本 {version} 已被回滚过，不允许作为回滚目标（版本不可变原则）', { version: targetVersion }))
     const updated = this.services().update(id, {
       currentVersion: targetVersion,
       versions: service.versions.map((item) => ({
@@ -528,7 +529,7 @@ export class McpService extends Service {
 
   offlineService(id: string, actor: string, reason: string): McpServiceRecord {
     const service = this.requireService(id)
-    if (service.status === 'offline') throw new Error('服务已是下线状态')
+    if (service.status === 'offline') throw new Error(t('服务已是下线状态'))
     const updated = this.services().update(id, { status: 'offline', grayPercent: 0 })
     this.ctx.platformBus.emit(PlatformEvents.McpOfflined, { serviceId: id, name: updated.name, actor, reason, type: 'mcp_service', slug: updated.slug })
     return updated
@@ -540,7 +541,7 @@ export class McpService extends Service {
       kind: 'mcp.offline',
       // WP-10/L1（QA A-06）：L4 高危统一高风险——通过需二次确认 + 公司级终审标记
       riskLevel: 'high',
-      title: `下线 MCP 服务：${this.requireService(id).name}`,
+      title: t('下线 MCP 服务：{name}', { name: this.requireService(id).name }),
       payload: { serviceId: id, reason, impactPreview },
       requesterId: requester.id,
       requesterName: requester.name,
@@ -610,7 +611,7 @@ export class McpService extends Service {
     if (breakerOpen && service.status !== 'unhealthy') {
       this.ctx.platformBus.emit(PlatformEvents.McpUnhealthy, {
         serviceId: service.id, name: service.name, consecutiveFails: fails, latencyMs: 0,
-        reason: `业务调用连续失败 ${fails} 次：${reason}`,
+        reason: t('业务调用连续失败 {fails} 次：{reason}', { fails, reason }),
       })
     }
   }
@@ -666,7 +667,7 @@ export class McpService extends Service {
         signal: controller.signal,
       })
       if (!response.ok) {
-        throw new Error(`MCP 服务 HTTP ${response.status}：${(await response.text().catch(() => '')).slice(0, 200)}`)
+        throw new Error(t('MCP 服务 HTTP {status}：{body}', { status: response.status, body: (await response.text().catch(() => '')).slice(0, 200) }))
       }
       const sessionIdHeader = response.headers.get('mcp-session-id') ?? undefined
       const contentType = String(response.headers.get('content-type') ?? '')
@@ -678,13 +679,13 @@ export class McpService extends Service {
           if (!frame || frame === '[DONE]') continue
           try { return { payload: JSON.parse(frame), sessionId: sessionIdHeader } } catch { /* 跳过非 JSON 帧 */ }
         }
-        throw new Error('MCP 服务 SSE 响应中未找到 JSON-RPC 帧')
+        throw new Error(t('MCP 服务 SSE 响应中未找到 JSON-RPC 帧'))
       }
       if (!text) return { payload: null, sessionId: sessionIdHeader } // 202 Accepted 等空体响应（通知类消息）
       try {
         return { payload: JSON.parse(text), sessionId: sessionIdHeader }
       } catch {
-        throw new Error(`MCP 服务响应不是合法 JSON：${text.slice(0, 200)}`)
+        throw new Error(t('MCP 服务响应不是合法 JSON：{body}', { body: text.slice(0, 200) }))
       }
     } finally {
       clearTimeout(timer)
@@ -701,7 +702,7 @@ export class McpService extends Service {
       method: 'initialize',
       params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'dsh-ops-gateway', version: '1.0' } },
     }, REAL_PROBE_TIMEOUT_MS)
-    if (payload?.error) throw new Error(`initialize 失败：${payload.error.message ?? '未知错误'}`)
+    if (payload?.error) throw new Error(t('initialize 失败：{reason}', { reason: payload.error.message ?? t('未知错误') }))
     const effective = sessionId ?? ''
     this.mcpSessions.set(endpoint, { sessionId: effective, expiresAt: Date.now() + MCP_SESSION_TTL_MS })
     if (effective) {
@@ -719,8 +720,8 @@ export class McpService extends Service {
     policies: Record<string, ToolPolicy>
     subjects: McpPermGroupRecord['subjects']
   }): McpPermGroupRecord {
-    if (!input.name?.trim()) throw new Error('权限组名称不能为空')
-    if (this.permGroups().findOne((group) => group.name === input.name)) throw new Error(`权限组已存在：${input.name}`)
+    if (!input.name?.trim()) throw new Error(t('权限组名称不能为空'))
+    if (this.permGroups().findOne((group) => group.name === input.name)) throw new Error(t('权限组已存在：{name}', { name: input.name }))
     for (const serviceId of Object.keys(input.policies)) {
       this.requireService(serviceId)
     }
@@ -744,7 +745,7 @@ export class McpService extends Service {
   /** 授予主体访问：加入权限组。 */
   grantSubject(groupId: string, subject: McpPermGroupRecord['subjects'][number]): McpPermGroupRecord {
     const group = this.permGroups().get(groupId)
-    if (!group) throw new Error(`权限组不存在：${groupId}`)
+    if (!group) throw new Error(t('权限组不存在：{id}', { id: groupId }))
     if (group.subjects.some((item) => item.type === subject.type && item.id === subject.id)) return group
     return this.permGroups().update(groupId, { subjects: [...group.subjects, subject] })
   }
@@ -753,7 +754,7 @@ export class McpService extends Service {
   authorize(caller: InvokeCaller, serviceId: string, toolName: string): { ok: true; readOnly: boolean } | { ok: false; reason: string } {
     const service = this.requireService(serviceId)
     const tool = service.tools.find((item) => item.name === toolName)
-    if (!tool) return { ok: false, reason: `服务 ${service.name} 不存在工具 ${toolName}` }
+    if (!tool) return { ok: false, reason: t('服务 {service} 不存在工具 {tool}', { service: service.name, tool: toolName }) }
     const grants: ToolPolicy[] = []
     for (const group of this.permGroups().all()) {
       const policy = group.policies[serviceId]
@@ -767,7 +768,7 @@ export class McpService extends Service {
       if (hit) grants.push(policy)
     }
     if (grants.length === 0) {
-      return { ok: false, reason: `主体 ${caller.name} 未被任何 MCP 权限组授权访问 ${service.name}` }
+      return { ok: false, reason: t('主体 {name} 未被任何 MCP 权限组授权访问 {service}', { name: caller.name, service: service.name }) }
     }
     for (const policy of grants) {
       const allowed = policy.allowedTools === '*' || policy.allowedTools.includes(toolName)
@@ -776,18 +777,18 @@ export class McpService extends Service {
       // unknown 按只读语境放行（未登记工具在只读语境下视为 read——写能力已被写语境拒绝面兜住，
       // 残余风险由重审清单 reviewList 收敛，不再「未知即拒」误伤只读消费）。
       if (policy.constraints.readOnly && (tool.riskLevel === 'write' || tool.riskLevel === 'admin')) {
-        return { ok: false, reason: `权限组约束为只读模式，工具 ${toolName}（${tool.riskLevel}）被拒绝` }
+        return { ok: false, reason: t('权限组约束为只读模式，工具 {tool}（{risk}）被拒绝', { tool: toolName, risk: tool.riskLevel }) }
       }
       return { ok: true, readOnly: Boolean(policy.constraints.readOnly) }
     }
-    return { ok: false, reason: `工具 ${toolName} 不在授权列表中` }
+    return { ok: false, reason: t('工具 {tool} 不在授权列表中', { tool: toolName }) }
   }
 
   // -- 调用网关 -----------------------------------------------------------
 
   async invoke(caller: InvokeCaller, serviceId: string, toolName: string, args: Record<string, unknown> = {}, workRef?: WorkRefIndex): Promise<InvokeResult> {
     const service = this.services().get(serviceId)
-    if (!service) throw new Error(`MCP 服务不存在：${serviceId}`)
+    if (!service) throw new Error(t('MCP 服务不存在：{id}', { id: serviceId }))
     const started = Date.now()
 
     const fail = (status: McpCallRecord['status'], error: string, work?: McpCallWorkRef): InvokeResult => {
@@ -816,7 +817,7 @@ export class McpService extends Service {
       argsHash: sha256Hex(JSON.stringify(args ?? {})),
     })
     if (gate.mode === 'denied') {
-      const message = `数字员工调用被拒绝：${WORK_DENY_CODE_LABELS[gate.code]}${gate.message ? `（${gate.message}）` : ''}`
+      const message = t('数字员工调用被拒绝：{detail}', { detail: `${WORK_DENY_CODE_LABELS[gate.code]}${gate.message ? `（${gate.message}）` : ''}` })
       const latencyMs = Date.now() - started
       // 拒绝同样落调用记录（V07：拒绝是事实，按原 status='denied' 口径留存并附领域拒绝码；
       // 工作上下文仅在放行时由服务端核验产生，拒绝路径无可关联的 work 事实）
@@ -835,9 +836,9 @@ export class McpService extends Service {
         }
       : undefined
 
-    if (service.status === 'offline') return fail('denied', '服务已下线', workRefForRecord)
-    if (service.status === 'draft' || service.status === 'verifying') return fail('denied', '服务尚未发布', workRefForRecord)
-    if (service.health.breakerOpen) return fail('breaker_open', '熔断器开启：服务连续失败，暂拒绝调用', workRefForRecord)
+    if (service.status === 'offline') return fail('denied', t('服务已下线'), workRefForRecord)
+    if (service.status === 'draft' || service.status === 'verifying') return fail('denied', t('服务尚未发布'), workRefForRecord)
+    if (service.health.breakerOpen) return fail('breaker_open', t('熔断器开启：服务连续失败，暂拒绝调用'), workRefForRecord)
 
     // 限流：每服务每分钟令牌桶
     const key = `${serviceId}:${caller.type}:${caller.id}`
@@ -845,7 +846,7 @@ export class McpService extends Service {
     const bucket = (this.rateBuckets.get(key) ?? []).filter((t) => nowMs - t < 60_000)
     if (bucket.length >= service.rateLimitPerMin) {
       this.rateBuckets.set(key, bucket)
-      return fail('rate_limited', `触发限流：${service.rateLimitPerMin} 次/分钟`, workRefForRecord)
+      return fail('rate_limited', t('触发限流：{limit} 次/分钟', { limit: service.rateLimitPerMin }), workRefForRecord)
     }
     bucket.push(nowMs)
     this.rateBuckets.set(key, bucket)
@@ -862,7 +863,7 @@ export class McpService extends Service {
     // gateRisk 取登记值，本路径自然不再触发）。受管链无需重复裁决：port 侧已按清单句柄风险判定
     // （read 句柄放行=只读语境；写/admin 句柄已在上方 gate denied 分支以 RISK_UNREGISTERED 拒绝落账）。
     if (gate.mode !== 'managed' && gateRisk === 'unknown' && !auth.readOnly) {
-      const message = `工具 ${toolName} 风险未登记生效：${WORK_DENY_CODE_LABELS.RISK_UNREGISTERED}`
+      const message = t('工具 {tool} 风险未登记生效：{reason}', { tool: toolName, reason: WORK_DENY_CODE_LABELS.RISK_UNREGISTERED })
       const latencyMs = Date.now() - started
       // 拒绝同样落调用记录（V07 口径：拒绝是事实，按 status='denied' 留存并附领域拒绝码）
       this.recordCall(service, toolName, caller, {
@@ -889,8 +890,8 @@ export class McpService extends Service {
       const transportResult = await this.realTransport(service, toolName, args)
       if (!transportResult.ok) {
         // 业务失败计入熔断（评审修复：熔断不能只依赖 30s 探活，真实调用失败同样累计）
-        this.noteBusinessFailure(service, transportResult.error ?? 'MCP 服务调用失败')
-        return fail('error', transportResult.error ?? 'MCP 服务调用失败', workRefForRecord)
+        this.noteBusinessFailure(service, transportResult.error ?? t('MCP 服务调用失败'))
+        return fail('error', transportResult.error ?? t('MCP 服务调用失败'), workRefForRecord)
       }
       this.noteBusinessSuccess(service)
       result = transportResult.result
@@ -925,15 +926,15 @@ export class McpService extends Service {
         ;({ payload } = await call(sessionId))
       }
       if (payload?.error) {
-        return { ok: false, error: `MCP 服务返回错误：${payload.error.message ?? JSON.stringify(payload.error).slice(0, 200)}` }
+        return { ok: false, error: t('MCP 服务返回错误：{reason}', { reason: payload.error.message ?? JSON.stringify(payload.error).slice(0, 200) }) }
       }
       const result = payload?.result
       if (result?.isError) {
-        return { ok: false, error: 'MCP 工具执行返回错误（isError=true）' }
+        return { ok: false, error: t('MCP 工具执行返回错误（isError=true）') }
       }
       return { ok: true, result: result?.content ?? result ?? null, tokens: result?.usage?.totalTokens ?? 0 }
     } catch (error) {
-      const message = error instanceof Error ? (error.name === 'AbortError' ? `MCP 服务调用超时（${REAL_TRANSPORT_TIMEOUT_MS}ms）` : error.message) : String(error)
+      const message = error instanceof Error ? (error.name === 'AbortError' ? t('MCP 服务调用超时（{timeout}ms）', { timeout: REAL_TRANSPORT_TIMEOUT_MS }) : error.message) : String(error)
       return { ok: false, error: message }
     }
   }
@@ -1102,7 +1103,7 @@ export class McpService extends Service {
 
   private requireService(id: string): McpServiceRecord {
     const service = this.services().get(id)
-    if (!service) throw new Error(`MCP 服务不存在：${id}`)
+    if (!service) throw new Error(t('MCP 服务不存在：{id}', { id }))
     return service
   }
 }
@@ -1134,7 +1135,7 @@ function mockToolResult(service: McpServiceRecord, tool: string, args: Record<st
       matched: Number.parseInt(digest.slice(0, 4), 16) % 20 + 1,
       items: Array.from({ length: 3 }, (_, index) => ({
         id: `${digest}-${index}`,
-        title: `${tool} 结果 #${index + 1}`,
+        title: t('{tool} 结果 #{n}', { tool, n: index + 1 }),
         score: round3(0.75 + ((Number.parseInt(digest.slice(index, index + 2), 16) % 25) / 100)),
       })),
     }
@@ -1230,7 +1231,7 @@ export function apply(ctx: Context) {
   // L4 审批执行器：mcp.offline 审批通过后自动执行下线
   ctx.effect(() => ctx.audit.registerExecutor('mcp.offline', async (payload) => {
     const serviceId = String(payload.serviceId)
-    const reason = String(payload.reason ?? '审批通过下线')
+    const reason = String(payload.reason ?? t('审批通过下线'))
     return registry.offlineService(serviceId, 'approval-center', reason)
   }))
 }

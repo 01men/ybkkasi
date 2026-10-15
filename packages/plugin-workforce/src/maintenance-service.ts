@@ -19,6 +19,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
+import { t } from '../../platform-i18n/src/index.ts'
 import type { WorkforceStore } from './contract.ts'
 
 /** 默认巡检间隔：6 小时（与 usage 保留巡检同节奏）。 */
@@ -78,7 +79,7 @@ export class MaintenanceService extends Service {
   private get store(): WorkforceStore {
     const store = (this.ctx as unknown as { workforceStore?: WorkforceStore }).workforceStore
     if (!store || typeof store.txn !== 'function') {
-      throw new Error('workforceStore 未就绪（迁移未完成），台账巡检无法执行')
+      throw new Error(t('workforceStore 未就绪（迁移未完成），台账巡检无法执行'))
     }
     return store
   }

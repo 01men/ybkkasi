@@ -317,6 +317,21 @@ export const ERROR_CODES = Object.keys(COPY)
 /** 绑定失效细分原因码（dsh-bridge /dsh-bridge/status 返回） */
 export const BINDING_REASONS = ['no_cookie', 'expired', 'account_inactive']
 
+/**
+ * 动态拼接文案翻译（保持零依赖纪律：不 import i18n.js——selftest 在 Node 直测本模块，
+ * 经 window.rqI18n 取运行时（浏览器注入），Node/无 i18n 环境回退原文。
+ */
+function tr(text, params) {
+  try {
+    if (typeof window !== 'undefined' && window.rqI18n && typeof window.rqI18n.t === 'function') {
+      return window.rqI18n.t(text, params)
+    }
+  } catch { /* 忽略 */ }
+  if (!params) return text
+  return text.replace(/\{(\w+)\}/g, (whole, name) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : whole)
+}
+
 /** 绑定细分原因 → 归并到 binding-invalid 的提示补充。 */
 const BINDING_DETAIL = {
   no_cookie: '尚未完成身份绑定。',
@@ -329,11 +344,11 @@ export function errorCopy(code, detail) {
   const base = COPY[code] ?? {
     tone: 'danger',
     title: '操作暂时无法完成',
-    message: `平台返回未知状态（${code || 'unknown'}）。请稍后重试；若持续出现，请联系平台管理员。`,
+    message: tr('平台返回未知状态（{code}）。请稍后重试；若持续出现，请联系平台管理员。', { code: code || 'unknown' }),
     action: null,
   }
   const extra = code === 'binding-invalid' && detail && BINDING_DETAIL[detail] ? BINDING_DETAIL[detail] : ''
-  return { ...base, ...(extra ? { message: `${base.message}（${extra}）` } : {}) }
+  return { ...base, ...(extra ? { message: `${base.message}${tr('（{extra}）', { extra })}` } : {}) }
 }
 
 /** 渲染横幅/条状提示（返回 HTML 字符串；调用方负责挂载与按钮跳转）。 */

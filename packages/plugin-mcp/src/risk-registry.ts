@@ -23,6 +23,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { newId, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type { McpServiceRecord, McpToolSpec } from './index.ts'
 
 /** 可信风险登记的生效值域（申报值 additionally 允许 'unknown'——远端 tools/list 的诚实缺省）。 */
@@ -93,15 +94,15 @@ export class McpToolRiskRegistry extends Service {
    * reason 必填（护栏：无理由的写能力登记不受理）；身份来自服务端解析的 actor，不接受请求参数自报。
    */
   submit(input: { serviceId: string; toolName: string; risk: McpToolRiskLevel; reason: string; actor: { id: string; name: string } }): McpToolRiskRecord {
-    if (!input.serviceId?.trim()) throw new Error('serviceId 必填')
-    if (!input.toolName?.trim()) throw new Error('toolName 必填')
-    if (!['read', 'write', 'admin'].includes(input.risk)) throw new Error(`risk 须为 read/write/admin，收到 ${String(input.risk)}`)
-    if (!input.reason?.trim()) throw new Error('登记必须填写原因（write/admin 风险更须说明用途与影响面）')
-    if (!input.actor?.id) throw new Error('登记人身份缺失（fail-closed：身份一律来自服务端解析）')
+    if (!input.serviceId?.trim()) throw new Error(t('serviceId 必填'))
+    if (!input.toolName?.trim()) throw new Error(t('toolName 必填'))
+    if (!['read', 'write', 'admin'].includes(input.risk)) throw new Error(t('risk 须为 read/write/admin，收到 {value}', { value: String(input.risk) }))
+    if (!input.reason?.trim()) throw new Error(t('登记必须填写原因（write/admin 风险更须说明用途与影响面）'))
+    if (!input.actor?.id) throw new Error(t('登记人身份缺失（fail-closed：身份一律来自服务端解析）'))
     const service = this.ctx.mcpRegistry.services().get(input.serviceId)
-    if (!service) throw new Error(`MCP 服务不存在：${input.serviceId}`)
+    if (!service) throw new Error(t('MCP 服务不存在：{id}', { id: input.serviceId }))
     if (!service.tools.some((tool) => tool.name === input.toolName)) {
-      throw new Error(`服务 ${service.name} 不存在工具 ${input.toolName}（请先同步工具清单再登记）`)
+      throw new Error(t('服务 {service} 不存在工具 {tool}（请先同步工具清单再登记）', { service: service.name, tool: input.toolName }))
     }
     // 唯一性：同一 (serviceId, toolName) 至多一条「未结论」记录——effective 必须先 retire；
     // pending 等待审批；rejected/retired 已有结论，不阻断重新登记（拒绝与退场结论不锁定未来）。
@@ -109,8 +110,8 @@ export class McpToolRiskRegistry extends Service {
     const existing = this.records().findOne((item) => item.serviceId === input.serviceId && item.toolName === input.toolName
       && item.status !== 'retired' && item.status !== 'rejected')
     if (existing) {
-      if (existing.status === 'effective') throw new Error(`工具已有生效登记（risk=${existing.risk}），变更须先退场（retire）再重新登记`)
-      throw new Error(`工具已有进行中的登记（status=${existing.status}），请等待审批完成或先行处理原单据`)
+      if (existing.status === 'effective') throw new Error(t('工具已有生效登记（risk={risk}），变更须先退场（retire）再重新登记', { risk: existing.risk }))
+      throw new Error(t('工具已有进行中的登记（status={status}），请等待审批完成或先行处理原单据', { status: existing.status }))
     }
     const at = now()
     return this.records().insert({
@@ -135,13 +136,13 @@ export class McpToolRiskRegistry extends Service {
   decide(id: string, input: { decision: 'approve' | 'reject'; level: 'domain' | 'security'; opinion?: string; actor: { id: string; name: string } }): McpToolRiskRecord {
     const record = this.requireRecord(id)
     if (record.status !== 'pending_domain' && record.status !== 'pending_security') {
-      throw new Error(`当前状态 ${record.status} 不可审批（仅 pending 态可审批）`)
+      throw new Error(t('当前状态 {status} 不可审批（仅 pending 态可审批）', { status: record.status }))
     }
-    if (record.status === 'pending_domain' && input.level !== 'domain') throw new Error('领域审批已完成，当前等待安全审批（level 须为 security）')
-    if (record.status === 'pending_security' && input.level !== 'security') throw new Error('当前等待安全审批（level 须为 security；write/admin 风险必须安全加签）')
-    if (!input.actor?.id) throw new Error('审批人身份缺失（fail-closed：身份一律来自服务端解析，防代审）')
+    if (record.status === 'pending_domain' && input.level !== 'domain') throw new Error(t('领域审批已完成，当前等待安全审批（level 须为 security）'))
+    if (record.status === 'pending_security' && input.level !== 'security') throw new Error(t('当前等待安全审批（level 须为 security；write/admin 风险必须安全加签）'))
+    if (!input.actor?.id) throw new Error(t('审批人身份缺失（fail-closed：身份一律来自服务端解析，防代审）'))
     if (record.approvals.some((item) => item.level === input.level && item.approverId === input.actor.id)) {
-      throw new Error('同一审批人不可重复审批同一级')
+      throw new Error(t('同一审批人不可重复审批同一级'))
     }
     const approval: McpToolRiskApproval = {
       level: input.level,
@@ -170,8 +171,8 @@ export class McpToolRiskRegistry extends Service {
   /** 退场（仅 effective 可退）：退场后 effectiveRisk 回到 undefined，闸门回到 unknown——写语境即恢复拒绝。 */
   retire(id: string, input: { reason: string; actor: { id: string; name: string } }): McpToolRiskRecord {
     const record = this.requireRecord(id)
-    if (record.status !== 'effective') throw new Error(`当前状态 ${record.status} 不可退场（仅生效登记可 retire）`)
-    if (!input.reason?.trim()) throw new Error('退场必须填写原因（护栏要求，重审与追溯依赖该口径）')
+    if (record.status !== 'effective') throw new Error(t('当前状态 {status} 不可退场（仅生效登记可 retire）', { status: record.status }))
+    if (!input.reason?.trim()) throw new Error(t('退场必须填写原因（护栏要求，重审与追溯依赖该口径）'))
     const at = now()
     return this.records().update(id, { status: 'retired', retiredAt: at, retireReason: input.reason.trim(), updatedAt: at })
   }
@@ -249,7 +250,7 @@ export class McpToolRiskRegistry extends Service {
 
   private requireRecord(id: string): McpToolRiskRecord {
     const record = this.records().get(id)
-    if (!record) throw new Error(`风险登记不存在：${id}`)
+    if (!record) throw new Error(t('风险登记不存在：{id}', { id }))
     return record
   }
 }

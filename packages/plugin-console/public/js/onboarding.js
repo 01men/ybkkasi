@@ -1,5 +1,6 @@
 /** 接入指引生成器：手动注册 Agent / AI 应用成功后，按平台接入规范自动生成可执行指引（附刚颁发的凭证）。 */
 import { esc, openModal, copyText } from './ui.js'
+import rqI18n from './i18n.js'
 
 const base = () => location.origin
 
@@ -161,8 +162,8 @@ export function openOnboardingModal({ title, resource, credential, metaRows, gui
         <button class="btn btn-primary btn-sm" id="onboard-copy-all">${esc('⧉ 一键复制全部指引')}</button>
       </div>
       <pre class="mono fs-12" id="onboard-guide" style="white-space:pre-wrap;background:var(--bg-2);padding:12px;border-radius:8px;max-height:380px;overflow:auto;line-height:1.7">${esc(guideText)}</pre>
-      <div class="form-hint mt-8">整段复制后发给执行 Agent（或开发者）照做：换牌 → 接入验证，${esc(resourceLabel)}即可自主完成接入与提报闭环。</div>`,
-    foot: '<button class="btn btn-primary" data-ok>我已保存凭证并已把指引发给 Agent，关闭</button>',
+      <div class="form-hint mt-8">${esc(rqI18n.t('整段复制后发给执行 Agent（或开发者）照做：换牌 → 接入验证，{resource}即可自主完成接入与提报闭环。', { resource: resourceLabel }))}</div>`,
+    foot: `<button class="btn btn-primary" data-ok>${esc(rqI18n.t('我已保存凭证并已把指引发给 Agent，关闭'))}</button>`,
   })
   modal.el.querySelector('#onboard-copy-all').onclick = () => {
     const result = copyText(guideText)

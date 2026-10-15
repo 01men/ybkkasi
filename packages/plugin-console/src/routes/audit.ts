@@ -3,6 +3,7 @@
  * 自 plugin-console/index.ts 拆出，处理器逐字搬运（行为与迁出前一致）。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export function registerAuditRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
@@ -61,7 +62,7 @@ export function registerAuditRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
 
   guarded('POST', '/api/audit/alerts/read-all', 'audit.read', (exchange) => {
     const read = ctx.audit.markAllAlertsRead()
-    changeLog(exchange, 'audit.alert.readAll', 'alert', 'all', '', `一键全部已读（${read} 条）`)
+    changeLog(exchange, 'audit.alert.readAll', 'alert', 'all', '', t('一键全部已读（{n} 条）', { n: read }))
     return { read, unread: 0 }
   })
 
@@ -93,14 +94,14 @@ export function registerAuditRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
       ...(input.subject ? { subject: input.subject } : {}),
       ...(input.note ? { note: input.note } : {}),
     })
-    changeLog(exchange, 'audit.evidence.record', 'evidence', record.id, input.anchors?.map((anchor) => anchor.id).join(',') ?? '', `${input.anchors?.length ?? 0} 个锚点${input.messageId ? `，绑定消息 ${input.messageId}` : ''}`)
+    changeLog(exchange, 'audit.evidence.record', 'evidence', record.id, input.anchors?.map((anchor) => anchor.id).join(',') ?? '', t('{n} 个锚点{suffix}', { n: input.anchors?.length ?? 0, suffix: input.messageId ? t('，绑定消息 {messageId}', { messageId: input.messageId }) : '' }))
     return record
   })
 
   guarded('GET', '/api/audit/evidence/:id', 'panel.read', (exchange) => {
     const record = ctx.audit.getEvidence(exchange.params['id']!)
     if (!record) {
-      exchange.fail(404, 'NOT_FOUND', `证据登记不存在：${exchange.params['id']}`)
+      exchange.fail(404, 'NOT_FOUND', t('证据登记不存在：{id}', { id: exchange.params['id'] }))
       return
     }
     return record

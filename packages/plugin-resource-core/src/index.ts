@@ -12,6 +12,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { newId, slugify, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 
 // ---------------------------------------------------------------------------
 // 属性表 schema DSL
@@ -205,7 +206,7 @@ export class ResourceCoreService extends Service {
 
   private requireSpec(type: string): ResourceTypeSpec {
     const spec = this.types.get(type)
-    if (!spec) throw new Error(`未注册的资源类型：${type}`)
+    if (!spec) throw new Error(t('未注册的资源类型：{type}', { type }))
     return spec
   }
 
@@ -220,37 +221,37 @@ export class ResourceCoreService extends Service {
       // update 校验的是合并后的完整 attrs，required 与 create 同等强制——否则 PATCH 空值可绕过
       // 创建期必填（外部 QA-20261014 QA-04：PATCH description:'' 曾返回 200 清空描述）
       if ((mode === 'create' || mode === 'update') && field.required && !present) {
-        errors.push(`缺少必填字段「${field.label}」(${field.key})`)
+        errors.push(t('缺少必填字段「{label}」({key})', { label: field.label, key: field.key }))
       }
       if (mode === 'online' && field.requiredForOnline && !present) {
-        errors.push(`上线前必须补全「${field.label}」(${field.key})`)
+        errors.push(t('上线前必须补全「{label}」({key})', { label: field.label, key: field.key }))
       }
       if (!present) continue
       switch (field.type) {
         case 'number':
-          if (typeof value !== 'number' || !Number.isFinite(value)) errors.push(`「${field.label}」必须是数字`)
+          if (typeof value !== 'number' || !Number.isFinite(value)) errors.push(t('「{label}」必须是数字', { label: field.label }))
           break
         case 'boolean':
-          if (typeof value !== 'boolean') errors.push(`「${field.label}」必须是布尔值`)
+          if (typeof value !== 'boolean') errors.push(t('「{label}」必须是布尔值', { label: field.label }))
           break
         case 'enum':
           if (!field.options?.some((option) => option.value === value)) {
-            errors.push(`「${field.label}」的取值必须是：${field.options?.map((o) => o.value).join(' / ')}`)
+            errors.push(t('「{label}」的取值必须是：{values}', { label: field.label, values: field.options?.map((o) => o.value).join(' / ') }))
           }
           break
         case 'tags':
           if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-            errors.push(`「${field.label}」必须是字符串数组`)
+            errors.push(t('「{label}」必须是字符串数组', { label: field.label }))
           }
           break
         case 'url':
-          if (typeof value !== 'string' || !/^https?:\/\//.test(value)) errors.push(`「${field.label}」必须是 http(s) 地址`)
+          if (typeof value !== 'string' || !/^https?:\/\//.test(value)) errors.push(t('「{label}」必须是 http(s) 地址', { label: field.label }))
           break
         default:
-          if (typeof value !== 'string') errors.push(`「${field.label}」必须是字符串`)
+          if (typeof value !== 'string') errors.push(t('「{label}」必须是字符串', { label: field.label }))
           else if (looksLikeCorruptedText(value)) {
             // 测试 DEF-06：注册端编码错误（如 GBK 字节流按 UTF-8 解码）产生的乱码不再入库上架
-            errors.push(`「${field.label}」含乱码字符（疑似编码错误），请以 UTF-8 编码重新提交`)
+            errors.push(t('「{label}」含乱码字符（疑似编码错误），请以 UTF-8 编码重新提交', { label: field.label }))
           }
       }
     }
@@ -267,7 +268,7 @@ export class ResourceCoreService extends Service {
     orgId: string
   }): ResourceEntity {
     const spec = this.requireSpec(type)
-    if (!input.name || !String(input.name).trim()) throw new Error(`${spec.label}名称不能为空`)
+    if (!input.name || !String(input.name).trim()) throw new Error(t('{label}名称不能为空', { label: spec.label }))
     const attrs: Record<string, unknown> = {}
     for (const field of spec.schema.fields) {
       const provided = input.attrs?.[field.key]
@@ -275,11 +276,11 @@ export class ResourceCoreService extends Service {
       else if (field.defaultValue !== undefined) attrs[field.key] = field.defaultValue
     }
     const errors = this.validateAttrs(type, attrs, 'create')
-    if (errors.length > 0) throw new Error(`属性校验失败：${errors.join('；')}`)
+    if (errors.length > 0) throw new Error(t('属性校验失败：{errors}', { errors: errors.join('；') }))
     const slug = input.slug || slugify(input.name)
     const collection = this.collection(type)
     if (collection.findOne((entity) => entity.slug === slug)) {
-      throw new Error(`${spec.label}标识 ${slug} 已存在`)
+      throw new Error(t('{label}标识 {slug} 已存在', { label: spec.label, slug }))
     }
     const now = new Date().toISOString()
     return collection.insert({
@@ -299,19 +300,19 @@ export class ResourceCoreService extends Service {
     const spec = this.requireSpec(type)
     const collection = this.collection(type)
     const entity = collection.get(id)
-    if (!entity) throw new Error(`${spec.label}不存在：${id}`)
+    if (!entity) throw new Error(t('{label}不存在：{id}', { label: spec.label, id }))
     const mergedAttrs = { ...entity.attrs }
     if (patch.attrs) {
       for (const field of spec.schema.fields) {
         if (patch.attrs[field.key] === undefined) continue
         if (field.immutable && entity.attrs[field.key] !== patch.attrs[field.key]) {
-          throw new Error(`字段「${field.label}」创建后不可修改`)
+          throw new Error(t('字段「{label}」创建后不可修改', { label: field.label }))
         }
         mergedAttrs[field.key] = patch.attrs[field.key]
       }
     }
     const errors = this.validateAttrs(type, mergedAttrs, 'update')
-    if (errors.length > 0) throw new Error(`属性校验失败：${errors.join('；')}`)
+    if (errors.length > 0) throw new Error(t('属性校验失败：{errors}', { errors: errors.join('；') }))
     return collection.update(id, {
       attrs: mergedAttrs,
       ...(patch.name !== undefined ? { name: patch.name } : {}),
@@ -349,7 +350,7 @@ export class ResourceCoreService extends Service {
     if (!entity) return false
     const allowed = opts?.allowStates ?? spec.lifecycle.states.filter((state) => state.terminal).map((state) => state.key)
     if (!allowed.includes(entity.status)) {
-      throw new Error(`当前状态 ${entity.status} 不可删除（可删状态：${allowed.join(' / ')}）`)
+      throw new Error(t('当前状态 {status} 不可删除（可删状态：{allowed}）', { status: entity.status, allowed: allowed.join(' / ') }))
     }
     return this.collection(type).remove(id)
   }
@@ -376,12 +377,12 @@ export class ResourceCoreService extends Service {
     const spec = this.requireSpec(type)
     const collection = this.collection(type)
     const entity = collection.get(id)
-    if (!entity) throw new Error(`${spec.label}不存在：${id}`)
+    if (!entity) throw new Error(t('{label}不存在：{id}', { label: spec.label, id }))
     const transition = spec.lifecycle.transitions.find((item) => item.action === action)
-    if (!transition) throw new Error(`未知操作：${action}`)
+    if (!transition) throw new Error(t('未知操作：{action}', { action }))
     if (!transition.from.includes(entity.status)) {
       const fromState = this.stateLabel(type, entity.status).label
-      throw new Error(`当前状态「${fromState}」不允许执行「${transition.label}」`)
+      throw new Error(t('当前状态「{from}」不允许执行「{action}」', { from: fromState, action: transition.label }))
     }
     if (transition.to === 'online') {
       const errors = this.validateAttrs(type, entity.attrs, 'online')
@@ -447,7 +448,7 @@ export class ResourceCoreService extends Service {
       id,
       name: entity?.name ?? id,
       status: entity?.status ?? 'unknown',
-      statusLabel: entity && spec ? this.stateLabel(type, entity.status).label : '外部节点',
+      statusLabel: entity && spec ? this.stateLabel(type, entity.status).label : t('外部节点'),
       children: [],
     }
     if (depth <= 0) return node
@@ -494,12 +495,12 @@ export class ResourceCoreService extends Service {
     note?: string
   }): DatasetRecord {
     if (!input.code?.trim() || !/^[A-Za-z0-9._-]{2,64}$/.test(input.code)) {
-      throw new Error(`数据集 code 非法（字母/数字/._-，2-64 位）：${input.code}`)
+      throw new Error(t('数据集 code 非法（字母/数字/._-，2-64 位）：{code}', { code: String(input.code) }))
     }
-    if (!input.name?.trim()) throw new Error('数据集名称必填')
-    if (!input.sourceSystem?.trim()) throw new Error('来源系统必填（sourceSystem）')
+    if (!input.name?.trim()) throw new Error(t('数据集名称必填'))
+    if (!input.sourceSystem?.trim()) throw new Error(t('来源系统必填（sourceSystem）'))
     if (!['public', 'internal', 'secret'].includes(input.classification)) {
-      throw new Error(`数据分级非法：${input.classification}（public/internal/secret）`)
+      throw new Error(t('数据分级非法：{value}（public/internal/secret）', { value: String(input.classification) }))
     }
     const sceneCodes = [...new Set((input.sceneCodes ?? []).map((code) => code.trim()).filter(Boolean))]
     const existing = this.datasets().findOne((item) => item.code === input.code)
@@ -561,15 +562,15 @@ export class ResourceCoreService extends Service {
     expectedVersion?: number
   }): DatasetRecord {
     const dataset = this.datasets().findOne((item) => item.code === code)
-    if (!dataset) throw new Error(`数据集不存在：${code}（请先登记）`)
+    if (!dataset) throw new Error(t('数据集不存在：{code}（请先登记）', { code }))
     const dims = ['completeness', 'accuracy', 'timeliness', 'consistency'] as const
     for (const dim of dims) {
       const value = score[dim]
-      if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`质量分 ${dim} 应为 0-100，收到 ${value}`)
+      if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(t('质量分 {dim} 应为 0-100，收到 {value}', { dim, value: String(value) }))
     }
     const currentRevision = dataset.qualityRevision ?? 0
     if (score.expectedVersion !== undefined && score.expectedVersion !== currentRevision) {
-      throw new Error(`质量分版本冲突：当前 revision=${currentRevision}，请求基于 revision=${score.expectedVersion}（已被并发登记更新，请读取最新分后重试）`)
+      throw new Error(t('质量分版本冲突：当前 revision={current}，请求基于 revision={expected}（已被并发登记更新，请读取最新分后重试）', { current: currentRevision, expected: score.expectedVersion }))
     }
     const overall = Math.round(((score.completeness + score.accuracy + score.timeliness + score.consistency) / 4) * 10) / 10
     const quality: DatasetQualityScore = {
@@ -604,12 +605,12 @@ export class ResourceCoreService extends Service {
 
   /** 登记血缘边（派生集 derived 依赖源集 source）。成环拒绝（C-08）：沿既有 dataset 血缘边 DFS，source 已可达 derived 即环。 */
   addLineage(derived: string, source: string, kind = 'lineage'): DependencyRecord {
-    if (derived === source) throw new Error('血缘边两端不能是同一数据集')
+    if (derived === source) throw new Error(t('血缘边两端不能是同一数据集'))
     for (const code of [derived, source]) {
-      if (!this.datasets().findOne((item) => item.code === code)) throw new Error(`数据集未登记：${code}（请先登记再建血缘）`)
+      if (!this.datasets().findOne((item) => item.code === code)) throw new Error(t('数据集未登记：{code}（请先登记再建血缘）', { code }))
     }
     if (this.lineageReaches(source, derived)) {
-      throw new Error(`血缘成环拒绝：${source} 经既有血缘已可达 ${derived}，再登记 ${derived}→${source} 将形成循环依赖`)
+      throw new Error(t('血缘成环拒绝：{source} 经既有血缘已可达 {derived}，再登记 {derived}→{source} 将形成循环依赖', { source, derived }))
     }
     return this.addDependency({ fromType: 'dataset', fromId: derived, toType: 'dataset', toId: source, kind })
   }
@@ -648,9 +649,9 @@ export class ResourceCoreService extends Service {
     payload?: Record<string, unknown>
     recordedBy: string
   }): { definition: MetricDefinitionRecord; conflict: boolean } {
-    if (!input.code?.trim()) throw new Error('指标码 code 必填（如 gm_revenue）')
-    if (!input.name?.trim()) throw new Error('指标名称必填')
-    if (!input.recordedBy?.trim()) throw new Error('记录人 recordedBy 必填（口径问责）')
+    if (!input.code?.trim()) throw new Error(t('指标码 code 必填（如 gm_revenue）'))
+    if (!input.name?.trim()) throw new Error(t('指标名称必填'))
+    if (!input.recordedBy?.trim()) throw new Error(t('记录人 recordedBy 必填（口径问责）'))
     const fingerprint = stableStringify([input.name, input.unit ?? '', input.description ?? '', input.payload ?? {}])
     const existing = this.metricDefinitions().all().filter((item) => item.code === input.code)
     const same = existing.find((item) => stableStringify([item.name, item.unit ?? '', item.description ?? '', item.payload ?? {}]) === fingerprint)
@@ -682,7 +683,7 @@ export class ResourceCoreService extends Service {
   arbitrateMetric(code: string, definitionId: string, actor: string): { active: MetricDefinitionRecord; superseded: number } {
     const all = this.metricDefinitions().all().filter((item) => item.code === code)
     const target = all.find((item) => item.id === definitionId)
-    if (!target) throw new Error(`指标定义不存在：${definitionId}（code=${code}）`)
+    if (!target) throw new Error(t('指标定义不存在：{id}（code={code}）', { id: definitionId, code }))
     let superseded = 0
     for (const item of all) {
       if (item.id === definitionId) continue

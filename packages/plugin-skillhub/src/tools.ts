@@ -3,6 +3,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '../../platform-core/src/index.ts'
+import { t as translate } from '../../platform-i18n/src/index.ts'
 
 export const name = 'skillhub-tools'
 export const inject = ['tools', 'skillHub']
@@ -108,7 +109,7 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args) {
       const skill = ctx.skillHub.install(args.skillId, args.version, args.agentId, 'agent-tool')
-      return { id: skill.id, installs: skill.stats.installs, note: '依赖已登记到资源依赖图' }
+      return { id: skill.id, installs: skill.stats.installs, note: translate('依赖已登记到资源依赖图') }
     },
   }))
 
@@ -127,7 +128,7 @@ export function apply(ctx: Context) {
       return {
         id: result.skill.id, status: result.skill.status,
         referencingAgents: result.referencingAgents,
-        note: '已发布 skill.deprecated 事件并触发存量引用告警',
+        note: translate('已发布 skill.deprecated 事件并触发存量引用告警'),
       }
     },
   }))

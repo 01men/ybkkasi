@@ -13,6 +13,7 @@
  */
 import type { HttpExchange, HttpHandler, RouteAuthDecl } from './http.ts'
 import type { WorkCallerRef } from './workforce-port.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 
 /** 调用方身份（console 鉴权中间件写入 exchange.principal 的完整结构） */
 export interface CallerInfo {
@@ -61,7 +62,7 @@ export function createRestGate(ctx: RestGateHost): RestGate {
       point,
       path: exchange.path,
     })
-    exchange.fail(403, 'FORBIDDEN', `缺少权限点 ${point}，请联系管理员调整角色`, { permission: point })
+    exchange.fail(403, 'FORBIDDEN', t('缺少权限点 {point}，请联系管理员调整角色', { point }), { permission: point })
     return false
   }
 
@@ -81,7 +82,7 @@ export function createRestGate(ctx: RestGateHost): RestGate {
   const body = <T extends Record<string, any>>(exchange: HttpExchange): T => (exchange.body ?? {}) as T
 
   const changeLog = (exchange: HttpExchange, action: string, resourceType: string, resourceId: string, resourceName: string, detail = ''): void => {
-    if (!ctx.audit) throw new Error('changeLog 需要宿主注入 audit 服务（本插件未注入，禁止静默丢弃审计）')
+    if (!ctx.audit) throw new Error(t('changeLog 需要宿主注入 audit 服务（本插件未注入，禁止静默丢弃审计）'))
     const info = caller(exchange)
     ctx.audit.record({
       type: 'change',

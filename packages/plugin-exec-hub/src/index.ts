@@ -32,6 +32,7 @@ import {
   type AgentHealthLevel, type IssueStatus,
 } from './domain.ts'
 import { LeaseStoreService, type RunLeaseRecord } from './lease-store.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import { seedExecHub } from './seed.ts'
 
 // ---------------------------------------------------------------------------
@@ -242,7 +243,7 @@ export class ExecutionHubService extends Service {
         if (!issueId) return
         this.enqueueWake({
           orgId: approval.orgId ?? '', issueId, trigger: 'api',
-          triggerDetail: 'P0 审批通过放行', idempotencyKey: wakeIdempotencyKey('p0-release', [issueId, approval.id]),
+          triggerDetail: t('P0 审批通过放行'), idempotencyKey: wakeIdempotencyKey('p0-release', [issueId, approval.id]),
         })
       } catch { /* 审批联动失败不阻塞事件链 */ }
     })
@@ -322,12 +323,12 @@ export class ExecutionHubService extends Service {
   }
 
   createGoal(input: Omit<GoalRecord, 'id' | 'createdAt' | 'updatedAt' | 'status'> & { status?: GoalStatus }): GoalRecord {
-    if (!input.title?.trim()) throw new Error('目标标题必填')
+    if (!input.title?.trim()) throw new Error(t('目标标题必填'))
     if (input.parentGoalId) {
       const parent = this.goals().get(input.parentGoalId)
-      if (!parent) throw new Error(`父目标不存在：${input.parentGoalId}`)
-      if (input.parentGoalId === input.id) throw new Error('父目标不得指向自己')
-      if (this.goalChain(input.parentGoalId).includes(input.id ?? '')) throw new Error('目标父链成环')
+      if (!parent) throw new Error(t('父目标不存在：{id}', { id: input.parentGoalId }))
+      if (input.parentGoalId === input.id) throw new Error(t('父目标不得指向自己'))
+      if (this.goalChain(input.parentGoalId).includes(input.id ?? '')) throw new Error(t('目标父链成环'))
     }
     const record = this.goals().insert({
       id: newId('goal'),
@@ -350,11 +351,11 @@ export class ExecutionHubService extends Service {
 
   updateGoal(id: string, patch: Partial<GoalRecord>): GoalRecord {
     const goal = this.goals().get(id)
-    if (!goal) throw new Error(`目标不存在：${id}`)
+    if (!goal) throw new Error(t('目标不存在：{id}', { id }))
     if (patch.parentGoalId) {
-      if (patch.parentGoalId === id) throw new Error('父目标不得指向自己')
-      if (!this.goals().get(patch.parentGoalId)) throw new Error(`父目标不存在：${patch.parentGoalId}`)
-      if (this.goalChain(patch.parentGoalId).includes(id)) throw new Error('目标父链成环')
+      if (patch.parentGoalId === id) throw new Error(t('父目标不得指向自己'))
+      if (!this.goals().get(patch.parentGoalId)) throw new Error(t('父目标不存在：{id}', { id: patch.parentGoalId }))
+      if (this.goalChain(patch.parentGoalId).includes(id)) throw new Error(t('目标父链成环'))
     }
     const updated = this.goals().update(id, {
       ...(patch.title !== undefined ? { title: patch.title.trim() || goal.title } : {}),
@@ -367,9 +368,9 @@ export class ExecutionHubService extends Service {
 
   deleteGoal(id: string): { deleted: true } {
     const goal = this.goals().get(id)
-    if (!goal) throw new Error(`目标不存在：${id}`)
-    if (this.goals().all().some((item) => item.parentGoalId === id)) throw new Error('目标下仍有子目标，先迁移或删除子目标')
-    if (this.projects().all().some((item) => item.goalId === id)) throw new Error('目标下仍有项目，先迁移或删除项目')
+    if (!goal) throw new Error(t('目标不存在：{id}', { id }))
+    if (this.goals().all().some((item) => item.parentGoalId === id)) throw new Error(t('目标下仍有子目标，先迁移或删除子目标'))
+    if (this.projects().all().some((item) => item.goalId === id)) throw new Error(t('目标下仍有项目，先迁移或删除项目'))
     this.goals().remove(id)
     this.ctx.platformBus.emit(PlatformEvents.ExecGoalChanged, { goalId: id, action: 'deleted' })
     return { deleted: true }
@@ -378,8 +379,8 @@ export class ExecutionHubService extends Service {
   // -- 项目（E4） ---------------------------------------------------------------
 
   createProject(input: Omit<ProjectRecord, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'repos'> & { repos?: string[]; status?: ProjectStatus }): ProjectRecord {
-    if (!input.name?.trim()) throw new Error('项目名称必填')
-    if (input.goalId && !this.goals().get(input.goalId)) throw new Error(`关联目标不存在：${input.goalId}`)
+    if (!input.name?.trim()) throw new Error(t('项目名称必填'))
+    if (input.goalId && !this.goals().get(input.goalId)) throw new Error(t('关联目标不存在：{id}', { id: input.goalId }))
     const record = this.projects().insert({
       id: newId('proj'),
       orgId: input.orgId ?? '',
@@ -396,8 +397,8 @@ export class ExecutionHubService extends Service {
 
   updateProject(id: string, patch: Partial<ProjectRecord>): ProjectRecord {
     const project = this.projects().get(id)
-    if (!project) throw new Error(`项目不存在：${id}`)
-    if (patch.goalId && !this.goals().get(patch.goalId)) throw new Error(`关联目标不存在：${patch.goalId}`)
+    if (!project) throw new Error(t('项目不存在：{id}', { id }))
+    if (patch.goalId && !this.goals().get(patch.goalId)) throw new Error(t('关联目标不存在：{id}', { id: patch.goalId }))
     const updated = this.projects().update(id, patch)
     // 项目改挂目标 → 重物化其下任务血缘
     if (patch.goalId !== undefined) {
@@ -411,8 +412,8 @@ export class ExecutionHubService extends Service {
 
   deleteProject(id: string): { deleted: true } {
     const project = this.projects().get(id)
-    if (!project) throw new Error(`项目不存在：${id}`)
-    if (this.issues().all().some((item) => item.projectId === id)) throw new Error('项目下仍有任务，先迁移或删除任务')
+    if (!project) throw new Error(t('项目不存在：{id}', { id }))
+    if (this.issues().all().some((item) => item.projectId === id)) throw new Error(t('项目下仍有任务，先迁移或删除任务'))
     this.projects().remove(id)
     this.ctx.platformBus.emit(PlatformEvents.ExecGoalChanged, { projectId: id, action: 'project-deleted' })
     return { deleted: true }
@@ -437,13 +438,13 @@ export class ExecutionHubService extends Service {
     title: string; detail?: string; assigneeAgentId?: string; assigneeUserId?: string
     priority?: IssuePriority; dueAt?: string; createdBy: string
   }): IssueRecord {
-    if (!input.title?.trim()) throw new Error('任务标题必填')
-    if (input.projectId && !this.projects().get(input.projectId)) throw new Error(`项目不存在：${input.projectId}`)
-    if (input.parentId && !this.issues().get(input.parentId)) throw new Error(`父任务不存在：${input.parentId}`)
+    if (!input.title?.trim()) throw new Error(t('任务标题必填'))
+    if (input.projectId && !this.projects().get(input.projectId)) throw new Error(t('项目不存在：{id}', { id: input.projectId }))
+    if (input.parentId && !this.issues().get(input.parentId)) throw new Error(t('父任务不存在：{id}', { id: input.parentId }))
     for (const blockerId of input.blockerIds ?? []) {
-      if (!this.issues().get(blockerId)) throw new Error(`前置任务不存在：${blockerId}`)
+      if (!this.issues().get(blockerId)) throw new Error(t('前置任务不存在：{id}', { id: blockerId }))
     }
-    if (input.assigneeAgentId && !this.agentOf(input.assigneeAgentId)) throw new Error(`负责人 Agent 不存在：${input.assigneeAgentId}`)
+    if (input.assigneeAgentId && !this.agentOf(input.assigneeAgentId)) throw new Error(t('负责人 Agent 不存在：{id}', { id: input.assigneeAgentId }))
     const project = input.projectId ? this.projects().get(input.projectId) : undefined
     const orgId = input.orgId ?? project?.orgId ?? this.agentOf(input.assigneeAgentId ?? '')?.orgId ?? ''
     const record = this.issues().insert({
@@ -475,12 +476,12 @@ export class ExecutionHubService extends Service {
 
   updateIssue(id: string, patch: Partial<IssueRecord>, actor: string): IssueRecord {
     const issue = this.issues().get(id)
-    if (!issue) throw new Error(`任务不存在：${id}`)
-    if (patch.projectId && !this.projects().get(patch.projectId)) throw new Error(`项目不存在：${patch.projectId}`)
-    if (patch.assigneeAgentId && !this.agentOf(patch.assigneeAgentId)) throw new Error(`负责人 Agent 不存在：${patch.assigneeAgentId}`)
+    if (!issue) throw new Error(t('任务不存在：{id}', { id }))
+    if (patch.projectId && !this.projects().get(patch.projectId)) throw new Error(t('项目不存在：{id}', { id: patch.projectId }))
+    if (patch.assigneeAgentId && !this.agentOf(patch.assigneeAgentId)) throw new Error(t('负责人 Agent 不存在：{id}', { id: patch.assigneeAgentId }))
     for (const blockerId of patch.blockerIds ?? []) {
-      if (!this.issues().get(blockerId)) throw new Error(`前置任务不存在：${blockerId}`)
-      if (blockerId === id) throw new Error('前置任务不得指向自己')
+      if (!this.issues().get(blockerId)) throw new Error(t('前置任务不存在：{id}', { id: blockerId }))
+      if (blockerId === id) throw new Error(t('前置任务不得指向自己'))
     }
     const updated = this.issues().update(id, { ...patch })
     this.rematerialize(id)
@@ -489,7 +490,7 @@ export class ExecutionHubService extends Service {
     if (newAssignee && newAssignee !== issue.assigneeAgentId) {
       this.enqueueWake({
         orgId: updated.orgId, issueId: id, agentId: newAssignee, trigger: 'assign',
-        triggerDetail: `改派（${actor}）`,
+        triggerDetail: t('改派（{actor}）', { actor }),
         idempotencyKey: wakeIdempotencyKey('assign', [id, newAssignee, new Date().toISOString().slice(0, 13)]),
       })
     }
@@ -499,16 +500,16 @@ export class ExecutionHubService extends Service {
 
   transitionIssue(id: string, to: IssueStatus, actor: string): IssueRecord {
     const issue = this.issues().get(id)
-    if (!issue) throw new Error(`任务不存在：${id}`)
+    if (!issue) throw new Error(t('任务不存在：{id}', { id }))
     if (!issueCanTransition(issue.status, to)) {
-      throw new Error(`任务状态 ${issue.status} 不允许流转到 ${to}`)
+      throw new Error(t('任务状态 {from} 不允许流转到 {to}', { from: issue.status, to }))
     }
     if (to === 'done' && issue.executionRunId) {
       // 收尾语义：终态前先收 run（释放锁 + run 完结），不留悬挂锁
-      this.completeRun(issue.executionRunId, { status: 'completed', summary: `任务完成收尾（${actor}）` })
+      this.completeRun(issue.executionRunId, { status: 'completed', summary: t('任务完成收尾（{actor}）', { actor }) })
     }
     if (to === 'cancelled' && issue.executionRunId) {
-      this.completeRun(issue.executionRunId, { status: 'failed', summary: `任务取消收尾（${actor}）` })
+      this.completeRun(issue.executionRunId, { status: 'failed', summary: t('任务取消收尾（{actor}）', { actor }) })
     }
     const updated = this.issues().update(id, { status: to })
     this.ctx.platformBus.emit(PlatformEvents.ExecIssueChanged, { issueId: id, action: 'transition', status: to })
@@ -525,7 +526,7 @@ export class ExecutionHubService extends Service {
       if (!dependent.assigneeAgentId) continue
       this.enqueueWake({
         orgId: dependent.orgId, issueId: dependent.id, agentId: dependent.assigneeAgentId,
-        trigger: 'dependency', triggerDetail: `前置 ${issueId} 已解除`,
+        trigger: 'dependency', triggerDetail: t('前置 {issueId} 已解除', { issueId }),
         idempotencyKey: wakeIdempotencyKey('dep', [dependent.id, issueId]),
       })
     }
@@ -533,9 +534,9 @@ export class ExecutionHubService extends Service {
 
   deleteIssue(id: string): { deleted: true } {
     const issue = this.issues().get(id)
-    if (!issue) throw new Error(`任务不存在：${id}`)
-    if (issue.executionRunId) throw new Error('任务执行中（持有执行锁），先完成或取消')
-    if (this.issues().all().some((item) => item.parentId === id)) throw new Error('任务下仍有子任务')
+    if (!issue) throw new Error(t('任务不存在：{id}', { id }))
+    if (issue.executionRunId) throw new Error(t('任务执行中（持有执行锁），先完成或取消'))
+    if (this.issues().all().some((item) => item.parentId === id)) throw new Error(t('任务下仍有子任务'))
     this.issues().remove(id)
     this.ctx.platformBus.emit(PlatformEvents.ExecIssueChanged, { issueId: id, action: 'deleted' })
     return { deleted: true }
@@ -596,7 +597,7 @@ export class ExecutionHubService extends Service {
       })
       if (decision.kind === 'keep') continue
       if (decision.kind === 'timeout-run' && run) {
-        this.runs().update(run.id, { status: 'timeout', finishedAt: new Date().toISOString(), summary: `执行锁超时（${Math.round(lockAge / 1000)}s）自动回收` })
+        this.runs().update(run.id, { status: 'timeout', finishedAt: new Date().toISOString(), summary: t('执行锁超时（{seconds}s）自动回收', { seconds: Math.round(lockAge / 1000) }) })
       }
       const holderRun = issue.executionRunId!
       this.issues().update(issue.id, { executionRunId: undefined, executionAgentKey: undefined, executionLockedAt: undefined })
@@ -638,7 +639,7 @@ export class ExecutionHubService extends Service {
    */
   completeRun(runId: string, options: { status?: RunStatus; summary?: string; failedIssueDisposition?: 'review' | 'todo' } = {}): RunRecord {
     const run = this.runs().get(runId)
-    if (!run) throw new Error(`run 不存在：${runId}`)
+    if (!run) throw new Error(t('run 不存在：{id}', { id: runId }))
     if (run.status !== 'running') return run
     const updated = this.runs().update(runId, {
       status: options.status ?? 'completed',
@@ -675,14 +676,14 @@ export class ExecutionHubService extends Service {
   /** 员工幂等认领：同员工+同任务重复认领返回既有 run/租约（created=false）。 */
   async claimForEmployee(input: { issueId: string; employeeId: string; agentKey: string; principalId: string; ttlMs?: number }): Promise<EmployeeClaimResult> {
     try {
-      if (!input.issueId) return { ok: false, code: 'ISSUE_NOT_FOUND', message: '任务 ID 必填' }
+      if (!input.issueId) return { ok: false, code: 'ISSUE_NOT_FOUND', message: t('任务 ID 必填') }
       if (!input.employeeId || !input.principalId) {
-        return { ok: false, code: 'ADMISSION_DENIED', message: '认领参数不足：employeeId 与 principalId 必填（fail-closed）' }
+        return { ok: false, code: 'ADMISSION_DENIED', message: t('认领参数不足：employeeId 与 principalId 必填（fail-closed）') }
       }
       const issue = this.issues().get(input.issueId)
-      if (!issue) return { ok: false, code: 'ISSUE_NOT_FOUND', message: `任务不存在：${input.issueId}` }
+      if (!issue) return { ok: false, code: 'ISSUE_NOT_FOUND', message: t('任务不存在：{id}', { id: input.issueId }) }
       if (issue.status === 'done' || issue.status === 'cancelled') {
-        return { ok: false, code: 'ISSUE_CLOSED', message: `任务已${issue.status === 'done' ? '完成' : '取消'}关闭，不可认领` }
+        return { ok: false, code: 'ISSUE_CLOSED', message: t('任务已{state}关闭，不可认领', { state: issue.status === 'done' ? t('完成') : t('取消') }) }
       }
       // agentKey 归一：优先入参，否则 employee:<id>
       const agentKey = input.agentKey?.trim() ? normalizeAgentKey(input.agentKey) : `employee:${input.employeeId}`
@@ -709,7 +710,7 @@ export class ExecutionHubService extends Service {
           return { ok: true, issueId: issue.id, runId: lease.runId, lease, created: false }
         }
         if (decision.kind === 'held-by-other') {
-          return { ok: false, code: 'LEASE_HELD_BY_OTHER', message: `任务执行租约由 ${decision.holder} 持有，不可重复认领`, holder: decision.holder }
+          return { ok: false, code: 'LEASE_HELD_BY_OTHER', message: t('任务执行租约由 {holder} 持有，不可重复认领', { holder: decision.holder }), holder: decision.holder }
         }
       }
       // get-or-create run（V05/D05：唤醒预持锁的运行中 run 直接采用；脏投影才新建）
@@ -735,7 +736,7 @@ export class ExecutionHubService extends Service {
       // 原子取租约（权威 CAS；竞争失败映射为他人持有）
       const acquired = this.leaseStore.acquire({ issueId: issue.id, runId, employeeId: input.employeeId, agentKey, principalId: input.principalId, ttlMs })
       if (!acquired.ok) {
-        return { ok: false, code: 'LEASE_HELD_BY_OTHER', message: `任务执行租约由 ${acquired.holder} 持有，不可重复认领`, holder: acquired.holder }
+        return { ok: false, code: 'LEASE_HELD_BY_OTHER', message: t('任务执行租约由 {holder} 持有，不可重复认领', { holder: acquired.holder }), holder: acquired.holder }
       }
       // 投影写齐（附录 A 决策 3：权威在 exec_run_leases，投影保持现状兼容）
       const cas = this.acquireLock(issue.id, runId, agentKey)
@@ -753,7 +754,7 @@ export class ExecutionHubService extends Service {
       return { ok: true, issueId: issue.id, runId, lease: acquired.lease, created: acquired.created }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: `执行中枢认领失败：${message}` }
+      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: t('执行中枢认领失败：{message}', { message }) }
     }
   }
 
@@ -761,14 +762,14 @@ export class ExecutionHubService extends Service {
   async renewLease(input: { runId: string; principalId: string; ttlMs?: number }): Promise<EmployeeLeaseResult> {
     try {
       if (!input.runId || !input.principalId) {
-        return { ok: false, code: 'LEASE_STALE', message: '续租参数不足：runId 与 principalId 必填（fail-closed）' }
+        return { ok: false, code: 'LEASE_STALE', message: t('续租参数不足：runId 与 principalId 必填（fail-closed）') }
       }
       const renewed = this.leaseStore.renew({ runId: input.runId, principalId: input.principalId, ttlMs: input.ttlMs })
       if (!renewed.ok) return { ok: false, code: 'LEASE_STALE', message: renewed.message }
       return { ok: true, lease: renewed.lease }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: `执行中枢续租失败：${message}` }
+      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: t('执行中枢续租失败：{message}', { message }) }
     }
   }
 
@@ -776,7 +777,7 @@ export class ExecutionHubService extends Service {
   async assertRunOwnership(input: { runId: string; principalId: string }): Promise<{ ok: true; lease: RunLeaseRecord } | { ok: false; code: ExecHubWorkDenyCode; message: string }> {
     try {
       if (!input.runId || !input.principalId) {
-        return { ok: false, code: 'RUN_NOT_OWNED', message: '所有权校验参数不足：runId 与 principalId 必填（fail-closed）' }
+        return { ok: false, code: 'RUN_NOT_OWNED', message: t('所有权校验参数不足：runId 与 principalId 必填（fail-closed）') }
       }
       const lease = this.leaseStore.latestForRun(input.runId)
       const decision = decideCompleteOwnership({
@@ -787,11 +788,11 @@ export class ExecutionHubService extends Service {
         leasePrincipalId: lease?.principalId ?? '',
       })
       if (decision.kind === 'deny') return { ok: false, code: decision.code, message: decision.reason }
-      if (!lease) return { ok: false, code: 'RUN_NOT_OWNED', message: '该 run 无有效执行租约，不归属当前调用主体' }
+      if (!lease) return { ok: false, code: 'RUN_NOT_OWNED', message: t('该 run 无有效执行租约，不归属当前调用主体') }
       return { ok: true, lease }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: `执行中枢所有权校验失败：${message}` }
+      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: t('执行中枢所有权校验失败：{message}', { message }) }
     }
   }
 
@@ -815,17 +816,17 @@ export class ExecutionHubService extends Service {
     const agent = agentId ? this.agentOf(agentId) : undefined
     if (agent) {
       if (this.isAgentFrozen(agent.id)) {
-        return { ok: false, code: 'ADMISSION_DENIED', message: `Agent 已冻结（预算超限联动），待解冻审批：${agent.name}` }
+        return { ok: false, code: 'ADMISSION_DENIED', message: t('Agent 已冻结（预算超限联动），待解冻审批：{name}', { name: agent.name }) }
       }
       const budgetGate = this.checkAgentBudget(agent.id, agent.orgId)
-      if (budgetGate.blocked) return { ok: false, code: 'BUDGET_EXCEEDED', message: `预算熔断：${budgetGate.reason ?? '预算已超限'}` }
+      if (budgetGate.blocked) return { ok: false, code: 'BUDGET_EXCEEDED', message: t('预算熔断：{reason}', { reason: budgetGate.reason ?? t('预算已超限') }) }
       const scopes = this.agentScopes(agent.id)
       if (scopes === null || !(scopes.includes('exec.write') || scopes.includes('*'))) {
-        return { ok: false, code: 'ADMISSION_DENIED', message: 'Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）' }
+        return { ok: false, code: 'ADMISSION_DENIED', message: t('Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）') }
       }
     }
     if (issue.priority === 'P0' && !this.p0ApprovalPassed(issue.id)) {
-      return { ok: false, code: 'APPROVAL_REQUIRED', message: 'P0 任务需先通过 exec.issue.run 审批（已自动挂单，等待放行）' }
+      return { ok: false, code: 'APPROVAL_REQUIRED', message: t('P0 任务需先通过 exec.issue.run 审批（已自动挂单，等待放行）') }
     }
     return { ok: true }
   }
@@ -960,7 +961,7 @@ export class ExecutionHubService extends Service {
       this.routines().update(routine.id, { lastFiredAt: new Date().toISOString() })
       this.enqueueWake({
         orgId: routine.orgId, agentId: routine.agentId, trigger: 'routine',
-        triggerDetail: `${routine.name}（${routine.kind}）`,
+        triggerDetail: t('{name}（{kind}）', { name: routine.name, kind: routine.kind }),
         ...(routine.payload ? { payload: routine.payload } : {}),
         idempotencyKey: wakeIdempotencyKey('routine', [routine.id, Math.floor(nowMs / 60_000)]),
       })
@@ -1007,29 +1008,29 @@ export class ExecutionHubService extends Service {
     if (!wake) return 'skipped'
     const issue = wake.issueId ? this.issues().get(wake.issueId) : undefined
     if (wake.issueId && !issue) {
-      this.wakes().update(wakeId, { status: 'cancelled', lastError: '任务已删除' })
+      this.wakes().update(wakeId, { status: 'cancelled', lastError: t('任务已删除') })
       return 'skipped'
     }
     if (issue && (issue.status === 'done' || issue.status === 'cancelled')) {
-      this.wakes().update(wakeId, { status: 'cancelled', lastError: `任务已${issue.status === 'done' ? '完成' : '取消'}` })
+      this.wakes().update(wakeId, { status: 'cancelled', lastError: t('任务已{state}', { state: issue.status === 'done' ? t('完成') : t('取消') }) })
       return 'skipped'
     }
     const agentId = wake.agentId ?? issue?.assigneeAgentId ?? ''
     const agent = this.agentOf(agentId)
     if (!agent) {
-      this.wakes().update(wakeId, { status: 'failed', lastError: '负责人 Agent 不存在或未指定' })
+      this.wakes().update(wakeId, { status: 'failed', lastError: t('负责人 Agent 不存在或未指定') })
       return 'failed'
     }
     if (agent.status !== 'online' && agent.status !== 'trial') {
       this.recordHeartbeat(agent, 'skipped_inactive', `状态 ${agent.status}`)
-      this.wakes().update(wakeId, { status: 'failed', lastError: `Agent 非运行态（${agent.status}）` })
+      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 非运行态（{status}）', { status: agent.status }) })
       return 'failed'
     }
 
     // 联动①：冻结检查（R10：预算超限冻结后不再唤醒，直至解冻审批执行；与员工认领准入同源 isAgentFrozen）
     if (this.isAgentFrozen(agentId)) {
       this.recordHeartbeat(agent, 'skipped_frozen', wake.trigger)
-      this.wakes().update(wakeId, { status: 'failed', lastError: 'Agent 已冻结（预算超限联动），待解冻审批' })
+      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 已冻结（预算超限联动），待解冻审批') })
       this.auditSafe({
         type: 'invoke', actorType: 'machine', actorId: 'exec-hub', actorName: '执行中枢',
         action: 'exec.wakeup.frozen_skipped', resourceType: 'agent', resourceId: agentId,
@@ -1041,7 +1042,7 @@ export class ExecutionHubService extends Service {
     // 联动②：预算前置（E6——平台独有增值：超限直接不唤醒，而非事后记账报警）
     const budgetGate = this.checkAgentBudget(agentId, agent.orgId)
     if (budgetGate.blocked) {
-      this.wakes().update(wakeId, { status: 'failed', budgetCheckPassed: false, lastError: `预算熔断：${budgetGate.reason}` })
+      this.wakes().update(wakeId, { status: 'failed', budgetCheckPassed: false, lastError: t('预算熔断：{reason}', { reason: budgetGate.reason ?? '' }) })
       this.recordHeartbeat(agent, 'skipped_budget', budgetGate.reason)
       this.auditSafe({
         type: 'invoke', actorType: 'machine', actorId: 'exec-hub', actorName: '执行中枢',
@@ -1051,7 +1052,7 @@ export class ExecutionHubService extends Service {
       // 超额联动冻结（R10）：预算标记 freezeAgent 时冻结 Agent 并生成 L4 解冻审批（复用审批基建，天然带二次确认）
       if (budgetGate.freezeAgent && this.ctx.agentRegistry && typeof this.ctx.agentRegistry.freezeAgent === 'function' && !this.ctx.agentRegistry.isFrozen(agentId)) {
         try {
-          this.ctx.agentRegistry.freezeAgent(agentId, `执行中枢预算前置熔断：${budgetGate.reason}`, 'exec-hub')
+          this.ctx.agentRegistry.freezeAgent(agentId, t('执行中枢预算前置熔断：{reason}', { reason: budgetGate.reason ?? '' }), 'exec-hub')
         } catch (error) {
           this.ctx.logger('exec-hub').warn(`联动冻结失败：${error instanceof Error ? error.message : String(error)}`)
         }
@@ -1063,7 +1064,7 @@ export class ExecutionHubService extends Service {
     // 联动③：权限校验（Agent 机器主体须持 exec.write——身份纳管即权限收敛）
     const scopes = this.agentScopes(agentId)
     if (scopes === null || !(scopes.includes('exec.write') || scopes.includes('*'))) {
-      this.wakes().update(wakeId, { status: 'failed', lastError: 'Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）' })
+      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）') })
       this.recordHeartbeat(agent, 'skipped_permission', 'exec.write 缺失')
       this.auditSafe({
         type: 'authz', actorType: 'machine', actorId: `agent:${agentId}`, actorName: agent.name,
@@ -1099,7 +1100,7 @@ export class ExecutionHubService extends Service {
 
     // 联动④：审批门禁（P0=高危任务：执行前须 exec.issue.run 审批 executed）
     if (issue.priority === 'P0' && !this.p0ApprovalPassed(issue.id)) {
-      const deferred = this.wakes().update(wakeId, { status: 'deferred_issue_execution', lastError: 'P0 任务待审批放行' })
+      const deferred = this.wakes().update(wakeId, { status: 'deferred_issue_execution', lastError: t('P0 任务待审批放行') })
       this.recordHeartbeat(agent, 'deferred', `P0 审批 ${issue.id}`)
       return deferred ? 'deferred' : 'failed'
     }
@@ -1112,7 +1113,7 @@ export class ExecutionHubService extends Service {
       availableActiveExecutionRunPresent: Boolean(issue.executionRunId),
     })
     if (decision.kind === 'defer') {
-      this.wakes().update(wakeId, { status: 'deferred_issue_execution', lastError: `执行锁由 ${issue.executionRunId} 持有` })
+      this.wakes().update(wakeId, { status: 'deferred_issue_execution', lastError: t('执行锁由 {runId} 持有', { runId: issue.executionRunId ?? '' }) })
       return 'deferred'
     }
     const agentKey = normalizeAgentKey(agent.name)
@@ -1129,7 +1130,7 @@ export class ExecutionHubService extends Service {
     // CAS 护栏：并发下仅一方成功（决策层不依赖它，它只防重复取锁）
     const acquired = this.acquireLock(issue.id, runId, agentKey)
     if (!acquired.ok) {
-      this.wakes().update(wakeId, { status: 'deferred_issue_execution', lastError: `取锁竞争失败（${acquired.holder} 持有）` })
+      this.wakes().update(wakeId, { status: 'deferred_issue_execution', lastError: t('取锁竞争失败（{holder} 持有）', { holder: acquired.holder ?? '' }) })
       return 'deferred'
     }
     if (decision.kind === 'coalesce') {
@@ -1178,14 +1179,14 @@ export class ExecutionHubService extends Service {
     try {
       statuses = modelGateway.budgetStatusForSubject(`agent:${agentId}`, orgId)
     } catch (error) {
-      return { blocked: true, reason: `预算检查失败（fail-closed）：${error instanceof Error ? error.message : String(error)}` }
+      return { blocked: true, reason: t('预算检查失败（fail-closed）：{message}', { message: error instanceof Error ? error.message : String(error) }) }
     }
     for (const item of statuses ?? []) {
       const breached = item.daily?.breached || item.monthly?.breached
       if (breached && item.budget.action === 'block') {
         return {
           blocked: true, freezeAgent: item.budget.freezeAgent === true,
-          reason: `Agent 主体预算（${item.budget.subject ?? ''}）已超限，action=block`,
+          reason: t('Agent 主体预算（{subject}）已超限，action=block', { subject: item.budget.subject ?? '' }),
         }
       }
     }
@@ -1203,7 +1204,7 @@ export class ExecutionHubService extends Service {
     try {
       this.ctx.audit.createApproval({
         kind: 'exec.issue.run',
-        title: `P0 任务执行审批：「${issue?.title ?? issueId}」`,
+        title: t('P0 任务执行审批：「{title}」', { title: issue?.title ?? issueId }),
         riskLevel: 'high',
         payload: { issueId, title: issue?.title ?? '' },
         ...(issue?.orgId ? { orgId: issue.orgId } : {}),
@@ -1293,7 +1294,7 @@ export class ExecutionHubService extends Service {
     blockers: Array<{ id: string; title: string; status?: IssueStatus }>
   } {
     const issue = this.issues().get(issueId)
-    if (!issue) throw new Error(`任务不存在：${issueId}`)
+    if (!issue) throw new Error(t('任务不存在：{id}', { id: issueId }))
     const project = issue.projectId ? this.projects().get(issue.projectId) : undefined
     const goal = project?.goalId ? this.goals().get(project.goalId) : undefined
     const ancestry = (issue.goalAncestry ?? []).map((id) => {
@@ -1458,12 +1459,12 @@ export class ExecutionHubService extends Service {
     for (const service of mcpServices) {
       if (!service.health.breakerOpen) continue
       critical++
-      if (exceptions.length < 8) exceptions.push({ name: `MCP 熔断：${service.name}`, level: 'critical', chain: `mcp:${service.slug}`, owner: service.owner })
+      if (exceptions.length < 8) exceptions.push({ name: t('MCP 熔断：{name}', { name: service.name }), level: 'critical', chain: `mcp:${service.slug}`, owner: service.owner })
     }
     for (const model of models) {
       if (model.status === 'online' && model.endpoint.trim() === '') {
         warning++
-        if (exceptions.length < 8) exceptions.push({ name: `模型路由已上线但未配置 endpoint：${model.displayName}`, level: 'warning', chain: `model:${model.slug}`, owner: model.provider })
+        if (exceptions.length < 8) exceptions.push({ name: t('模型路由已上线但未配置 endpoint：{name}', { name: model.displayName }), level: 'warning', chain: `model:${model.slug}`, owner: model.provider })
       }
     }
 
@@ -1479,15 +1480,15 @@ export class ExecutionHubService extends Service {
     // -- 洞察文案：全部由上方真实数字拼装（禁止硬编码场景话术） -------------------
     const bits: string[] = []
     if (goals.length > 0) {
-      bits.push(`目标 ${goals.length} 项（进行中 ${activeGoals.length}、已达成 ${achieved}，达成率 ${goalCompletion}%）`)
-      if (issues.length > 0) bits.push(`关联任务完成率 ${issueCompletion}%（${doneIssues}/${issues.length}）`)
+      bits.push(t('目标 {total} 项（进行中 {active}、已达成 {achieved}，达成率 {rate}%）', { total: goals.length, active: activeGoals.length, achieved, rate: goalCompletion }))
+      if (issues.length > 0) bits.push(t('关联任务完成率 {rate}%（{done}/{total}）', { rate: issueCompletion, done: doneIssues, total: issues.length }))
     } else {
-      bits.push('尚无登记目标——可在执行中枢创建季度目标并拆解行动项目')
+      bits.push(t('尚无登记目标——可在执行中枢创建季度目标并拆解行动项目'))
     }
-    if (critical > 0) bits.push(`存在 ${critical} 项严重告警需立即处理`)
-    else if (warning > 0) bits.push(`存在 ${warning} 项一般告警建议关注`)
-    else bits.push('当前无未读告警')
-    bits.push(`今日已计量调用 ${callsToday} 次、tokens ${tokensToday.toLocaleString('en-US')}、内部成本参考 ${costToday} 分`)
+    if (critical > 0) bits.push(t('存在 {count} 项严重告警需立即处理', { count: critical }))
+    else if (warning > 0) bits.push(t('存在 {count} 项一般告警建议关注', { count: warning }))
+    else bits.push(t('当前无未读告警'))
+    bits.push(t('今日已计量调用 {calls} 次、tokens {tokens}、内部成本参考 {cost} 分', { calls: callsToday, tokens: tokensToday.toLocaleString('en-US'), cost: costToday }))
 
     return {
       insight: { text: bits.join('；') + '。', exceptions },
@@ -1512,8 +1513,8 @@ export class ExecutionHubService extends Service {
       this.metricsReminderDayKeys.add(key)
       this.ctx.audit?.fire?.({
         severity: 'warning',
-        title: `Agent「${agent.name}」纳管指标超 24h 未提报`,
-        message: '执行中枢催办：请调用 POST /api/agents/:id/metrics-report 提报 dau/sessions，超期未报将影响健康度评估与预算窗口。',
+        title: t('Agent「{name}」纳管指标超 24h 未提报', { name: agent.name }),
+        message: t('执行中枢催办：请调用 POST /api/agents/:id/metrics-report 提报 dau/sessions，超期未报将影响健康度评估与预算窗口。'),
         resourceType: 'agent',
         resourceId: agent.id,
       })
@@ -1661,11 +1662,11 @@ export function apply(ctx: Context) {
   guarded('POST', '/api/exec/issues/:id/wake', 'exec.write', (exchange) => {
     const input = body<{ reason?: string }>(exchange)
     const issue = hub.issues().get(exchange.params['id']!)
-    if (!issue) { exchange.fail(404, 'NOT_FOUND', `任务不存在：${exchange.params['id']}`); return }
-    if (!issue.assigneeAgentId) { exchange.fail(400, 'BAD_REQUEST', '任务未指定负责人 Agent'); return }
+    if (!issue) { exchange.fail(404, 'NOT_FOUND', t('任务不存在：{id}', { id: exchange.params['id'] ?? '' })); return }
+    if (!issue.assigneeAgentId) { exchange.fail(400, 'BAD_REQUEST', t('任务未指定负责人 Agent')); return }
     const wake = hub.enqueueWake({
       orgId: issue.orgId, issueId: issue.id, agentId: issue.assigneeAgentId, trigger: 'api',
-      triggerDetail: input.reason ?? `手动唤醒（${actorOf(exchange)}）`,
+      triggerDetail: input.reason ?? t('手动唤醒（{actor}）', { actor: actorOf(exchange) }),
       idempotencyKey: wakeIdempotencyKey('api', [issue.id, Date.now()]),
     })
     changeLog(exchange, 'exec.issue.wake', issue.title, wake.triggerDetail ?? '')
@@ -1700,7 +1701,7 @@ export function apply(ctx: Context) {
     const wake = hub.enqueueWake({
       orgId: '', ...(input.agentId ? { agentId: input.agentId } : {}),
       ...(input.issueId ? { issueId: input.issueId } : {}),
-      trigger: 'api', triggerDetail: input.reason ?? `API 触发（${actorOf(exchange)}）`,
+      trigger: 'api', triggerDetail: input.reason ?? t('API 触发（{actor}）', { actor: actorOf(exchange) }),
       idempotencyKey: wakeIdempotencyKey('api', [input.issueId ?? input.agentId ?? '', Date.now()]),
     })
     changeLog(exchange, 'exec.wakeup', input.issueId ?? input.agentId ?? '', wake.triggerDetail ?? '')
@@ -1720,16 +1721,16 @@ export function apply(ctx: Context) {
 
   guarded('POST', '/api/exec/routines', 'exec.write', (exchange) => {
     const input = body<{ orgId?: string; agentId: string; name: string; kind: RoutineKind; intervalMinutes?: number; cron?: string; webhookPath?: string; payload?: Record<string, unknown>; enabled?: boolean }>(exchange)
-    if (!input.name?.trim()) { exchange.fail(400, 'BAD_REQUEST', '例行规则名称必填'); return }
-    if (!input.agentId || !ctx.resourceCore.collection('agent').get(input.agentId)) { exchange.fail(400, 'BAD_REQUEST', '负责人 Agent 不存在'); return }
-    if (input.kind === 'interval' && !(Number(input.intervalMinutes) > 0)) { exchange.fail(400, 'BAD_REQUEST', 'interval 类型须提供正整数间隔分钟'); return }
+    if (!input.name?.trim()) { exchange.fail(400, 'BAD_REQUEST', t('例行规则名称必填')); return }
+    if (!input.agentId || !ctx.resourceCore.collection('agent').get(input.agentId)) { exchange.fail(400, 'BAD_REQUEST', t('负责人 Agent 不存在')); return }
+    if (input.kind === 'interval' && !(Number(input.intervalMinutes) > 0)) { exchange.fail(400, 'BAD_REQUEST', t('interval 类型须提供正整数间隔分钟')); return }
     if (input.kind === 'cron') {
-      if (!input.cron || !cronIsValid(input.cron)) { exchange.fail(400, 'BAD_REQUEST', 'cron 表达式非法（5 段：分 时 日 月 周，分钟粒度）'); return }
+      if (!input.cron || !cronIsValid(input.cron)) { exchange.fail(400, 'BAD_REQUEST', t('cron 表达式非法（5 段：分 时 日 月 周，分钟粒度）')); return }
     }
     if (input.kind === 'webhook') {
       const path = (input.webhookPath ?? '').trim()
-      if (!/^[a-z0-9-]{6,64}$/.test(path)) { exchange.fail(400, 'BAD_REQUEST', 'webhook 路径非法（小写字母/数字/-，6-64 位，路径即凭证请保持不可猜测）'); return }
-      if (hub.routines().all().some((item) => item.webhookPath === path)) { exchange.fail(409, 'CONFLICT', 'webhook 路径已被占用'); return }
+      if (!/^[a-z0-9-]{6,64}$/.test(path)) { exchange.fail(400, 'BAD_REQUEST', t('webhook 路径非法（小写字母/数字/-，6-64 位，路径即凭证请保持不可猜测）')); return }
+      if (hub.routines().all().some((item) => item.webhookPath === path)) { exchange.fail(409, 'CONFLICT', t('webhook 路径已被占用')); return }
     }
     const created = hub.routines().insert({
       id: newId('rtn'),
@@ -1751,7 +1752,7 @@ export function apply(ctx: Context) {
 
   guarded('PATCH', '/api/exec/routines/:id', 'exec.write', (exchange) => {
     const input = body<{ name?: string; intervalMinutes?: number; cron?: string; payload?: Record<string, unknown>; enabled?: boolean }>(exchange)
-    if (input.cron !== undefined && input.cron !== '' && !cronIsValid(input.cron)) { exchange.fail(400, 'BAD_REQUEST', 'cron 表达式非法'); return }
+    if (input.cron !== undefined && input.cron !== '' && !cronIsValid(input.cron)) { exchange.fail(400, 'BAD_REQUEST', t('cron 表达式非法')); return }
     const updated = hub.routines().update(exchange.params['id']!, {
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.intervalMinutes !== undefined ? { intervalMinutes: Number(input.intervalMinutes) } : {}),
@@ -1818,9 +1819,9 @@ export function apply(ctx: Context) {
       async execute(args, exec) {
         const issueId = String(args.issueId ?? '')
         // D05/D06 fail-closed：无调用主体不认领（身份不入工具参数，一律取 exec.principal）
-        if (!exec.principal) throw new Error('缺少调用主体（exec.principal），拒绝认领（fail-closed）——请检查令牌与会话注入')
+        if (!exec.principal) throw new Error(t('缺少调用主体（exec.principal），拒绝认领（fail-closed）——请检查令牌与会话注入'))
         const issue = hub.issues().get(issueId)
-        if (!issue) throw new Error(`任务不存在：${issueId}`)
+        if (!issue) throw new Error(t('任务不存在：{id}', { id: issueId }))
         const principal = exec.principal
         // 受管数字员工路径（运行时结构化探测 workforce 服务，不进 inject——装配在 exec-hub 之后）
         const workforce = ctx as unknown as {
@@ -1845,7 +1846,7 @@ export function apply(ctx: Context) {
             resolution = await identity.resolveByCaller!(caller)
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
-            return { ok: false, code: 'POLICY_INTERNAL_ERROR', message: `受管身份反查失败（fail-closed）：${message}` }
+            return { ok: false, code: 'POLICY_INTERNAL_ERROR', message: t('受管身份反查失败（fail-closed）：{message}', { message }) }
           }
           if (resolution) {
             // 命中受管员工 → 统一认领入口（准入/permit/能力清单/租约一次完成，不复制实现）
@@ -1877,7 +1878,7 @@ export function apply(ctx: Context) {
             return {
               ok: false,
               code,
-              message: outcome.message || (label ? `${label}（code=${code}）` : `认领被拒绝（code=${code}）`),
+              message: outcome.message || (label ? t('{label}（code={code}）', { label: t(String(label)), code }) : t('认领被拒绝（code={code}）', { code })),
               ...(outcome.holder ? { holder: outcome.holder } : {}),
             }
           }
@@ -1886,7 +1887,7 @@ export function apply(ctx: Context) {
         // -- 旧语义（D05/D06 幂等修正版） -----------------------------------------
         // 机器主体只能认领指派给自己的任务（人类 exec.write 持有者不受此限）
         if (principal.kind === 'machine' && principal.refType === 'agent' && issue.assigneeAgentId !== principal.refId) {
-          throw new Error('该任务未指派给你（no_permission）')
+          throw new Error(t('该任务未指派给你（no_permission）'))
         }
         const agent = issue.assigneeAgentId ? ctx.resourceCore.collection('agent').get(issue.assigneeAgentId) : undefined
         const agentKey = normalizeAgentKey(agent?.name ?? 'unknown')
@@ -1967,9 +1968,9 @@ export function apply(ctx: Context) {
           runId = issue?.executionRunId ?? ''
           if (!runId && !principal) {
             // 参数不足升级提示（D07 fail-closed，不静默放行）
-            throw new Error('参数不足：既未提供 runId，也无法识别调用主体（exec.principal 缺失）——请携带 exec_claim 返回的 runId 重试；如身份异常请联系管理员升级人工处理')
+            throw new Error(t('参数不足：既未提供 runId，也无法识别调用主体（exec.principal 缺失）——请携带 exec_claim 返回的 runId 重试；如身份异常请联系管理员升级人工处理'))
           }
-          if (!runId) throw new Error('缺少 runId，或该任务未持有执行锁')
+          if (!runId) throw new Error(t('缺少 runId，或该任务未持有执行锁'))
         }
         // D07 主体/run 所有权校验：run 有租约记录时必须主体一致（旧租约拒绝 LEASE_STALE）
         const lease = hub.leaseStore.latestForRun(runId)
@@ -1981,7 +1982,7 @@ export function apply(ctx: Context) {
           leasePrincipalId: lease?.principalId ?? '',
         })
         if (ownership.kind === 'deny') {
-          throw new Error(`${ownership.reason}（code=${ownership.code}）`)
+          throw new Error(t('{reason}（code={code}）', { reason: ownership.reason, code: ownership.code }))
         }
         const run = hub.completeRun(runId, {
           status,

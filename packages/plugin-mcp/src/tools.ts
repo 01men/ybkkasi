@@ -3,6 +3,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolPrincipal, type WorkRefIndex } from '../../platform-core/src/index.ts'
+import { t as translate } from '../../platform-i18n/src/index.ts'
 
 export const name = 'mcp-tools'
 export const inject = ['tools', 'mcpRegistry', 'authn']
@@ -32,7 +33,7 @@ export function apply(ctx: Context) {
 
   /** 调用方身份取自执行上下文（入口从令牌解析），缺失即 fail-closed；schema 不声明 caller* 参数。 */
   const callerFromPrincipal = (principal?: ToolPrincipal): { type: 'user' | 'agent' | 'app'; id: string; name: string } => {
-    if (!principal) throw new Error('工具执行缺少身份上下文（fail-closed）')
+    if (!principal) throw new Error(translate('工具执行缺少身份上下文（fail-closed）'))
     if (principal.kind === 'human') return { type: 'user', id: principal.userId ?? principal.principalId, name: principal.name }
     const record = ctx.authn.principals().get(principal.principalId)
     if (record?.refType === 'agent' && record.refId) return { type: 'agent', id: record.refId, name: principal.name }
@@ -74,10 +75,10 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args) {
       const service = ctx.mcpRegistry.services().get(args.serviceId)
-      if (!service) throw new Error(`MCP 服务不存在：${args.serviceId}`)
+      if (!service) throw new Error(translate('MCP 服务不存在：{id}', { id: String(args.serviceId) }))
       const impact = ctx.resourceCore.impact('mcp_service', args.serviceId)
       if (args.dryRun) {
-        return { dryRun: true, service: service.name, dependents: impact, note: 'dry-run 未执行任何变更' }
+        return { dryRun: true, service: service.name, dependents: impact, note: translate('dry-run 未执行任何变更') }
       }
       const updated = await ctx.mcpRegistry.deployService(args.serviceId, {
         grayPercent: args.grayPercent,
@@ -105,7 +106,7 @@ export function apply(ctx: Context) {
       return {
         approvalId: approval.id, status: approval.status,
         impact: impact,
-        note: '已生成 L4 审批单，审批通过后自动执行下线并吊销相关令牌',
+        note: translate('已生成 L4 审批单，审批通过后自动执行下线并吊销相关令牌'),
       }
     },
   }))

@@ -23,6 +23,7 @@ import {
   type WorkforceInvocations,
   type WorkforceStore,
 } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type { MaintenanceRunResult } from './maintenance-service.ts'
 
 interface WorkforceServices {
@@ -42,7 +43,7 @@ function services(ctx: Context): WorkforceServices {
     'workforceAdmission', 'workforceInvocations', 'workforceArtifacts', 'workforceDelivery'] as const)
     .filter((key) => !source[key])
   if (missing.length > 0) {
-    throw new WorkforceError('WORKFORCE_NOT_READY', `数字员工服务未就绪：${missing.join('、')}`, 503)
+    throw new WorkforceError('WORKFORCE_NOT_READY', t('数字员工服务未就绪：{missing}', { missing: missing.join('、') }), 503)
   }
   // 显式按接口字段名组包（ctx 不得原样强转返回：调用方按 store/employees/… 取用，
   // 而 ctx 上的服务键是 workforceStore/workforceEmployees/…——原样返回会让 svc.store
@@ -95,21 +96,21 @@ function publicEmployee(record: EmployeeRecord): Record<string, unknown> {
 }
 
 function parseGrants(value: unknown): ResourceGrantSpec[] {
-  if (!Array.isArray(value)) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', 'grants 必须为数组')
-  return value.map((item) => {
-    const grant = item as Record<string, unknown>
-    const kind = grant['kind']
-    if (kind !== 'mcp' && kind !== 'connector' && kind !== 'model' && kind !== 'skill' && kind !== 'nas' && kind !== 'app') {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `非法授权类型：${String(kind)}`)
-    }
-    const risk = grant['risk']
-    if (risk !== 'read' && risk !== 'write' && risk !== 'admin') {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `非法风险级：${String(risk)}`)
-    }
-    const registryId = String(grant['registryId'] ?? '')
-    if (!registryId) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '授权缺少 registryId')
-    const actions = Array.isArray(grant['actions']) ? grant['actions'].map((action) => String(action)) : []
-    if (actions.length === 0) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `授权 ${registryId} 缺少动作清单（未知风险工具不得默认开放）`)
+    if (!Array.isArray(value)) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('grants 必须为数组'))
+    return value.map((item) => {
+      const grant = item as Record<string, unknown>
+      const kind = grant['kind']
+      if (kind !== 'mcp' && kind !== 'connector' && kind !== 'model' && kind !== 'skill' && kind !== 'nas' && kind !== 'app') {
+        throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('非法授权类型：{kind}', { kind: String(kind) }))
+      }
+      const risk = grant['risk']
+      if (risk !== 'read' && risk !== 'write' && risk !== 'admin') {
+        throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('非法风险级：{risk}', { risk: String(risk) }))
+      }
+      const registryId = String(grant['registryId'] ?? '')
+      if (!registryId) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('授权缺少 registryId'))
+      const actions = Array.isArray(grant['actions']) ? grant['actions'].map((action) => String(action)) : []
+      if (actions.length === 0) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('授权 {registryId} 缺少动作清单（未知风险工具不得默认开放）', { registryId }))
     return {
       kind, registryId, actions, risk,
       constraints: grant['constraints'] && typeof grant['constraints'] === 'object'
@@ -180,7 +181,7 @@ export function registerWorkforceRoutes(ctx: Context): void {
     const body = readBody(exchange)
     const status = String(body['status'] ?? '')
     if (status !== 'active' && status !== 'suspended' && status !== 'offboarded') {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `非法员工状态：${status}`)
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('非法员工状态：{status}', { status }))
     }
     const record = await svc.employees.setStatus(callerRefOf(gate, exchange), exchange.params['id'] ?? '', status, String(body['reason'] ?? ''))
     gate.changeLog(exchange, 'workforce.employee.status', 'employee', record.id, record.name, `→ ${status}（${String(body['reason'] ?? '')}）`)
@@ -253,13 +254,13 @@ export function registerWorkforceRoutes(ctx: Context): void {
     const svc = services(ctx)
     const caller = callerRefOf(gate, exchange)
     const resolution = await svc.identity.resolveByCaller(caller)
-    if (!resolution) throw new WorkforceError('EMPLOYEE_NOT_ACTIVE', '非受管数字员工或绑定缺失')
+    if (!resolution) throw new WorkforceError('EMPLOYEE_NOT_ACTIVE', t('非受管数字员工或绑定缺失'))
     const agentId = resolution.binding.agentId
     const hub = (ctx as unknown as {
       execHub?: { issues?: () => { all(): Array<Record<string, unknown>> } }
     }).execHub
     if (!hub || typeof hub.issues !== 'function') {
-      exchange.fail(503, 'EXEC_HUB_UNAVAILABLE', '执行中枢未就绪，无法拉取待办')
+      exchange.fail(503, 'EXEC_HUB_UNAVAILABLE', t('执行中枢未就绪，无法拉取待办'))
       return
     }
     const issues = hub.issues().all()
@@ -339,7 +340,7 @@ export function registerWorkforceRoutes(ctx: Context): void {
   gate.guarded('GET', '/api/workforce/invocations', 'workforce.invoke', async (exchange) => {
     const svc = services(ctx)
     const runId = exchange.query.get('runId') ?? ''
-    if (!runId) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '缺少 runId 查询参数')
+    if (!runId) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('缺少 runId 查询参数'))
     return svc.invocations.listByRun(callerRefOf(gate, exchange), runId)
   })
 
@@ -382,7 +383,7 @@ export function registerWorkforceRoutes(ctx: Context): void {
   gate.guarded('GET', '/api/workforce/deliverables', 'workforce.invoke', async (exchange) => {
     const svc = services(ctx)
     const runId = exchange.query.get('runId') ?? ''
-    if (!runId) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '缺少 runId 查询参数')
+    if (!runId) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('缺少 runId 查询参数'))
     return svc.delivery.listByRun(callerRefOf(gate, exchange), runId)
   })
 
@@ -393,7 +394,7 @@ export function registerWorkforceRoutes(ctx: Context): void {
     const body = readBody(exchange)
     const decision = String(body['decision'] ?? '')
     if (decision !== 'accepted' && decision !== 'rejected') {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `非法验收决定：${decision}`)
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('非法验收决定：{decision}', { decision }))
     }
     const record = await svc.delivery.decide(callerRefOf(gate, exchange), {
       deliverableId: String(body['deliverableId'] ?? ''),
@@ -421,14 +422,14 @@ export function registerWorkforceRoutes(ctx: Context): void {
     const body = readBody(exchange)
     const rawIds = Array.isArray(body['employeeIds']) ? body['employeeIds'].map((item) => String(item).trim()) : []
     const employeeIds = [...new Set(rawIds.filter((item) => item !== ''))]
-    if (employeeIds.length === 0) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', 'employeeIds 必须为非空员工 ID 数组')
-    if (employeeIds.length > 200) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', 'employeeIds 单批上限 200（逐员工撤权联动，防止超长批次）')
+    if (employeeIds.length === 0) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('employeeIds 必须为非空员工 ID 数组'))
+    if (employeeIds.length > 200) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('employeeIds 单批上限 200（逐员工撤权联动，防止超长批次）'))
     const status = String(body['status'] ?? '')
     if (status !== 'suspended' && status !== 'active') {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `批量状态只允许 suspended（停职）/ active（复岗）：${status || '（空）'}`)
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('批量状态只允许 suspended（停职）/ active（复岗）：{status}', { status: status || t('（空）') }))
     }
     const reason = String(body['reason'] ?? '').trim()
-    if (reason === '') throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '批量停职/复岗必须登记 reason（审计与解冻依据）')
+    if (reason === '') throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('批量停职/复岗必须登记 reason（审计与解冻依据）'))
     const caller = callerRefOf(gate, exchange)
     const now = new Date().toISOString()
     const results: Array<{ employeeId: string; ok: boolean; error?: string; revokedPermits?: number; releasedRuns?: string[] }> = []
@@ -468,7 +469,7 @@ export function registerWorkforceRoutes(ctx: Context): void {
     const svc = services(ctx)
     const employeeId = exchange.params['id'] ?? ''
     const employee = svc.store.employees.get(employeeId)
-    if (!employee) throw new Error(`数字员工不存在：${employeeId}`)
+    if (!employee) throw new Error(t('数字员工不存在：{id}', { id: employeeId }))
     // 跨组织穿透说明：本端点由 workforce.admin 把守，直接读 store 表按 employeeId/appointmentId
     // 串链（不走 assertReadable 的 org 隔离）——admin 运维面审计报表，权限点即边界。
     const limit = readLimit(exchange.query)
@@ -525,7 +526,7 @@ export function registerWorkforceRoutes(ctx: Context): void {
     // 定时器跑 + admin 手动跑同一函数（POST /api/exec/tick、POST /api/usage/retention/purge 同款先例）
     const maintenance = (ctx as unknown as { workforceMaintenance?: { run(): MaintenanceRunResult } }).workforceMaintenance
     if (!maintenance || typeof maintenance.run !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', '台账维护服务未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('台账维护服务未就绪'), 503)
     }
     const result = maintenance.run()
     gate.changeLog(exchange, 'workforce.maintenance.run', 'maintenance', 'workforce-ledger', '台账巡检', JSON.stringify(result))

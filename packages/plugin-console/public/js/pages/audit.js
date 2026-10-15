@@ -6,6 +6,7 @@ import {
   renderTable, statusBadge, resultBadge, auditTypeBadge, fmtNum, fmtCost, timeAgo,
   emptyState, barChart, donut,
 } from '../ui.js'
+import rqI18n from '../i18n.js'
 
 export async function renderAudit(content, params, ctx) {
   const tab = params.get('tab') ?? 'logs'
@@ -76,7 +77,7 @@ export async function renderAudit(content, params, ctx) {
                 <div class="desc-item"><span class="k">类型</span><span class="v">${auditTypeBadge(row.type)}</span></div>
                 <div class="desc-item"><span class="k">结果</span><span class="v">${resultBadge(row.result)}</span></div>
                 <div class="desc-item"><span class="k">动作</span><span class="v mono">${esc(row.action)}</span></div>
-                <div class="desc-item"><span class="k">操作人</span><span class="v">${esc(row.actorName)}（${row.actorType}）</span></div>
+                <div class="desc-item"><span class="k">${esc(rqI18n.t('操作人'))}</span><span class="v">${esc(rqI18n.t('{name}（{type}）', { name: row.actorName, type: row.actorType }))}</span></div>
                 <div class="desc-item"><span class="k">资源</span><span class="v">${esc(row.resourceName)} <span class="mono text-4">${esc(row.resourceType)}</span></span></div>
                 <div class="desc-item"><span class="k">资源 ID</span><span class="v mono">${esc(row.resourceId || '—')}</span></div>
               </div>
@@ -90,7 +91,7 @@ export async function renderAudit(content, params, ctx) {
         },
       })
       const holder = $('#log-table')
-      holder.innerHTML = `<div class="fs-12 text-3 mb-8">共 ${data.total} 条（展示最近 100 条）</div>`
+      holder.innerHTML = `<div class="fs-12 text-3 mb-8">${esc(rqI18n.t('共 {n} 条（展示最近 100 条）', { n: data.total }))}</div>`
       holder.appendChild(table)
     }
     $('#log-q').oninput = debounce(refresh, 300)
@@ -105,13 +106,13 @@ export async function renderAudit(content, params, ctx) {
     const unread = alerts.filter((alert) => !alert.read)
     const body = $('#audit-body')
     $('#audit-actions').innerHTML = unread.length
-      ? `<button class="btn btn-default" id="alert-read-all">${icon('check', 14)}全部已读（${unread.length}）</button>`
+      ? `<button class="btn btn-default" id="alert-read-all">${icon('check', 14)}${esc(rqI18n.t('全部已读（{n}）', { n: unread.length }))}</button>`
       : ''
     const readAllBtn = $('#alert-read-all')
     if (readAllBtn) readAllBtn.onclick = async () => {
       try {
         const result = await api.post('/api/audit/alerts/read-all')
-        toast(`已将 ${result.read} 条告警标记为已读`); ctx.rerender()
+        toast(rqI18n.t('已将 {n} 条告警标记为已读', { n: result.read })); ctx.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
     if (!alerts.length) {
@@ -137,7 +138,7 @@ export async function renderAudit(content, params, ctx) {
     body.querySelectorAll('[data-read]').forEach((btn) => {
       btn.onclick = async () => {
         await api.post(`/api/audit/alerts/${btn.dataset.read}/read`)
-        toast('已标记'); ctx.rerender()
+        toast(rqI18n.t('已标记')); ctx.rerender()
       }
     })
   }
@@ -155,7 +156,7 @@ export async function renderAudit(content, params, ctx) {
             <span class="badge ${rule.enabled ? 'badge-ok' : 'badge-muted'}">${rule.enabled ? '已启用' : '已停用'}</span>
           </div>
           <div class="fs-12 text-3 mt-8">${esc(rule.description ?? '')}</div>
-          <div class="fs-12 mono mt-8" style="color:var(--text-2)">当 <b>${metricLabel(rule.metric)}</b> &gt; ${rule.threshold}（${rule.windowMinutes} 分钟窗口）→ 通知 ${rule.channels.map(esc).join('、')}</div>
+          <div class="fs-12 mono mt-8" style="color:var(--text-2)">${esc(rqI18n.t('当'))} <b>${esc(metricLabel(rule.metric))}</b>${esc(rqI18n.t(' &gt; {n}（{m} 分钟窗口）→ 通知 {channels}', { n: rule.threshold, m: rule.windowMinutes, channels: rule.channels.map(esc).join(rqI18n.t('、')) }))}</div>
         </div>
         <div style="flex-shrink:0">
           <button class="btn btn-default btn-sm" data-toggle="${esc(rule.id)}" data-enabled="${rule.enabled ? 1 : 0}">${rule.enabled ? '停用' : '启用'}</button>
@@ -164,7 +165,7 @@ export async function renderAudit(content, params, ctx) {
     body.querySelectorAll('[data-toggle]').forEach((btn) => {
       btn.onclick = async () => {
         await api.patch(`/api/audit/alert-rules/${btn.dataset.toggle}`, { enabled: btn.dataset.enabled !== '1' })
-        toast('规则已更新'); ctx.rerender()
+        toast(rqI18n.t('规则已更新')); ctx.rerender()
       }
     })
     $('#rule-add').onclick = () => {
@@ -197,7 +198,7 @@ export async function renderAudit(content, params, ctx) {
             windowMinutes: Number(data2.windowMinutes) || 10, severity: data2.severity, description: data2.description,
             channels: ['dingtalk'], enabled: true,
           })
-          toast('规则已创建'); modal.close(); ctx.rerender()
+          toast(rqI18n.t('规则已创建')); modal.close(); ctx.rerender()
         } catch (error) { toast(error.message, 'error') }
       }
     }
@@ -227,7 +228,7 @@ export async function renderAudit(content, params, ctx) {
             <div class="card-title mb-8">${dim === 'date' ? '每日成本趋势' : '成本分布 Top'}</div>
             ${barChart(data.rows.slice(0, dim === 'date' ? 30 : 10).map((r) => ({ label: r.key, value: r.costYuan })), { width: 620, height: 200, format: fmtCost })}
             <div class="flex-between mt-8">
-              <span class="fs-12 text-3">合计 <b style="color:var(--text-1)">${fmtCost(total)}</b> · Token ${fmtNum(tokens)}</span>
+              <span class="fs-12 text-3">${esc(rqI18n.t('合计 {c} · Token {n}', { c: fmtCost(total), n: fmtNum(tokens) }))}</span>
             </div>
           </div>
           <div class="card card-pad">

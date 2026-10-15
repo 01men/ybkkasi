@@ -6,6 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { AppRegistryService } from '../../../plugin-app/src/index.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
@@ -38,14 +39,14 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   guarded('POST', '/api/authn/principals', 'authn.principal.write', (exchange) => {
     const input = body<{ name: string; refType?: 'agent' | 'app' | 'external'; refId?: string; roleIds?: string[]; scopes: string[] }>(exchange)
     const created = ctx.authn.createMachineCredential(input)
-    const summary = [input.roleIds?.length ? `角色×${input.roleIds.length}` : '', input.scopes.length ? `权限点×${input.scopes.length}` : ''].filter(Boolean).join(' + ')
-    changeLog(exchange, 'authn.principal.create', 'principal', created.principal.id, input.name, input.refId ? `绑定 ${input.refType}:${input.refId} · ${summary}` : summary)
-    return { principalId: created.principal.id, clientId: created.clientId, clientSecret: created.clientSecret, note: '密钥仅此一次返回' }
+    const summary = [input.roleIds?.length ? t('角色×{n}', { n: input.roleIds.length }) : '', input.scopes.length ? t('权限点×{n}', { n: input.scopes.length }) : ''].filter(Boolean).join(' + ')
+    changeLog(exchange, 'authn.principal.create', 'principal', created.principal.id, input.name, input.refId ? t('绑定 {ref} · {summary}', { ref: `${input.refType}:${input.refId}`, summary }) : summary)
+    return { principalId: created.principal.id, clientId: created.clientId, clientSecret: created.clientSecret, note: t('密钥仅此一次返回') }
   })
 
   guarded('POST', '/api/authn/principals/:id/disable', 'authn.principal.write', (exchange) => {
     const { reason } = body<{ reason?: string }>(exchange)
-    const principal = ctx.authn.disablePrincipal(exchange.params['id']!, reason ?? '手动禁用')
+    const principal = ctx.authn.disablePrincipal(exchange.params['id']!, reason ?? t('手动禁用'))
     changeLog(exchange, 'authn.principal.disable', 'principal', principal.id, principal.name, reason ?? '')
     return principal
   })
@@ -61,14 +62,14 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
     const hasRoles = Array.isArray(roleIds)
     const hasScopes = Array.isArray(scopes)
     if ((!hasRoles && !hasScopes) || (hasRoles && roleIds!.some((id) => typeof id !== 'string')) || (hasScopes && scopes!.some((scope) => typeof scope !== 'string'))) {
-      exchange.fail(400, 'BAD_REQUEST', 'roleIds / scopes 至少提供一项（字符串数组）')
+      exchange.fail(400, 'BAD_REQUEST', t('roleIds / scopes 至少提供一项（字符串数组）'))
       return
     }
     const principal = ctx.authn.updateMachineScopes(exchange.params['id']!, {
       ...(hasRoles ? { roleIds } : {}),
       ...(hasScopes ? { scopes } : {}),
     })
-    changeLog(exchange, 'authn.principal.scopes', 'principal', principal.id, principal.name, [principal.roleIds?.length ? `角色×${principal.roleIds.length}` : '', scopes?.length ? `权限点×${scopes.length}` : ''].filter(Boolean).join(' + '))
+    changeLog(exchange, 'authn.principal.scopes', 'principal', principal.id, principal.name, [principal.roleIds?.length ? t('角色×{n}', { n: principal.roleIds.length }) : '', scopes?.length ? t('权限点×{n}', { n: scopes.length }) : ''].filter(Boolean).join(' + '))
     const { clientSecretHash, ...safe } = principal
     void clientSecretHash
     return safe
@@ -76,8 +77,8 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
 
   guarded('POST', '/api/authn/principals/:id/rotate-secret', 'authn.principal.write', (exchange) => {
     const rotated = ctx.authn.rotateMachineCredential(exchange.params['id']!)
-    changeLog(exchange, 'authn.principal.rotate', 'principal', rotated.principal.id, rotated.principal.name, '旧 secret 立即失效')
-    return { clientId: rotated.principal.clientId, clientSecret: rotated.clientSecret, note: '新 clientSecret 仅此一次返回，旧值立即失效，存量令牌已全部吊销' }
+    changeLog(exchange, 'authn.principal.rotate', 'principal', rotated.principal.id, rotated.principal.name, t('旧 secret 立即失效'))
+    return { clientId: rotated.principal.clientId, clientSecret: rotated.clientSecret, note: t('新 clientSecret 仅此一次返回，旧值立即失效，存量令牌已全部吊销') }
   })
 
   guarded('GET', '/api/authn/tokens', 'authn.principal.read', (exchange) => {
@@ -101,7 +102,7 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   guarded('POST', '/api/authn/tokens', 'authn.token.issue', (exchange) => {
     const input = body<{ principalId: string; ttlHours?: number; reason?: string; audience?: string; scopes?: string[] }>(exchange)
     const principal = ctx.authn.principals().get(input.principalId)
-    if (!principal) throw new Error(`身份不存在：${input.principalId}`)
+    if (!principal) throw new Error(t('身份不存在：{id}', { id: input.principalId }))
     const { token, record } = ctx.authn.issueToken(input.principalId, {
       kind: 'access',
       ttlHours: input.ttlHours,
@@ -117,12 +118,12 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   http.register('POST', '/api/authn/verify-audience', async (exchange) => {
     const info = caller(exchange)
     if (!info.permissions.includes('*') && !info.permissions.includes('authn.principal.read')) {
-      exchange.fail(403, 'FORBIDDEN', '缺少权限点 authn.principal.read')
+      exchange.fail(403, 'FORBIDDEN', t('缺少权限点 authn.principal.read'))
       return
     }
     const input = body<{ token: string; audience: string }>(exchange)
     if (!input.token || !input.audience) {
-      exchange.fail(400, 'BAD_REQUEST', 'token 与 audience 必填')
+      exchange.fail(400, 'BAD_REQUEST', t('token 与 audience 必填'))
       return
     }
     try {
@@ -135,14 +136,14 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
 
   guarded('DELETE', '/api/authn/tokens/:jti', 'authn.token.revoke', (exchange) => {
     const { reason } = body<{ reason?: string }>(exchange)
-    const record = ctx.authn.revokeToken(exchange.params['jti']!, reason ?? '控制台吊销')
+    const record = ctx.authn.revokeToken(exchange.params['jti']!, reason ?? t('控制台吊销'))
     changeLog(exchange, 'authn.token.revoke', 'token', record.jti, record.jti, reason ?? '')
     return record
   })
 
   guarded('POST', '/api/authn/rotate-secret', 'authn.token.revoke', (exchange) => {
     const result = ctx.authn.rotateSigningSecret()
-    changeLog(exchange, 'authn.secret.rotate', 'platform', 'signing-secret', '', `签名密钥轮换（旧密钥 ${result.graceMs / 3600_000}h 宽限期内仍可验签）`)
+    changeLog(exchange, 'authn.secret.rotate', 'platform', 'signing-secret', '', t('签名密钥轮换（旧密钥 {hours}h 宽限期内仍可验签）', { hours: result.graceMs / 3600_000 }))
     return { rotated: true, graceHours: result.graceMs / 3600_000 }
   })
 
@@ -164,7 +165,7 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   guarded('POST', '/api/authn/oidc/clients', 'authn.oidc.write', (exchange) => {
     const input = body<{ name: string; redirectUris: string[]; description?: string; consentRequired?: boolean; postLogoutUris?: string[]; clientType?: 'confidential' | 'public' }>(exchange)
     if (!input.name || !Array.isArray(input.redirectUris) || input.redirectUris.length === 0) {
-      throw new Error('name 与 redirectUris（至少一个回调地址）必填')
+      throw new Error(t('name 与 redirectUris（至少一个回调地址）必填'))
     }
     AppRegistryService.assertRedirectUris(input.redirectUris)
     const created = ctx.oidc.createClient({
@@ -175,8 +176,8 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
       ...(input.postLogoutUris !== undefined ? { postLogoutUris: input.postLogoutUris } : {}),
       ...(input.clientType !== undefined ? { clientType: input.clientType } : {}),
     })
-    changeLog(exchange, 'authn.oidc.client.create', 'oidc_client', created.client.id, created.client.name, input.clientType === 'public' ? 'public 客户端（免 secret）' : '')
-    return { clientId: created.client.clientId, clientSecret: created.clientSecret, redirectUris: created.client.redirectUris, note: created.client.clientType === 'public' ? 'public 客户端无 secret（强制 PKCE）' : 'clientSecret 仅此一次返回' }
+    changeLog(exchange, 'authn.oidc.client.create', 'oidc_client', created.client.id, created.client.name, input.clientType === 'public' ? t('public 客户端（免 secret）') : '')
+    return { clientId: created.client.clientId, clientSecret: created.clientSecret, redirectUris: created.client.redirectUris, note: created.client.clientType === 'public' ? t('public 客户端无 secret（强制 PKCE）') : t('clientSecret 仅此一次返回') }
   })
 
   guarded('PATCH', '/api/authn/oidc/clients/:id', 'authn.oidc.write', (exchange) => {
@@ -188,15 +189,15 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
 
   guarded('POST', '/api/authn/oidc/clients/:id/rotate', 'authn.oidc.write', (exchange) => {
     const rotated = ctx.oidc.rotateSecret(exchange.params['id']!)
-    changeLog(exchange, 'authn.oidc.client.rotate', 'oidc_client', rotated.client.id, rotated.client.name, '旧 secret 立即失效')
-    return { clientId: rotated.client.clientId, clientSecret: rotated.clientSecret, note: '新 clientSecret 仅此一次返回，旧值立即失效' }
+    changeLog(exchange, 'authn.oidc.client.rotate', 'oidc_client', rotated.client.id, rotated.client.name, t('旧 secret 立即失效'))
+    return { clientId: rotated.client.clientId, clientSecret: rotated.clientSecret, note: t('新 clientSecret 仅此一次返回，旧值立即失效') }
   })
 
   for (const [action, label] of [['disable', '禁用'], ['enable', '启用']] as const) {
     guarded('POST', `/api/authn/oidc/clients/:id/${action}`, 'authn.oidc.write', (exchange) => {
       const { reason } = body<{ reason?: string }>(exchange)
       const client = action === 'disable'
-        ? ctx.oidc.disableClient(exchange.params['id']!, reason ?? '控制台手动禁用')
+        ? ctx.oidc.disableClient(exchange.params['id']!, reason ?? t('控制台手动禁用'))
         : ctx.oidc.enableClient(exchange.params['id']!)
       changeLog(exchange, `authn.oidc.client.${action}`, 'oidc_client', client.id, client.name, reason ?? '')
       return client
@@ -206,7 +207,7 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   /** JWKS 签名密钥轮换：新 key 立即签名，旧 key 24h 验签宽限（在途令牌不掉线）。 */
   guarded('POST', '/api/authn/oidc/keys/rotate', 'authn.oidc.write', (exchange) => {
     const result = ctx.oidc.rotateKeys()
-    changeLog(exchange, 'authn.oidc.keys.rotate', 'platform', 'oidc-keys', '', `新 kid=${result.kid}，旧 key ${result.graceHours}h 宽限`)
+    changeLog(exchange, 'authn.oidc.keys.rotate', 'platform', 'oidc-keys', '', t('新 kid={kid}，旧 key {hours}h 宽限', { kid: result.kid, hours: result.graceHours }))
     return { rotated: true, kid: result.kid, graceHours: result.graceHours }
   })
 

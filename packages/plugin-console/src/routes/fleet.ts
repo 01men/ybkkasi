@@ -19,6 +19,7 @@
  *   - dau     ：app/agent 取运营提报（appRegistry/agentRegistry usage 集合最近一日 dau），无提报省略。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 /** 台账统一条目（规格 5.2 六类统一 schema）。 */
@@ -195,12 +196,12 @@ export function registerFleetRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
         type: 'model',
         key: `model:${model.slug}`,
         name: model.displayName,
-        org: '平台自营',
+        org: t('平台自营'),
         owner: model.provider,
         health,
         lifecycle: model.status === 'offline' ? 'offline' : 'online',
         ...usageOf(`model:${model.slug}`),
-        desc: `提供方 ${model.provider}${model.dataClassLimit ? ` · 数据分级上限 ${model.dataClassLimit}` : ''}`,
+        desc: t('提供方 {provider}{suffix}', { provider: model.provider, suffix: model.dataClassLimit ? t(' · 数据分级上限 {limit}', { limit: model.dataClassLimit }) : '' }),
       })
     }
 

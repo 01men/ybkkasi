@@ -33,7 +33,7 @@ import { RqFeedbackController } from './controller.ts'
 import { ExecutionCard } from './ExecutionCard.tsx'
 import { RqFeedback } from './RqFeedback.tsx'
 import type { RqFeedbackInjected, RqToolviewInjected } from './slots.ts'
-import { en, zh } from './locales.ts'
+import { en, ja, zh } from './locales.ts'
 import { ensureStyles } from './styles.ts'
 import {
   DEGRADED_BADGE_ID, FEEDBACK_ENTRY_ID, SLOT_ASSISTANT_ACTIONS, SLOT_OVERLAY,
@@ -120,7 +120,7 @@ export function apply(ctx: ClientContext): void {
 
   // 词典注册。
   safely('locale', () => {
-    ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'rq-card: dictionaries')
+    ctx.effect(() => ctx.locale.register(NS, { zh, en, ja }), 'rq-card: dictionaries')
   })
 
   // ── ① 四态执行卡：显式探测 + 键位注册（spike §5 第 2 条）──
@@ -190,10 +190,16 @@ export function apply(ctx: ClientContext): void {
           name: SLOT_OVERLAY,
           id: DEGRADED_BADGE_ID,
           order: 90,
-        }, function RqCardDegradedBadge() {
-          // 无 props 依赖：任何 slot 契约变化都只会让角标空白，不会抛错。
+          locale: NS,
+        }, function RqCardDegradedBadge(props?: unknown) {
+          // 词典经 locale: NS 座位注入（props.t）；slot 契约未注入 t 时降级中文原文——宁可少译，不抛错。
+          const maybeT = (props as { t?: unknown } | undefined)?.t
+          const translate = typeof maybeT === 'function'
+            ? (maybeT as (key: string) => string)
+            : ((key: string) => (zh as Record<string, string>)[key] ?? key)
+          // 无其他 props 依赖：任何 slot 契约变化都只会让角标空白，不会抛错。
           // 本文件是 .ts（非 tsx），故用 createElement 而非 JSX 字面量。
-          return createElement('span', { className: 'rq-badge' }, '元冰可卡片未生效（纯文本模式）')
+          return createElement('span', { className: 'rq-badge' }, translate('badge.degraded'))
         }))
       })
     }

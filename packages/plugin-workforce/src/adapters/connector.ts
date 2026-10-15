@@ -9,6 +9,7 @@
  */
 import { sha256Hex } from '../../../platform-core/src/ids.ts'
 import { canonicalJson } from '../domain.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type {
   AdapterInvokeInput,
   AdapterInvokeResult,
@@ -50,7 +51,7 @@ export function createConnectorAdapter(ctx: {
     // 平台侧提供 register-型管理面的动作目录核验——这里只核验注册表存在性（不预演网络）。
     async probeGrant(spec: ResourceGrantSpec, _resolution: IdentityResolution): Promise<AdapterProbeResult> {
       if (typeof hub().invokeAction !== 'function') {
-        return { ok: false, message: 'connectorHub 未提供 invokeAction 能力，无法核验连接器授权' }
+        return { ok: false, message: t('connectorHub 未提供 invokeAction 能力，无法核验连接器授权') }
       }
       return { ok: true, ref: `connector:actions:${spec.actions.join('|')}` }
     },
@@ -58,13 +59,13 @@ export function createConnectorAdapter(ctx: {
     async invoke(input: AdapterInvokeInput): Promise<AdapterInvokeResult> {
       const probe = hub()
       if (typeof probe.invokeAction !== 'function') {
-        return { ok: false, message: 'connectorHub 未提供 invokeAction 能力', gatewayRef: { outcome: 'denied' } }
+        return { ok: false, message: t('connectorHub 未提供 invokeAction 能力'), gatewayRef: { outcome: 'denied' } }
       }
       const work: WorkExecutionContext = input.work
       const caller = {
         type: 'agent' as const,
         id: work.agentId || work.principalId,
-        name: `数字员工:${work.employeeId}`,
+        name: t('数字员工:{id}', { id: work.employeeId }),
       }
       const alias = typeof input.tool.constraints?.['alias'] === 'string' ? input.tool.constraints['alias'] as string : undefined
       const idempotencyKey = workforceIdempotencyKey(work, input.tool.handle, input.args)

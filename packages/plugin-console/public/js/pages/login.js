@@ -4,6 +4,7 @@ import { resolveLanding, LANDING_PREF_KEY } from '../landing.js'
 import { consumeNextSources, exitWithNext } from '../next-redirect.js'
 import { icon } from '../icons.js'
 import { h, $, esc, toast } from '../ui.js'
+import rqI18n from '../i18n.js'
 
 export function renderLogin(app) {
   app.innerHTML = `
@@ -53,8 +54,7 @@ export function renderLogin(app) {
         <div class="sub" id="login-sub">使用钉钉扫码或平台账号登录</div>
         <div id="login-bootstrap-hint" class="muted-box mb-14" style="display:none;gap:8px;border-color:#fcd34d;background:#fffbeb">
           ${icon('info', 15)}
-          <span class="fs-12">首次部署提示：平台管理员 <b>admin</b> 的初始口令在服务器 <b>data/admin-initial-password.txt</b> 文件中。
-          登录后请<b>立即修改口令并删除该文件</b>（操作指引见 docs/deploy-enterprise.md 部署清单）。</span>
+          <span class="fs-12">首次部署提示：平台管理员 <b>admin</b> 的初始口令在服务器 <b>data/admin-initial-password.txt</b> 文件中。登录后请<b>立即修改口令并删除该文件</b>（操作指引见 docs/deploy-enterprise.md 部署清单）。</span>
         </div>
         <div class="segmented" style="margin-bottom:24px" id="login-tabs">
           <span class="segmented-item" data-tab="dingtalk">钉钉扫码</span>
@@ -153,7 +153,7 @@ export function renderLogin(app) {
   // 登录成功的统一出口：有回跳目的地整页跳转；无目的地时按落地分诊（与 app.js boot 同规则，
   // docs/entry-switching.md）——纯业务身份直达部门面板，其余进控制台工作台
   const finishLogin = async (welcomeName) => {
-    toast(`欢迎回来，${welcomeName}`)
+    toast(rqI18n.t('欢迎回来，{name}', { name: welcomeName }))
     // 跨源：签一次性自助票（TTL ≤120s）随 fragment 回跳，签票失败仍回跳（dsh 侧走
     // 「我已完成扫码」回导校验诚实降级）；同源：直接跳转——规则在 next-redirect.js 共享面
     if (await exitWithNext({ sameOrigin: nextDestination, crossOrigin: crossNextDestination, api })) return
@@ -175,7 +175,7 @@ export function renderLogin(app) {
       entryTicketSession(urlTicket).then((user) => {
         finishLogin(user.displayName)
       }).catch((error) => {
-        toast(`免登失败：${error.message}，请常规登录`, 'error')
+        toast(rqI18n.t('免登失败：{msg}，请常规登录', { msg: error.message }), 'error')
       })
     }
   }
@@ -288,7 +288,7 @@ export function renderLogin(app) {
     btn.classList.add('btn-loading')
     try {
       const code = $('#login-ding-code').value.trim()
-      if (!code) return toast('请输入钉钉授权码（演示环境为工号，如 DD0002）', 'error')
+      if (!code) return toast(rqI18n.t('请输入钉钉授权码（演示环境为工号，如 DD0002）'), 'error')
       const auth = await api.post('/api/auth/sso/authorize', { provider: 'dingtalk', scene: 'web_qr' })
       const result = await api.post('/api/auth/sso', { provider: 'dingtalk', code, state: auth.state })
       if (result.kind === 'pending') {

@@ -4,6 +4,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolRunContext } from '../../platform-core/src/index.ts'
+import { t as translate } from '../../platform-i18n/src/index.ts'
 import type { UserManageActor } from './index.ts'
 
 export const name = 'iam-tools'
@@ -97,7 +98,7 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args, exec) {
       const { actor, rest } = manageActorOf(args, exec)
-      if (rest.name === undefined && rest.parentId === undefined) throw new Error('name 与 parentId 至少提供一个')
+      if (rest.name === undefined && rest.parentId === undefined) throw new Error(translate('name 与 parentId 至少提供一个'))
       if (rest.name !== undefined) ctx.iam.renameOrg(rest.orgId, rest.name, actor)
       if (rest.parentId !== undefined) ctx.iam.moveOrg(rest.orgId, rest.parentId || null, actor)
       const org = ctx.iam.orgs().get(rest.orgId)
@@ -182,7 +183,7 @@ export function apply(ctx: Context) {
     async execute(args, exec) {
       const { actor, rest } = manageActorOf(args, exec)
       const user = ctx.iam.freezeUser(rest.userId, rest.reason, actor)
-      return { id: user.id, status: user.status, note: '已发布 iam.user.frozen 事件，认证中心将吊销其令牌' }
+      return { id: user.id, status: user.status, note: translate('已发布 iam.user.frozen 事件，认证中心将吊销其令牌') }
     },
   }))
 
@@ -211,7 +212,7 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args) {
       const target = args.configId ?? args.provider
-      if (!target) throw new Error('provider 与 configId 至少提供一个')
+      if (!target) throw new Error(translate('provider 与 configId 至少提供一个'))
       return await ctx.iam.syncConnector(target, args.actor ?? 'agent')
     },
   }))

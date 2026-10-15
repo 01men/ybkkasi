@@ -28,6 +28,21 @@ export function decideTransport({ sseOpened, sseError, supportsEventSource }) {
 }
 
 /**
+ * 动态文案翻译（零依赖纪律不变：不 import i18n.js——Node 测试环境直测本模块，
+ * 经 window.rqI18n 取浏览器注入的 i18n 运行时，缺失时回退原文并自行插值）。
+ */
+function tr(text, params) {
+  try {
+    if (typeof window !== 'undefined' && window.rqI18n && typeof window.rqI18n.t === 'function') {
+      return window.rqI18n.t(text, params)
+    }
+  } catch { /* 忽略 */ }
+  if (!params) return text
+  return text.replace(/\{(\w+)\}/g, (whole, name) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : whole)
+}
+
+/**
  * 建立事件流：优先 EventSource(url)，失败自动降级为轮询 pollPath。
  *
  * @param {object} options
@@ -102,7 +117,7 @@ export function createEventStream(options) {
       const res = await fetchImpl(pollPath, { headers })
       // 非 2xx 同样计入失败（旧实现静默吞掉 401/5xx，徽标照常宣称实时——BUG-U-02 根因之一）
       if (!res.ok) {
-        const err = new Error(`轮询响应异常：HTTP ${res.status}`)
+        const err = new Error(tr('轮询响应异常：HTTP {status}', { status: res.status }))
         err.status = res.status
         throw err
       }

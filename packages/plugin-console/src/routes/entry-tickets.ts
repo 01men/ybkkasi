@@ -3,9 +3,11 @@
  * 自 plugin-console/index.ts 拆出，处理器逐字搬运（行为与迁出前一致）。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { createHash } from 'node:crypto'
 import type { ConsoleRouteDeps } from './deps.ts'
 import { PlatformEvents } from '../../../platform-core/src/index.ts'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps as _D } from './deps.ts'
 
 export interface EntryTicketRouteDeps extends _D {
@@ -23,12 +25,12 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
   guarded('POST', '/api/agents/:id/entry-ticket', 'agent.read', (exchange) => {
     const info = caller(exchange)
     if (info.kind !== 'human' || !info.userId) {
-      exchange.fail(403, 'FORBIDDEN', '平台授权直达仅限登录用户（human），机器身份不可签发入场票据')
+      exchange.fail(403, 'FORBIDDEN', t('平台授权直达仅限登录用户（human），机器身份不可签发入场票据'))
       return
     }
     const id = exchange.params['id']!
     const agent = ctx.resourceCore.get('agent', id)
-    if (!agent) throw new Error(`Agent 不存在：${id}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id }))
     const isOwner = agent.ownerId === info.userId
     const isBound = ctx.agentRegistry.boundUsers(id).some((item) => item.userId === info.userId)
     const isAdmin = info.permissions.includes('*') || info.permissions.includes('agent.write')
@@ -36,11 +38,11 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
       ctx.platformBus.emit('audit.authz.denied', {
         actorId: info.userId, actorName: info.name, point: `agent.entry(owner:${id})`, path: exchange.path,
       })
-      exchange.fail(403, 'FORBIDDEN', `仅 Agent 负责人或绑定用户可直达「${agent.name}」交互界面（使用即授权留痕），请联系负责人在「权限与绑定」中绑定`)
+      exchange.fail(403, 'FORBIDDEN', t('仅 Agent 负责人或绑定用户可直达「{name}」交互界面（使用即授权留痕），请联系负责人在「权限与绑定」中绑定', { name: agent.name }))
       return
     }
     const issued = ctx.entryTickets.issue({ refType: 'agent', refId: id, userId: info.userId, userName: info.name })
-    changeLog(exchange, 'agent.entry.ticket.issue', 'agent', id, agent.name, `一次性入场票据（${issued.ttlSeconds}s）`)
+    changeLog(exchange, 'agent.entry.ticket.issue', 'agent', id, agent.name, t('一次性入场票据（{ttl}s）', { ttl: issued.ttlSeconds }))
     return issued
   })
 
@@ -48,14 +50,14 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
   guarded('POST', '/api/apps/:id/entry-ticket', 'app.read', (exchange) => {
     const info = caller(exchange)
     if (info.kind !== 'human' || !info.userId) {
-      exchange.fail(403, 'FORBIDDEN', '平台授权直达仅限登录用户（human），机器身份不可签发入场票据')
+      exchange.fail(403, 'FORBIDDEN', t('平台授权直达仅限登录用户（human），机器身份不可签发入场票据'))
       return
     }
     const id = exchange.params['id']!
     const app = ctx.resourceCore.get('app', id)
-    if (!app) throw new Error(`应用不存在：${id}`)
+    if (!app) throw new Error(t('应用不存在：{id}', { id }))
     const issued = ctx.entryTickets.issue({ refType: 'app', refId: id, userId: info.userId, userName: info.name })
-    changeLog(exchange, 'app.entry.ticket.issue', 'app', id, app.name, `一次性入场票据（${issued.ttlSeconds}s）`)
+    changeLog(exchange, 'app.entry.ticket.issue', 'app', id, app.name, t('一次性入场票据（{ttl}s）', { ttl: issued.ttlSeconds }))
     return issued
   })
 
@@ -85,7 +87,7 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
       ctx.audit.record({
         type: 'auth', actorType: 'human', actorId: result.identity.sub, actorName: result.identity.name,
         action: `${result.refType}.entry.ticket.redeem`, resourceType: result.refType, resourceId: result.refId,
-        resourceName: result.refId, result: 'ok', detail: '平台授权直达票据兑换（身份已交付目标交互界面）',
+        resourceName: result.refId, result: 'ok', detail: t('平台授权直达票据兑换（身份已交付目标交互界面）'),
       })
       // 广播兑换事件（plugin-app 订阅 → 应用 DAU 自动折算；状态变更必发事件，跨插件联动不经直连）
       ctx.platformBus.emit(PlatformEvents.EntryTicketRedeemed, {
@@ -108,14 +110,14 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
     try {
       const redeemed = ctx.entryTickets.redeem(String(input.ticket ?? ''), clientIp)
       const user = ctx.iam.users().get(redeemed.identity.sub)
-      if (!user || user.status !== 'active') throw new Error('签发用户状态异常（冻结/离职联动失效）')
+      if (!user || user.status !== 'active') throw new Error(t('签发用户状态异常（冻结/离职联动失效）'))
       const principal = ctx.authn.ensureHumanPrincipal(user.id, user.displayName)
       const session = ctx.authn.issueSessionPair(principal.id, { issuedBy: `entry-ticket:${redeemed.refType}:${redeemed.refId}` })
       ctx.iam.markLogin(user.id)
       ctx.audit.record({
         type: 'auth', actorType: 'human', actorId: user.id, actorName: user.displayName,
         action: `${redeemed.refType}.entry.ticket.session`, resourceType: redeemed.refType, resourceId: redeemed.refId,
-        resourceName: redeemed.refId, result: 'ok', detail: '入场票据兑换控制台会话（免登直达工作台）',
+        resourceName: redeemed.refId, result: 'ok', detail: t('入场票据兑换控制台会话（免登直达工作台）'),
       })
       // 与 redeem 同源广播（plugin-app 订阅 → 应用 DAU 折算）：app 票据经免登通道兑换不丢到访计数
       ctx.platformBus.emit(PlatformEvents.EntryTicketRedeemed, {
@@ -145,12 +147,12 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
    */
   guarded('POST', '/api/auth/entry-tickets/self', 'console.login', (exchange) => {
     const info = caller(exchange)
-    if (!info.userId) throw new Error('仅平台登录人类可自助签发入场票据')
+    if (!info.userId) throw new Error(t('仅平台登录人类可自助签发入场票据'))
     const issued = ctx.entryTickets.issue(
       { refType: 'self', refId: info.userId, userId: info.userId, userName: info.name },
       { maxTtlSeconds: 120 },
     )
-    changeLog(exchange, 'self.entry.ticket.issue', 'user', info.userId, info.name, `自助入场票据（跨源自举回跳，${issued.ttlSeconds}s，一次性）`)
+    changeLog(exchange, 'self.entry.ticket.issue', 'user', info.userId, info.name, t('自助入场票据（跨源自举回跳，{ttl}s，一次性）', { ttl: issued.ttlSeconds }))
     return issued
   })
 
@@ -214,7 +216,7 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
 
   const ssoAgent = (exchange: HttpExchange): { id: string; name: string; ownerId: string } => {
     const agent = ctx.resourceCore.get('agent', exchange.params['id']!)
-    if (!agent) throw new Error(`Agent 不存在：${exchange.params['id']}`)
+    if (!agent) throw new Error(t('Agent 不存在：{id}', { id: exchange.params['id'] }))
     return { id: agent.id, name: agent.name, ownerId: agent.ownerId }
   }
 
@@ -224,12 +226,12 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
     if (!agentSsoGuard(exchange, 'create', { redirectUris: input.redirectUris, postLogoutUris: input.postLogoutUris })) return
     const agent = ssoAgent(exchange)
     const created = ctx.agentRegistry.createSsoClient(agent.id, input)
-    changeLog(exchange, 'agent.sso.create', 'oidc_client', created.client.id, created.client.name, `Agent ${agent.name} 签发（${input.clientType ?? 'confidential'}）`)
+    changeLog(exchange, 'agent.sso.create', 'oidc_client', created.client.id, created.client.name, t('Agent {name} 签发（{clientType}）', { name: agent.name, clientType: input.clientType ?? 'confidential' }))
     return {
       clientId: created.client.clientId,
       clientSecret: created.clientSecret,
       redirectUris: created.client.redirectUris,
-      note: created.client.clientType === 'public' ? 'public 客户端无 secret（强制 PKCE、不发 refresh）' : 'clientSecret 仅此一次返回',
+      note: created.client.clientType === 'public' ? t('public 客户端无 secret（强制 PKCE、不发 refresh）') : t('clientSecret 仅此一次返回'),
     }
   })
 
@@ -246,8 +248,8 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
     if (!agentSsoGuard(exchange, 'rotate')) return
     const agent = ssoAgent(exchange)
     const rotated = ctx.agentRegistry.rotateSsoSecret(agent.id)
-    changeLog(exchange, 'agent.sso.rotate', 'oidc_client', rotated.client.id, rotated.client.name, '旧 secret 立即失效')
-    return { clientId: rotated.client.clientId, clientSecret: rotated.clientSecret, note: '新 clientSecret 仅此一次返回，旧值立即失效' }
+    changeLog(exchange, 'agent.sso.rotate', 'oidc_client', rotated.client.id, rotated.client.name, t('旧 secret 立即失效'))
+    return { clientId: rotated.client.clientId, clientSecret: rotated.clientSecret, note: t('新 clientSecret 仅此一次返回，旧值立即失效') }
   })
 
   for (const action of ['disable', 'enable'] as const) {
@@ -256,7 +258,7 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
       const agent = ssoAgent(exchange)
       const { reason } = body<{ reason?: string }>(exchange)
       const client = action === 'disable'
-        ? ctx.agentRegistry.disableSsoClient(agent.id, reason ?? 'owner 手动禁用')
+        ? ctx.agentRegistry.disableSsoClient(agent.id, reason ?? t('owner 手动禁用'))
         : ctx.agentRegistry.enableSsoClient(agent.id)
       changeLog(exchange, `agent.sso.${action}`, 'oidc_client', client.id, client.name, reason ?? '')
       return client

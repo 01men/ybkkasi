@@ -18,6 +18,7 @@ import {
   type WorkforcePermits,
   type WorkforceStore,
 } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 
 /** permit 默认有效期：30 分钟（§8.3 短期授权；租约默认 15 分钟由 exec-hub 侧持有）。 */
 const DEFAULT_PERMIT_TTL_MS = 30 * 60_000
@@ -37,7 +38,7 @@ export class PermitService extends Service implements WorkforcePermits {
   private get store(): WorkforceStore {
     const store = (this.ctx as unknown as { workforceStore?: WorkforceStore }).workforceStore
     if (!store || typeof store.txn !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceStore 未就绪（迁移未完成）', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceStore 未就绪（迁移未完成）'), 503)
     }
     return store
   }
@@ -92,17 +93,17 @@ export class PermitService extends Service implements WorkforcePermits {
   verify(permitId: string, caller: WorkCallerRef, opts?: { requireRun?: boolean }): PermitRecord {
     const permit = this.store.permits.get(permitId)
     if (!permit || permit.status !== 'active') {
-      throw new WorkforceError('TOOL_NOT_GRANTED', `工作授权 permit 不存在或已失效（${permitId.slice(0, 12)}…）`)
+      throw new WorkforceError('TOOL_NOT_GRANTED', t('工作授权 permit 不存在或已失效（{permitId}…）', { permitId: permitId.slice(0, 12) }))
     }
     if (permit.expiresAt && permit.expiresAt <= new Date().toISOString()) {
-      throw new WorkforceError('TOOL_NOT_GRANTED', '工作授权 permit 已过期，请重新认领（workforce_claim）')
+      throw new WorkforceError('TOOL_NOT_GRANTED', t('工作授权 permit 已过期，请重新认领（workforce_claim）'))
     }
     if (permit.principalId && caller.principalId !== permit.principalId) {
-      throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', 'permit 与当前调用主体不匹配（permit 主体绑定为签发时机器主体）')
+      throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', t('permit 与当前调用主体不匹配（permit 主体绑定为签发时机器主体）'))
     }
     if (opts?.requireRun) {
       if (!permit.runId || !permit.leaseId) {
-        throw new WorkforceError('RUN_NOT_OWNED', 'permit 未绑定执行 run/租约，不能用于资源调用')
+        throw new WorkforceError('RUN_NOT_OWNED', t('permit 未绑定执行 run/租约，不能用于资源调用'))
       }
     }
     // 任用版本与 IdentityResolution 一致性由调用方组合校验（admission/port 持有解析结果）

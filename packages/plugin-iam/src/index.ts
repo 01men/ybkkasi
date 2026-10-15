@@ -11,6 +11,7 @@ import {
   PlatformEvents, newId, sha256Hex, generateSecret, mask,
   type Collection, type RecordBase,
 } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import * as iamTools from './tools.ts'
 import { DingTalkAuthAdapter, RealDingTalkAuthAdapter, type DingTalkCredentials, type IdentityProviderAdapter } from './providers.ts'
 
@@ -482,7 +483,7 @@ export class DingTalkConnector implements OrgConnector {
   async healthCheck(): Promise<{ ok: boolean; latencyMs: number; message: string; mock?: boolean }> {
     const started = Date.now()
     await delay(40)
-    return { ok: true, latencyMs: Date.now() - started, message: '降级模式：未配置钉钉企业凭证，使用内置演示目录', mock: true }
+    return { ok: true, latencyMs: Date.now() - started, message: t('降级模式：未配置钉钉企业凭证，使用内置演示目录'), mock: true }
   }
 }
 
@@ -526,7 +527,7 @@ export class RealDingTalkConnector implements OrgConnector {
     })
     const payload = (await response.json().catch(() => ({}))) as { accessToken?: string; expireIn?: number }
     if (!response.ok || !payload.accessToken) {
-      throw new Error(`钉钉企业 accessToken 获取失败（HTTP ${response.status}）`)
+      throw new Error(t('钉钉企业 accessToken 获取失败（HTTP {status}）', { status: response.status }))
     }
     this.corpTokenCache = { token: payload.accessToken, expiresAt: Date.now() + (payload.expireIn ?? 7200) * 1000 }
     return payload.accessToken
@@ -542,7 +543,7 @@ export class RealDingTalkConnector implements OrgConnector {
     })
     const payload = (await response.json().catch(() => ({}))) as T & { errcode?: number; errmsg?: string }
     if (!response.ok || (payload.errcode ?? 0) !== 0) {
-      throw new Error(`钉钉接口 ${path} 调用失败（HTTP ${response.status}，errcode ${payload.errcode ?? '-'}：${payload.errmsg ?? '无错误信息'}）`)
+      throw new Error(t('钉钉接口 {path} 调用失败（HTTP {status}，errcode {errcode}：{errmsg}）', { path, status: response.status, errcode: payload.errcode ?? '-', errmsg: payload.errmsg ?? t('无错误信息') }))
     }
     return payload
   }
@@ -595,7 +596,7 @@ export class RealDingTalkConnector implements OrgConnector {
   private async getDepartment(deptId: string): Promise<{ name: string; managerRemoteIds?: string[] }> {
     const payload = await this.topapi<{ result?: { name?: string; dept_manager_userid_list?: string[] } }>('/topapi/v2/department/get', { dept_id: Number(deptId) })
     const managerRemoteIds = (payload.result?.dept_manager_userid_list ?? []).filter((id) => Boolean(id))
-    return { name: payload.result?.name ?? `部门 ${deptId}`, ...(managerRemoteIds.length > 0 ? { managerRemoteIds } : {}) }
+    return { name: payload.result?.name ?? t('部门 {deptId}', { deptId }), ...(managerRemoteIds.length > 0 ? { managerRemoteIds } : {}) }
   }
 
   /** 下一级子部门 ID 列表（不受授权范围限制）。 */
@@ -642,7 +643,7 @@ export class RealDingTalkConnector implements OrgConnector {
     const started = Date.now()
     try {
       await this.corpAccessToken()
-      return { ok: true, latencyMs: Date.now() - started, message: '钉钉 OpenAPI 连通正常（真实模式）', mock: false }
+      return { ok: true, latencyMs: Date.now() - started, message: t('钉钉 OpenAPI 连通正常（真实模式）'), mock: false }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return { ok: false, latencyMs: Date.now() - started, message, mock: false }
@@ -728,13 +729,13 @@ export class IamService extends Service {
       return adapter
     }
     if (demoFallback) return demoFallback
-    throw new Error(`未注册的身份源：${type}`)
+    throw new Error(t('未注册的身份源：{type}', { type }))
   }
 
   /** 按配置实例 id 取身份源（多主体登录/绑定按主体发起）。 */
   getAuthProviderByConfig(configId: string): IdentityProviderAdapter {
     const adapter = this.authProviders.get(configId)
-    if (!adapter) throw new Error(`未注册的身份源：${configId}`)
+    if (!adapter) throw new Error(t('未注册的身份源：{type}', { type: configId }))
     return adapter
   }
 
@@ -759,7 +760,7 @@ export class IamService extends Service {
   /** 建立身份链接（唯一约束兜底；user.bindings 保持为投影，便于列表展示）。 */
   linkIdentity(userId: string, profile: { provider: IdentityLinkRecord['provider']; providerUserId: string; corpId: string; displayName: string }, actor: string): IdentityLinkRecord {
     const user = this.users().get(userId)
-    if (!user) throw new Error(`账号不存在：${userId}`)
+    if (!user) throw new Error(t('账号不存在：{id}', { id: userId }))
     const link = this.identityLinks().insert({
       id: newId('idl'),
       provider: profile.provider,
@@ -801,7 +802,7 @@ export class IamService extends Service {
   connectorProviders(): Array<{ configId: string; provider: string; label: string; name?: string }> {
     return [...this.connectors.entries()].map(([configId, connector]) => {
       const name = this.connectorConfigById(configId)?.name
-      return { configId, provider: connector.provider, label: connector.label, ...(name !== undefined ? { name } : {}) }
+      return { configId, provider: connector.provider, label: t(connector.label), ...(name !== undefined ? { name } : {}) }
     })
   }
 
@@ -871,24 +872,24 @@ export class IamService extends Service {
    * expectedVersion 与存量 version 不一致时拒绝（并发编辑对账）；新建不带 expectedVersion。
    */
   upsertScenePolicy(input: { sceneCode: string; orgId?: string; entries: ScenePolicyEntry[]; note?: string; expectedVersion?: number }): ScenePolicyRecord {
-    if (!input.sceneCode?.trim()) throw new Error('场景策略 sceneCode 必填（如 QB01-A-2-5）')
-    if (!Array.isArray(input.entries) || input.entries.length === 0) throw new Error('场景策略 entries 至少一条（空策略请用 DELETE 移除）')
+    if (!input.sceneCode?.trim()) throw new Error(t('场景策略 sceneCode 必填（如 QB01-A-2-5）'))
+    if (!Array.isArray(input.entries) || input.entries.length === 0) throw new Error(t('场景策略 entries 至少一条（空策略请用 DELETE 移除）'))
     for (const entry of input.entries) {
-      if (!['role', 'user'].includes(entry.principalType)) throw new Error(`策略条目 principalType 非法：${entry.principalType}（role/user）`)
-      if (!entry.principalId?.trim()) throw new Error('策略条目 principalId 必填（roleId/userId/*）')
-      if (!Array.isArray(entry.actions) || entry.actions.length === 0) throw new Error('策略条目 actions 至少一项')
-      if (!['allow', 'deny'].includes(entry.effect)) throw new Error(`策略条目 effect 非法：${entry.effect}（allow/deny）`)
+      if (!['role', 'user'].includes(entry.principalType)) throw new Error(t('策略条目 principalType 非法：{value}（role/user）', { value: entry.principalType }))
+      if (!entry.principalId?.trim()) throw new Error(t('策略条目 principalId 必填（roleId/userId/*）'))
+      if (!Array.isArray(entry.actions) || entry.actions.length === 0) throw new Error(t('策略条目 actions 至少一项'))
+      if (!['allow', 'deny'].includes(entry.effect)) throw new Error(t('策略条目 effect 非法：{value}（allow/deny）', { value: entry.effect }))
       if (entry.principalType === 'role' && entry.principalId !== '*' && !this.roles().get(entry.principalId)) {
-        throw new Error(`策略条目引用的角色不存在：${entry.principalId}`)
+        throw new Error(t('策略条目引用的角色不存在：{id}', { id: entry.principalId }))
       }
       if (entry.principalType === 'user' && entry.principalId !== '*' && !this.users().get(entry.principalId)) {
-        throw new Error(`策略条目引用的用户不存在：${entry.principalId}`)
+        throw new Error(t('策略条目引用的用户不存在：{id}', { id: entry.principalId }))
       }
     }
     const existing = this.scenePolicies().findOne((item) => item.sceneCode === input.sceneCode && (item.orgId ?? '') === (input.orgId ?? ''))
     if (existing) {
       if (input.expectedVersion !== undefined && input.expectedVersion !== existing.version) {
-        throw new Error(`场景策略版本冲突：当前 v${existing.version}，请求基于 v${input.expectedVersion}（请刷新后重试）`)
+        throw new Error(t('场景策略版本冲突：当前 v{current}，请求基于 v{expected}（请刷新后重试）', { current: existing.version, expected: input.expectedVersion }))
       }
       const updated = this.scenePolicies().update(existing.id, {
         entries: input.entries,
@@ -911,7 +912,7 @@ export class IamService extends Service {
 
   deleteScenePolicy(id: string): { deleted: boolean } {
     const policy = this.scenePolicies().get(id)
-    if (!policy) throw new Error(`场景策略不存在：${id}`)
+    if (!policy) throw new Error(t('场景策略不存在：{id}', { id }))
     this.scenePolicies().remove(id)
     this.ctx.platformBus.emit(PlatformEvents.IamScenePolicyChanged, { sceneCode: policy.sceneCode, orgId: policy.orgId ?? null, policyId: id, action: 'deleted' })
     return { deleted: true }
@@ -926,12 +927,12 @@ export class IamService extends Service {
   checkScene(userId: string, sceneCode: string, action: string): SceneCheckDecision {
     const user = this.users().get(userId)
     if (!user) {
-      return { decision: 'deny', reason: `用户不存在：${userId}`, sceneCode, action }
+      return { decision: 'deny', reason: t('用户不存在：{userId}', { userId }), sceneCode, action }
     }
     const policies = this.scenePolicies().all().filter((item) =>
       item.sceneCode === sceneCode && ((item.orgId ?? '') === '' || item.orgId === user.orgId))
     if (policies.length === 0) {
-      return { decision: 'default', reason: '场景未配置授权策略，回落角色 RBAC 与部门范围权限（存量口径）', sceneCode, action }
+      return { decision: 'default', reason: t('场景未配置授权策略，回落角色 RBAC 与部门范围权限（存量口径）'), sceneCode, action }
     }
     const matches = (entry: ScenePolicyEntry): boolean =>
       (entry.principalId === '*' && entry.principalType === 'role')
@@ -941,24 +942,24 @@ export class IamService extends Service {
     for (const policy of policies) {
       for (const entry of policy.entries) {
         if (entry.effect === 'deny' && matches(entry) && actionHit(entry)) {
-          return { decision: 'deny', reason: `场景策略 deny 命中（policy=${policy.id}）`, policyId: policy.id, sceneCode, action }
+          return { decision: 'deny', reason: t('场景策略 deny 命中（policy={policyId}）', { policyId: policy.id }), policyId: policy.id, sceneCode, action }
         }
       }
     }
     for (const policy of policies) {
       for (const entry of policy.entries) {
         if (entry.effect === 'allow' && matches(entry) && actionHit(entry)) {
-          return { decision: 'allow', reason: `场景策略 allow 命中（policy=${policy.id}）`, policyId: policy.id, sceneCode, action }
+          return { decision: 'allow', reason: t('场景策略 allow 命中（policy={policyId}）', { policyId: policy.id }), policyId: policy.id, sceneCode, action }
         }
       }
     }
     const policy = policies[0]!
-    return { decision: 'deny', reason: `场景已配置授权策略且无命中条目（fail-closed，policy=${policy.id}）`, policyId: policy.id, sceneCode, action }
+    return { decision: 'deny', reason: t('场景已配置授权策略且无命中条目（fail-closed，policy={policyId}）', { policyId: policy.id }), policyId: policy.id, sceneCode, action }
   }
 
   createTenant(input: { name: string; plan?: TenantRecord['plan'] }): TenantRecord {
-    if (!input.name?.trim()) throw new Error('租户名称不能为空')
-    if (this.tenants().findOne((tenant) => tenant.name === input.name)) throw new Error(`租户已存在：${input.name}`)
+    if (!input.name?.trim()) throw new Error(t('租户名称不能为空'))
+    if (this.tenants().findOne((tenant) => tenant.name === input.name)) throw new Error(t('租户已存在：{name}', { name: input.name }))
     return this.tenants().insert({
       id: newId('t'),
       name: input.name,
@@ -996,16 +997,16 @@ export class IamService extends Service {
   }
 
   createOrg(input: { name: string; parentId?: string | null; order?: number; customFields?: Record<string, string>; tenantId?: string; leaderUserIds?: string[] }, actor?: UserManageActor): OrgRecord {
-    if (!input.name?.trim()) throw new Error('组织名称不能为空')
+    if (!input.name?.trim()) throw new Error(t('组织名称不能为空'))
     const parentId = input.parentId ?? null
-    if (parentId && !this.orgs().get(parentId)) throw new Error(`父组织不存在：${parentId}`)
+    if (parentId && !this.orgs().get(parentId)) throw new Error(t('父组织不存在：{id}', { id: parentId }))
     // 挂载点受操作者组织子树约束（N1 与账号管理同口径）；顶级组织（parentId=null）仅平台管理员可建
-    this.assertManageScope(actor, parentId ?? undefined, '创建组织')
+    this.assertManageScope(actor, parentId ?? undefined, t('创建组织'))
     // 同级同名判重与引擎唯一键同口径：按连接器归属分区（无 connectorId 的手工组织一个分区）。
     const ownerKey = input.customFields?.['connectorId'] ?? ''
     const duplicate = this.orgs().findOne((org) => org.name === input.name && org.parentId === parentId
       && (org.customFields['connectorId'] ?? '') === ownerKey)
-    if (duplicate) throw new Error(`同级下已存在同名组织「${input.name}」`)
+    if (duplicate) throw new Error(t('同级下已存在同名组织「{name}」', { name: input.name }))
     const record = this.orgs().insert({
       id: newId('org'),
       name: input.name.trim(),
@@ -1025,7 +1026,7 @@ export class IamService extends Service {
     this.requireOrg(id)
     const unique = [...new Set(leaderUserIds)]
     for (const userId of unique) {
-      if (!this.users().get(userId)) throw new Error(`负责人账号不存在：${userId}`)
+      if (!this.users().get(userId)) throw new Error(t('负责人账号不存在：{id}', { id: userId }))
     }
     // 手动绑定即锁定：连接器同步不再覆盖（钉钉侧没配负责人的部门靠它补录）；清空 = 恢复跟随同步。
     return unique.length > 0
@@ -1044,13 +1045,13 @@ export class IamService extends Service {
 
   renameOrg(id: string, name: string, actor?: UserManageActor): OrgRecord {
     const org = this.requireOrg(id)
-    this.assertManageScope(actor, id, '重命名组织')
-    if (!name?.trim()) throw new Error('组织名称不能为空')
+    this.assertManageScope(actor, id, t('重命名组织'))
+    if (!name?.trim()) throw new Error(t('组织名称不能为空'))
     const trimmed = name.trim()
     // 判重口径同 createOrg：只在同一连接器归属分区内拒绝同名。
     const duplicate = this.orgs().findOne((item) => item.id !== id && item.name === trimmed && item.parentId === org.parentId
       && (item.customFields['connectorId'] ?? '') === (org.customFields['connectorId'] ?? ''))
-    if (duplicate) throw new Error(`同级下已存在同名组织「${trimmed}」`)
+    if (duplicate) throw new Error(t('同级下已存在同名组织「{name}」', { name: trimmed }))
     const updated = this.orgs().update(id, { name: trimmed })
     this.ctx.platformBus.emit(PlatformEvents.OrgChanged, { kind: 'rename', orgId: id, name: trimmed })
     return updated
@@ -1059,15 +1060,15 @@ export class IamService extends Service {
   /** 移动组织（拖拽调岗），含环检测；组织与新上级均须落在操作者子树内（防借移动越界挂载）。 */
   moveOrg(id: string, newParentId: string | null, actor?: UserManageActor): OrgRecord {
     this.requireOrg(id)
-    this.assertManageScope(actor, id, '移动组织')
-    this.assertManageScope(actor, newParentId ?? undefined, '移动组织到目标上级')
+    this.assertManageScope(actor, id, t('移动组织'))
+    this.assertManageScope(actor, newParentId ?? undefined, t('移动组织到目标上级'))
     if (newParentId) {
-      if (newParentId === id) throw new Error('不能将组织移动到自身之下')
+      if (newParentId === id) throw new Error(t('不能将组织移动到自身之下'))
       // 父组织存在性校验（QA SEC-03）：不存在时下方环检测会静默放行，产生悬挂 parentId
-      if (!this.orgs().get(newParentId)) throw new Error(`父组织不存在：${newParentId}`)
+      if (!this.orgs().get(newParentId)) throw new Error(t('父组织不存在：{id}', { id: newParentId }))
       let cursor: string | null = newParentId
       while (cursor) {
-        if (cursor === id) throw new Error('不允许形成组织环')
+        if (cursor === id) throw new Error(t('不允许形成组织环'))
         cursor = this.orgs().get(cursor)?.parentId ?? null
       }
     }
@@ -1083,10 +1084,10 @@ export class IamService extends Service {
    */
   deleteOrg(id: string, options?: { cascade?: boolean }, actor?: UserManageActor): { deleted: boolean; removedOrgs: number; movedUsers: number; fallbackOrgId?: string } {
     const org = this.requireOrg(id)
-    this.assertManageScope(actor, id, '删除组织')
+    this.assertManageScope(actor, id, t('删除组织'))
     if (!options?.cascade) {
-      if (this.orgs().find((item) => item.parentId === id).length > 0) throw new Error('存在子组织，无法删除；请改用「连同子组织一键删除」')
-      if (this.users().find((user) => user.orgId === id).length > 0) throw new Error('组织下仍有账号，无法删除；请改用「连同子组织一键删除」（账号将上移到上级组织）')
+      if (this.orgs().find((item) => item.parentId === id).length > 0) throw new Error(t('存在子组织，无法删除；请改用「连同子组织一键删除」'))
+      if (this.users().find((user) => user.orgId === id).length > 0) throw new Error(t('组织下仍有账号，无法删除；请改用「连同子组织一键删除」（账号将上移到上级组织）'))
       this.orgs().remove(id)
       this.ctx.platformBus.emit(PlatformEvents.OrgChanged, { kind: 'delete', orgId: id, name: org.name })
       return { deleted: true, removedOrgs: 1, movedUsers: 0 }
@@ -1096,7 +1097,7 @@ export class IamService extends Service {
     // 账号落点：被删根的父组织必然不在子树内（树无环）；删根组织时落到首个存活根组织
     const fallbackOrgId = org.parentId ?? this.orgs().find((item) => !subtreeSet.has(item.id) && !item.parentId)[0]?.id ?? null
     const movedUsers = this.users().find((user) => subtreeSet.has(user.orgId))
-    if (!fallbackOrgId && movedUsers.length > 0) throw new Error('删除后将没有任何组织可挂载账号，请先把账号迁移到其他组织再删除')
+    if (!fallbackOrgId && movedUsers.length > 0) throw new Error(t('删除后将没有任何组织可挂载账号，请先把账号迁移到其他组织再删除'))
     if (fallbackOrgId) {
       for (const user of movedUsers) this.users().update(user.id, { orgId: fallbackOrgId })
     }
@@ -1112,7 +1113,7 @@ export class IamService extends Service {
 
   private requireOrg(id: string): OrgRecord {
     const org = this.orgs().get(id)
-    if (!org) throw new Error(`组织不存在：${id}`)
+    if (!org) throw new Error(t('组织不存在：{id}', { id }))
     return org
   }
 
@@ -1139,19 +1140,19 @@ export class IamService extends Service {
    */
   private assertManageScope(actor: UserManageActor | undefined, targetOrgId: string | undefined, action: string): void {
     if (!actor) {
-      throw new OrgScopeDeniedError(`账号管理操作缺少操作者身份（${action}）：外部入口必须携带可归因调用者，内部系统链路请显式传入系统身份（组织隔离，QA A-03）`)
+      throw new OrgScopeDeniedError(t('账号管理操作缺少操作者身份（{action}）：外部入口必须携带可归因调用者，内部系统链路请显式传入系统身份（组织隔离，QA A-03）', { action }))
     }
     if (actor.permissions.includes('*')) return
     const actorOrgId = actor.orgId ?? (actor.userId ? this.users().get(actor.userId)?.orgId : undefined)
     if (!actorOrgId || !targetOrgId || !this.orgSubtreeIds(actorOrgId).includes(targetOrgId)) {
-      throw new OrgScopeDeniedError(`跨组织账号操作被拒绝（${action}）：目标不在操作者的组织子树内（组织隔离，QA A-03）`)
+      throw new OrgScopeDeniedError(t('跨组织账号操作被拒绝（{action}）：目标不在操作者的组织子树内（组织隔离，QA A-03）', { action }))
     }
   }
 
   /** 口令强度（QA A-08）：建号与重置统一口径——≥8 位且不含中文（此前建号无校验，'123' 可建可登）。 */
   private assertPasswordStrength(password: string): void {
-    if (password.trim().length < 8) throw new Error('口令长度不得少于 8 位')
-    if (/[\u4e00-\u9fff]/.test(password)) throw new Error('口令不得包含中文')
+    if (password.trim().length < 8) throw new Error(t('口令长度不得少于 8 位'))
+    if (/[\u4e00-\u9fff]/.test(password)) throw new Error(t('口令不得包含中文'))
   }
 
   /** 创建账号：未显式指定口令时生成随机初始口令（仅本次调用返回，须安全传达给本人）。 */
@@ -1166,11 +1167,11 @@ export class IamService extends Service {
     password?: string
     jobNumber?: string
   }, actor?: UserManageActor): { user: UserRecord; initialPassword?: string } {
-    if (!input.username?.trim()) throw new Error('用户名不能为空')
-    if (!/^[a-z0-9_.-]+$/i.test(input.username)) throw new Error('用户名仅支持字母、数字与 _ . -')
-    if (this.users().findOne((user) => user.username === input.username)) throw new Error(`用户名已存在：${input.username}`)
-    if (!this.orgs().get(input.orgId)) throw new Error(`组织不存在：${input.orgId}`)
-    this.assertManageScope(actor, input.orgId, '创建账号')
+    if (!input.username?.trim()) throw new Error(t('用户名不能为空'))
+    if (!/^[a-z0-9_.-]+$/i.test(input.username)) throw new Error(t('用户名仅支持字母、数字与 _ . -'))
+    if (this.users().findOne((user) => user.username === input.username)) throw new Error(t('用户名已存在：{username}', { username: input.username }))
+    if (!this.orgs().get(input.orgId)) throw new Error(t('组织不存在：{id}', { id: input.orgId }))
+    this.assertManageScope(actor, input.orgId, t('创建账号'))
     if (input.password !== undefined) this.assertPasswordStrength(input.password)
     const password = input.password ?? generateSecret('init')
     const user = this.users().insert({
@@ -1194,8 +1195,8 @@ export class IamService extends Service {
   /** 重置口令：不传 password 则生成随机初始口令；传入则设置为指定口令（均仅本次返回明文）。 */
   resetPassword(id: string, password?: string, actor?: UserManageActor): { user: UserRecord; initialPassword: string } {
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '重置口令')
-    if (user.status === 'deactivated') throw new Error('账号已注销，无法重置口令')
+    this.assertManageScope(actor, user.orgId, t('重置口令'))
+    if (user.status === 'deactivated') throw new Error(t('账号已注销，无法重置口令'))
     if (password !== undefined) this.assertPasswordStrength(password)
     const next = password ?? generateSecret('init')
     this.users().update(id, { passwordSalt: '', passwordHash: hashPasswordScrypt(next) })
@@ -1217,15 +1218,15 @@ export class IamService extends Service {
 
   activateUser(id: string, actor?: UserManageActor): UserRecord {
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '激活账号')
-    if (user.status !== 'pending') throw new Error('仅待激活账号可激活')
+    this.assertManageScope(actor, user.orgId, t('激活账号'))
+    if (user.status !== 'pending') throw new Error(t('仅待激活账号可激活'))
     return this.users().update(id, { status: 'active' })
   }
 
   freezeUser(id: string, reason: string, actor?: UserManageActor): UserRecord {
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '冻结账号')
-    if (!reason?.trim()) throw new Error('冻结必须填写原因（审计要求）')
+    this.assertManageScope(actor, user.orgId, t('冻结账号'))
+    if (!reason?.trim()) throw new Error(t('冻结必须填写原因（审计要求）'))
     const updated = this.users().update(id, { status: 'frozen', frozenReason: reason })
     this.ctx.platformBus.emit(PlatformEvents.UserFrozen, { userId: id, username: updated.username, reason })
     return updated
@@ -1233,7 +1234,7 @@ export class IamService extends Service {
 
   unfreezeUser(id: string, actor?: UserManageActor): UserRecord {
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '解冻账号')
+    this.assertManageScope(actor, user.orgId, t('解冻账号'))
     const updated = this.users().update(id, { status: 'active', frozenReason: undefined })
     this.ctx.platformBus.emit(PlatformEvents.UserActivated, { userId: id })
     return updated
@@ -1241,10 +1242,10 @@ export class IamService extends Service {
 
   deactivateUser(id: string, reason: string, actor?: UserManageActor): UserRecord {
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '注销账号')
-    if (!reason?.trim()) throw new Error('注销必须填写原因')
+    this.assertManageScope(actor, user.orgId, t('注销账号'))
+    if (!reason?.trim()) throw new Error(t('注销必须填写原因'))
     const updated = this.users().update(id, { status: 'deactivated', frozenReason: reason })
-    this.ctx.platformBus.emit(PlatformEvents.UserFrozen, { userId: id, username: updated.username, reason: `注销：${reason}` })
+    this.ctx.platformBus.emit(PlatformEvents.UserFrozen, { userId: id, username: updated.username, reason: t('注销：{reason}', { reason }) })
     return updated
   }
 
@@ -1255,41 +1256,41 @@ export class IamService extends Service {
     const allowedFields = ['displayName', 'email', 'phone', 'title', 'orgId', 'accountType', 'primaryOrgId']
     const rejected = Object.keys(patch ?? {}).filter((key) => !allowedFields.includes(key))
     if (rejected.length > 0) {
-      throw new Error(`账号编辑不接受以下字段：${rejected.join('、')}（状态请走冻结/解冻/激活/注销端点，口令请走重置口令端点，角色请走角色分配接口）`)
+      throw new Error(t('账号编辑不接受以下字段：{fields}（状态请走冻结/解冻/激活/注销端点，口令请走重置口令端点，角色请走角色分配接口）', { fields: rejected.join('、') }))
     }
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '修改账号')
+    this.assertManageScope(actor, user.orgId, t('修改账号'))
     if (patch.orgId) {
-      if (!this.orgs().get(patch.orgId)) throw new Error(`组织不存在：${patch.orgId}`)
+      if (!this.orgs().get(patch.orgId)) throw new Error(t('组织不存在：{id}', { id: patch.orgId }))
       // 迁移目标组织同样受操作者组织子树约束（防止借「改归属」把账号挪出隔离域）
-      this.assertManageScope(actor, patch.orgId, '迁移账号组织')
+      this.assertManageScope(actor, patch.orgId, t('迁移账号组织'))
     }
-    if (patch.primaryOrgId && !this.orgs().get(patch.primaryOrgId)) throw new Error(`主归属组织不存在：${patch.primaryOrgId}`)
+    if (patch.primaryOrgId && !this.orgs().get(patch.primaryOrgId)) throw new Error(t('主归属组织不存在：{id}', { id: patch.primaryOrgId }))
     if (patch.accountType !== undefined && !['internal', 'external', 'suspended-review'].includes(patch.accountType)) {
-      throw new Error(`非法账号类型：${patch.accountType}`)
+      throw new Error(t('非法账号类型：{type}', { type: patch.accountType }))
     }
     return this.users().update(id, patch)
   }
 
   deleteUser(id: string, actor?: UserManageActor): boolean {
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '删除账号')
-    if (user.status !== 'deactivated') throw new Error('仅已注销账号可物理删除')
+    this.assertManageScope(actor, user.orgId, t('删除账号'))
+    if (user.status !== 'deactivated') throw new Error(t('仅已注销账号可物理删除'))
     return this.users().remove(id)
   }
 
   /** 绑定三方身份：事实源为 identityLinks（引擎级唯一约束），user.bindings 为投影。 */
   bindThirdParty(id: string, binding: { provider: ThirdPartyBinding['provider']; unionId: string; displayName: string; corpId?: string; verifyCode?: string }, actor?: UserManageActor): UserRecord {
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '绑定三方身份')
+    this.assertManageScope(actor, user.orgId, t('绑定三方身份'))
     if (binding.verifyCode !== '000000' && binding.verifyCode !== undefined && binding.verifyCode.length !== 6) {
-      throw new Error('二次验证码格式不正确')
+      throw new Error(t('二次验证码格式不正确'))
     }
     // corpId 缺省取该 provider 已配置主体的 corpId（控制台手工绑定即针对已接入主体），
     // 保证「一人一号」唯一约束（provider|corpId|providerUserId）对存量链接生效。
     const corpId = binding.corpId ?? this.connectorConfig(binding.provider)?.corpId ?? ''
     if (user.bindings.some((item) => item.provider === binding.provider && (item.corpId ?? '') === corpId)) {
-      throw new Error(`该账号已绑定${binding.provider}身份，请先解绑`)
+      throw new Error(t('该账号已绑定{provider}身份，请先解绑', { provider: binding.provider }))
     }
     // 唯一约束冲突由存储引擎兜底（同一主体下同一三方身份只能映射一个账号）
     this.linkIdentity(id, {
@@ -1303,8 +1304,8 @@ export class IamService extends Service {
 
   unbindThirdParty(id: string, provider: ThirdPartyBinding['provider'], verifyCode: string, actor?: UserManageActor): UserRecord {
     const user = this.requireUser(id)
-    this.assertManageScope(actor, user.orgId, '解绑三方身份')
-    if (!verifyCode || verifyCode.length !== 6) throw new Error('解绑需二次验证（6 位验证码）')
+    this.assertManageScope(actor, user.orgId, t('解绑三方身份'))
+    if (!verifyCode || verifyCode.length !== 6) throw new Error(t('解绑需二次验证（6 位验证码）'))
     this.unlinkIdentity(id, provider)
     return this.users().get(id)!
   }
@@ -1329,8 +1330,8 @@ export class IamService extends Service {
 
   verifyPassword(username: string, password: string): UserRecord {
     const user = this.users().findOne((item) => item.username === username)
-    if (!user) throw new Error('用户名或密码错误')
-    if (!verifyPasswordHash(user, password)) throw new Error('用户名或密码错误')
+    if (!user) throw new Error(t('用户名或密码错误'))
+    if (!verifyPasswordHash(user, password)) throw new Error(t('用户名或密码错误'))
     // 透明升级（A-09）：旧格式（裸 sha256）验证通过即重哈希为 scrypt——存量用户无感迁移，
     // 下一次登录起新格式生效；升级失败不阻断登录（下次再试）。
     if (!user.passwordHash.startsWith(SCRYPT_PREFIX)) {
@@ -1338,9 +1339,9 @@ export class IamService extends Service {
         this.users().update(user.id, { passwordSalt: '', passwordHash: hashPasswordScrypt(password) })
       } catch { /* 升级失败保持旧哈希，验证已通过不阻断 */ }
     }
-    if (user.status === 'frozen') throw new Error(`账号已冻结：${user.frozenReason ?? '联系管理员'}`)
-    if (user.status === 'deactivated') throw new Error('账号已注销')
-    if (user.status === 'pending') throw new Error('账号待激活，请联系管理员')
+    if (user.status === 'frozen') throw new Error(t('账号已冻结：{reason}', { reason: user.frozenReason ?? t('联系管理员') }))
+    if (user.status === 'deactivated') throw new Error(t('账号已注销'))
+    if (user.status === 'pending') throw new Error(t('账号待激活，请联系管理员'))
     return user
   }
 
@@ -1350,7 +1351,7 @@ export class IamService extends Service {
 
   private requireUser(id: string): UserRecord {
     const user = this.users().get(id)
-    if (!user) throw new Error(`账号不存在：${id}`)
+    if (!user) throw new Error(t('账号不存在：{id}', { id }))
     return user
   }
 
@@ -1400,8 +1401,8 @@ export class IamService extends Service {
   }
 
   createRole(input: { code: string; name: string; description?: string; permissions: string[] }): RoleRecord {
-    if (!input.code || !/^[a-z0-9_]+$/.test(input.code)) throw new Error('角色 code 仅支持小写字母/数字/下划线')
-    if (this.roles().findOne((role) => role.code === input.code)) throw new Error(`角色 code 已存在：${input.code}`)
+    if (!input.code || !/^[a-z0-9_]+$/.test(input.code)) throw new Error(t('角色 code 仅支持小写字母/数字/下划线'))
+    if (this.roles().findOne((role) => role.code === input.code)) throw new Error(t('角色 code 已存在：{code}', { code: input.code }))
     this.assertPermissions(input.permissions)
     return this.roles().insert({
       id: newId('rol'),
@@ -1415,8 +1416,8 @@ export class IamService extends Service {
 
   updateRole(id: string, patch: { name?: string; description?: string; permissions?: string[] }): RoleRecord {
     const role = this.roles().get(id)
-    if (!role) throw new Error(`角色不存在：${id}`)
-    if (role.builtin && patch.permissions) throw new Error('内置角色的权限不可修改')
+    if (!role) throw new Error(t('角色不存在：{id}', { id }))
+    if (role.builtin && patch.permissions) throw new Error(t('内置角色的权限不可修改'))
     if (patch.permissions) this.assertPermissions(patch.permissions)
     const updated = this.roles().update(id, patch)
     this.ctx.platformBus.emit(PlatformEvents.PermissionChanged, { kind: 'role', roleId: id })
@@ -1432,11 +1433,11 @@ export class IamService extends Service {
    */
   deleteRole(id: string): void {
     const role = this.roles().get(id)
-    if (!role) throw new Error(`角色不存在：${id}`)
-    if (role.builtin) throw new Error(`内置角色「${role.name}」不可删除（平台基线；如需收敛权限请走角色编辑）`)
+    if (!role) throw new Error(t('角色不存在：{id}', { id }))
+    if (role.builtin) throw new Error(t('内置角色「{name}」不可删除（平台基线；如需收敛权限请走角色编辑）', { name: role.name }))
     const holders = this.users().all().filter((user) => user.roleIds.includes(id))
     if (holders.length > 0) {
-      throw new Error(`角色「${role.name}」仍被 ${holders.length} 个账号挂载（${holders.slice(0, 5).map((user) => user.displayName).join('、')}${holders.length > 5 ? ' 等' : ''}），请先在账号管理中解除后再删除`)
+      throw new Error(t('角色「{name}」仍被 {count} 个账号挂载（{names} 等），请先在账号管理中解除后再删除', { name: role.name, count: holders.length, names: holders.slice(0, 5).map((user) => user.displayName).join('、') }))
     }
     this.roles().remove(id)
     this.ctx.platformBus.emit(PlatformEvents.PermissionChanged, { kind: 'role', roleId: id })
@@ -1446,16 +1447,16 @@ export class IamService extends Service {
     for (const permission of permissions) {
       if (permission === '*' || permission.endsWith('.*')) continue
       if (!PermissionCatalog.some((item) => item.point === permission)) {
-        throw new Error(`未知权限点：${permission}`)
+        throw new Error(t('未知权限点：{permission}', { permission }))
       }
     }
   }
 
   assignRoles(userId: string, roleIds: string[], actor?: UserManageActor): UserRecord {
     const user = this.requireUser(userId)
-    this.assertManageScope(actor, user.orgId, '调整角色')
+    this.assertManageScope(actor, user.orgId, t('调整角色'))
     for (const roleId of roleIds) {
-      if (!this.roles().get(roleId)) throw new Error(`角色不存在：${roleId}`)
+      if (!this.roles().get(roleId)) throw new Error(t('角色不存在：{id}', { id: roleId }))
     }
     const updated = this.users().update(userId, { roleIds })
     this.ctx.platformBus.emit(PlatformEvents.PermissionChanged, { kind: 'user_roles', userId })
@@ -1498,9 +1499,9 @@ export class IamService extends Service {
   // -- 用户组 -------------------------------------------------------------
 
   createGroup(input: { name: string; type: 'static' | 'dynamic'; rule?: UserGroupRule; memberIds?: string[]; description?: string }): UserGroupRecord {
-    if (!input.name?.trim()) throw new Error('用户组名称不能为空')
-    if (this.groups().findOne((group) => group.name === input.name)) throw new Error(`用户组已存在：${input.name}`)
-    if (input.type === 'dynamic' && !input.rule) throw new Error('动态用户组必须提供圈人规则')
+    if (!input.name?.trim()) throw new Error(t('用户组名称不能为空'))
+    if (this.groups().findOne((group) => group.name === input.name)) throw new Error(t('用户组已存在：{name}', { name: input.name }))
+    if (input.type === 'dynamic' && !input.rule) throw new Error(t('动态用户组必须提供圈人规则'))
     return this.groups().insert({
       id: newId('grp'),
       name: input.name,
@@ -1513,7 +1514,7 @@ export class IamService extends Service {
 
   updateGroup(id: string, patch: { name?: string; memberIds?: string[]; rule?: UserGroupRule; description?: string }): UserGroupRecord {
     const group = this.groups().get(id)
-    if (!group) throw new Error(`用户组不存在：${id}`)
+    if (!group) throw new Error(t('用户组不存在：{id}', { id }))
     return this.groups().update(id, patch)
   }
 
@@ -1524,7 +1525,7 @@ export class IamService extends Service {
   /** 解析用户组成员（动态组按规则实时圈人）。 */
   resolveGroupMembers(id: string): UserRecord[] {
     const group = this.groups().get(id)
-    if (!group) throw new Error(`用户组不存在：${id}`)
+    if (!group) throw new Error(t('用户组不存在：{id}', { id }))
     if (group.type === 'static') {
       return group.memberIds
         .map((memberId) => this.users().get(memberId))
@@ -1634,11 +1635,11 @@ export class IamService extends Service {
     /** 同步树挂载的目标组织 ID（空=平台根）。 */
     targetOrgId?: string
   }): ConnectorConfigRecord {
-    if (!IamService.BUILTIN_CONNECTOR_PROVIDERS.has(input.provider)) throw new Error(`未注册的连接器：${input.provider}`)
+    if (!IamService.BUILTIN_CONNECTOR_PROVIDERS.has(input.provider)) throw new Error(t('未注册的连接器：{provider}', { provider: input.provider }))
     let existing: ConnectorConfigRecord | undefined
     if (input.id !== undefined) {
       existing = this.connectorConfigById(input.id)
-      if (!existing) throw new Error(`接入配置不存在：${input.id}`)
+      if (!existing) throw new Error(t('接入配置不存在：{id}', { id: input.id }))
     } else {
       existing = this.connectorConfig(input.provider)
     }
@@ -1693,7 +1694,7 @@ export class IamService extends Service {
     /** 同步树挂载的目标组织 ID（空=平台根）。 */
     targetOrgId?: string
   }): ConnectorConfigRecord {
-    if (!IamService.BUILTIN_CONNECTOR_PROVIDERS.has(input.provider)) throw new Error(`未注册的连接器：${input.provider}`)
+    if (!IamService.BUILTIN_CONNECTOR_PROVIDERS.has(input.provider)) throw new Error(t('未注册的连接器：{provider}', { provider: input.provider }))
     const secret = input.appSecret ?? 'demo-secret'
     // 与 upsert 同一推导：demo- 前缀密钥=演示降级（mock），其余全新配置默认 real。
     const mode = input.mode ?? (secret.startsWith('demo-') ? 'mock' : 'real')
@@ -1722,7 +1723,7 @@ export class IamService extends Service {
 
   /** 删除接入配置实例：同时注销运行时连接器/身份源注册项（不存在则抛错）。 */
   deleteConnectorConfig(id: string): void {
-    if (!this.connectorConfigById(id)) throw new Error(`接入配置不存在：${id}`)
+    if (!this.connectorConfigById(id)) throw new Error(t('接入配置不存在：{id}', { id }))
     this.connectorConfigs().remove(id)
     this.connectors.delete(id)
     this.authProviders.delete(id)
@@ -1759,21 +1760,21 @@ export class IamService extends Service {
   async testConnector(idOrProvider: string): Promise<{ ok: boolean; latencyMs: number; message: string }> {
     const config = this.resolveConnectorConfig(idOrProvider)
     const connector = config ? this.connectors.get(config.id) : undefined
-    if (!connector) throw new Error(`未注册的连接器：${idOrProvider}`)
+    if (!connector) throw new Error(t('未注册的连接器：{provider}', { provider: idOrProvider }))
     return connector.healthCheck()
   }
 
   /** 全量同步：目录映射 + 冲突入队 + 离职联动。失败同样落 lastSyncResult（ok:false），避免「点了没反应」。 */
   async syncConnector(idOrProvider: string, actor: string): Promise<{ created: number; updated: number; conflicts: number; frozen: number; message: string }> {
     const config = this.resolveConnectorConfig(idOrProvider)
-    if (!config || !config.enabled) throw new Error(`连接器未启用：${idOrProvider}`)
+    if (!config || !config.enabled) throw new Error(t('连接器未启用：{provider}', { provider: idOrProvider }))
     const connector = this.connectors.get(config.id)
-    if (!connector) throw new Error(`未注册的连接器：${idOrProvider}`)
+    if (!connector) throw new Error(t('未注册的连接器：{provider}', { provider: idOrProvider }))
     try {
       return await this.runSync(config.provider, actor, config, connector)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      const result = { ok: false, created: 0, updated: 0, conflicts: 0, frozen: 0, message: `同步失败：${message}` }
+      const result = { ok: false, created: 0, updated: 0, conflicts: 0, frozen: 0, message: t('同步失败：{message}', { message }) }
       this.connectorConfigs().update(config.id, { lastSyncAt: new Date().toISOString(), lastSyncResult: result })
       throw error
     }
@@ -1858,7 +1859,7 @@ export class IamService extends Service {
       }
       if (!remoteUser.active) {
         if (local.status === 'active' || local.status === 'pending') {
-          this.freezeUser(local.id, `三方同步：${provider} 通讯录已离职`, SYSTEM_ACTOR)
+          this.freezeUser(local.id, t('三方同步：{provider} 通讯录已离职', { provider }), SYSTEM_ACTOR)
           frozen++
         }
         continue
@@ -1907,7 +1908,7 @@ export class IamService extends Service {
     // 组成员可能静默变化，同步收尾时统一重算并与快照比对，漂移超阈值或涉及 C 关联组即告警。
     const drifts = this.refreshGroupSnapshots('connector-sync')
 
-    const result = { ok: true, created, updated, conflicts, frozen, message: `同步完成：新建 ${created}，更新 ${updated}，冲突 ${conflicts}，离职冻结 ${frozen}${leaderSynced > 0 ? `，负责人 ${leaderSynced}` : ''}${leaderPinned > 0 ? `，手动锁定 ${leaderPinned}` : ''}${drifts.length > 0 ? `，组漂移 ${drifts.length}` : ''}` }
+    const result = { ok: true, created, updated, conflicts, frozen, message: t('同步完成：新建 {created}，更新 {updated}，冲突 {conflicts}，离职冻结 {frozen}{leaderSyncedPart}{leaderPinnedPart}{driftsPart}', { created, updated, conflicts, frozen, leaderSyncedPart: leaderSynced > 0 ? t('，负责人 {n}', { n: leaderSynced }) : '', leaderPinnedPart: leaderPinned > 0 ? t('，手动锁定 {n}', { n: leaderPinned }) : '', driftsPart: drifts.length > 0 ? t('，组漂移 {n}', { n: drifts.length }) : '' }) }
     this.connectorConfigs().update(config.id, { lastSyncAt: new Date().toISOString(), lastSyncResult: result })
     this.ctx.platformBus.emit(PlatformEvents.ConnectorSynced, { provider, actor, ...result })
     return result
@@ -1915,8 +1916,8 @@ export class IamService extends Service {
 
   resolveConflict(id: string, keep: 'third_party' | 'platform', actor: string): SyncConflictRecord {
     const conflict = this.conflicts().get(id)
-    if (!conflict) throw new Error(`冲突记录不存在：${id}`)
-    if (conflict.status === 'resolved') throw new Error('该冲突已处理')
+    if (!conflict) throw new Error(t('冲突记录不存在：{id}', { id }))
+    if (conflict.status === 'resolved') throw new Error(t('该冲突已处理'))
     if (conflict.kind === 'user_attr') {
       const jobNumber = String(conflict.thirdPartyData.jobNumber ?? '')
       const local = this.users().findOne((user) => user.bindings.some((binding) => binding.provider === conflict.provider && binding.unionId === conflict.thirdPartyData.unionId))

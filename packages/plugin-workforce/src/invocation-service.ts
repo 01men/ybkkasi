@@ -27,6 +27,7 @@ import type {
   WorkforceStore,
 } from './contract.ts'
 import { WorkforceError, STEP_KEY_PATTERN } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import { argsHashOf, validateAgainstSchema } from './domain.ts'
 import type { WorkCallerRef, WorkDenyCode, WorkExecutionContext } from '../../platform-core/src/workforce-port.ts'
 
@@ -45,7 +46,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
   private get store(): WorkforceStore {
     const store = (this.ctx as unknown as { workforceStore?: WorkforceStore }).workforceStore
     if (!store || typeof store.txn !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceStore 未就绪（迁移未完成）', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceStore 未就绪（迁移未完成）'), 503)
     }
     return store
   }
@@ -53,7 +54,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
   private get identity(): WorkforceIdentityResolver {
     const resolver = (this.ctx as unknown as { workforceIdentity?: WorkforceIdentityResolver }).workforceIdentity
     if (!resolver || typeof resolver.resolveByCaller !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceIdentity 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceIdentity 未就绪'), 503)
     }
     return resolver
   }
@@ -61,7 +62,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
   private get adapters(): AdapterRegistry {
     const registry = (this.ctx as unknown as { workforceAdapters?: AdapterRegistry }).workforceAdapters
     if (!registry || typeof registry.get !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceAdapters 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceAdapters 未就绪'), 503)
     }
     return registry
   }
@@ -71,7 +72,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
       workforceAdmission?: { verifyPermit?: WorkforceAdmission['verifyPermit'] }
     }).workforceAdmission
     if (!admission || typeof admission.verifyPermit !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceAdmission 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceAdmission 未就绪'), 503)
     }
     return { verifyPermit: admission.verifyPermit.bind(admission) }
   }
@@ -81,7 +82,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
       workforceCapabilities?: { get?: WorkforceCapabilities['get']; resolveTool?: WorkforceCapabilities['resolveTool'] }
     }).workforceCapabilities
     if (!capabilities || typeof capabilities.get !== 'function' || typeof capabilities.resolveTool !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceCapabilities 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceCapabilities 未就绪'), 503)
     }
     return { get: capabilities.get.bind(capabilities), resolveTool: capabilities.resolveTool.bind(capabilities) }
   }
@@ -106,22 +107,22 @@ export class InvocationService extends Service implements WorkforceInvocations {
     const tool = capabilities.resolveTool(permit.manifestId, request.toolHandle)
     if (!tool) {
       // 清单在而句柄不在＝未授予；清单本身缺失＝句柄无法解析
-      throw new WorkforceError('TOOL_NOT_GRANTED', `工具句柄 ${request.toolHandle} 未列入本任用能力清单（manifest v${manifest.version}）`)
+      throw new WorkforceError('TOOL_NOT_GRANTED', t('工具句柄 {handle} 未列入本任用能力清单（manifest v{version}）', { handle: request.toolHandle, version: manifest.version }))
     }
     // 2. stepKey 词法校验（§9.3：调用方提出的业务引用，不是可信身份）＋参数 schema＋业务范围
     if (!STEP_KEY_PATTERN.test(request.stepKey)) {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', 'stepKey 非法：须为 1-96 位字母/数字/点/下划线/连字符，且以字母或数字开头')
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('stepKey 非法：须为 1-96 位字母/数字/点/下划线/连字符，且以字母或数字开头'))
     }
     let args: Record<string, unknown>
     // validateAgainstSchema(值, schema) 返回「首条中文错误消息 | null」（非转换器）：
     // 先做 object 根检查，再校验；原实现把实参顺序与返回约定同时误用，invoke 恒拒（selftest 实证）
     const rawArgs = request.arguments ?? {}
     if (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '参数必须为 JSON 对象（object 根）')
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('参数必须为 JSON 对象（object 根）'))
     }
     const violation = validateAgainstSchema(rawArgs, tool.parameters ?? { type: 'object', properties: {} })
     if (violation) {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `参数校验未通过：${violation}`)
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('参数校验未通过：{violation}', { violation }))
     }
     args = rawArgs as Record<string, unknown>
     this.assertBusinessScope(tool, args)
@@ -132,7 +133,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
       const prior = this.store.invocations.findWhere({ runId: permit.runId, stepKey: request.stepKey })[0]
       if (prior) {
         if (prior.argsHash !== argsHash) {
-          throw new WorkforceError('STEP_ARGUMENT_CONFLICT', `步骤 ${request.stepKey} 已绑定不同参数（冲突拒绝，不能覆盖原动作）`, 409)
+          throw new WorkforceError('STEP_ARGUMENT_CONFLICT', t('步骤 {stepKey} 已绑定不同参数（冲突拒绝，不能覆盖原动作）', { stepKey: request.stepKey }), 409)
         }
         return { replay: true as const, record: prior }
       }
@@ -174,14 +175,14 @@ export class InvocationService extends Service implements WorkforceInvocations {
     if (!appointment || appointment.status !== 'effective') {
       return this.settle(reserved.record, 'denied', {
         code: 'APPOINTMENT_NOT_EFFECTIVE',
-        message: '任用已不在生效状态，停止本步骤调用',
+        message: t('任用已不在生效状态，停止本步骤调用'),
       }, started)
     }
     const adapter = this.adapters.get(tool.kind)
     if (!adapter) {
       return this.settle(reserved.record, 'denied', {
         code: 'TOOL_NOT_GRANTED',
-        message: `该资源类型（${tool.kind}）未登记适配器，拒绝调用`,
+        message: t('该资源类型（{kind}）未登记适配器，拒绝调用', { kind: tool.kind }),
       }, started)
     }
 
@@ -190,7 +191,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
     try {
       result = await adapter.invoke({ work, tool, args, invocationId: reserved.record.id })
     } catch (error) {
-      result = { ok: false, message: `适配器执行异常：${error instanceof Error ? error.message : String(error)}` }
+      result = { ok: false, message: t('适配器执行异常：{message}', { message: error instanceof Error ? error.message : String(error) }) }
     }
 
     // 5. settle：AdapterInvokeResult → InvocationOutcome（§9.3 状态语义）
@@ -210,24 +211,24 @@ export class InvocationService extends Service implements WorkforceInvocations {
           work: this.workContextFromRecord(record),
         }
       case 'outcome_unknown':
-        return { status: 'outcome_unknown', invocationId: record.id, message: '该步骤存在未决历史执行，请先核验，禁止自动重试写入' }
+        return { status: 'outcome_unknown', invocationId: record.id, message: t('该步骤存在未决历史执行，请先核验，禁止自动重试写入') }
       case 'approval_required':
-        return { status: 'approval_required', invocationId: record.id, message: record.message || '该步骤等待业务审批', ...(record.approvalRef ? { approvalRef: record.approvalRef } : {}) }
+        return { status: 'approval_required', invocationId: record.id, message: record.message || t('该步骤等待业务审批'), ...(record.approvalRef ? { approvalRef: record.approvalRef } : {}) }
       case 'rate_limited':
-        return { status: 'rate_limited', invocationId: record.id, message: record.message || '命中流控，请按服务端重试策略退避' }
+        return { status: 'rate_limited', invocationId: record.id, message: record.message || t('命中流控，请按服务端重试策略退避') }
       case 'denied':
-        return { status: 'denied', invocationId: record.id, code: (record.errorCode || 'TOOL_NOT_GRANTED') as WorkDenyCode, message: record.message || '该步骤已被拒绝，停止重试' }
+        return { status: 'denied', invocationId: record.id, code: (record.errorCode || 'TOOL_NOT_GRANTED') as WorkDenyCode, message: record.message || t('该步骤已被拒绝，停止重试') }
       case 'cancelled':
-        return { status: 'denied', invocationId: record.id, code: 'APPOINTMENT_NOT_EFFECTIVE' as WorkDenyCode, message: '该步骤所属任务或任用已撤销，停止后续调用' }
+        return { status: 'denied', invocationId: record.id, code: 'APPOINTMENT_NOT_EFFECTIVE' as WorkDenyCode, message: t('该步骤所属任务或任用已撤销，停止后续调用') }
       case 'failed':
-        return { status: 'failed', invocationId: record.id, message: record.message || '该步骤此前确认失败' }
+        return { status: 'failed', invocationId: record.id, message: record.message || t('该步骤此前确认失败') }
       case 'reserved':
       default:
         // 上次尝试中断（进程崩溃）：写入类风险按结果未知处理（§11.7：已发送未确认的写动作不重执行）
         if (record.risk !== 'read') {
-          return { status: 'outcome_unknown', invocationId: record.id, message: '该步骤存在中断残留的执行记录，请先核验外部结果' }
+          return { status: 'outcome_unknown', invocationId: record.id, message: t('该步骤存在中断残留的执行记录，请先核验外部结果') }
         }
-        throw new WorkforceError('RATE_LIMITED', '同一步骤的只读调用正在执行，请稍后重试', 429)
+        throw new WorkforceError('RATE_LIMITED', t('同一步骤的只读调用正在执行，请稍后重试'), 429)
     }
   }
 
@@ -235,19 +236,19 @@ export class InvocationService extends Service implements WorkforceInvocations {
   private assertBusinessScope(tool: ManifestToolHandle, args: Record<string, unknown>): void {
     const constraints = tool.constraints ?? {}
     const deny = (detail: string): never => {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', `参数超出任用边界：${detail}`)
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('参数超出任用边界：{detail}', { detail }))
     }
     // 工厂范围：声明 factoryIds 时 args.factoryId 必须命中
     const factoryIds = constraints['factoryIds']
     if (Array.isArray(factoryIds) && factoryIds.length > 0 && typeof args['factoryId'] === 'string') {
-      if (!factoryIds.includes(args['factoryId'])) deny(`factoryId ${String(args['factoryId'])} 不在授权工厂范围内`)
+      if (!factoryIds.includes(args['factoryId'])) deny(t('factoryId {factoryId} 不在授权工厂范围内', { factoryId: String(args['factoryId']) }))
     }
     // 目录范围：声明 pathPrefixes 时 args.path 必须命中前缀（NAS 适配器再复核一次）
     const pathPrefixes = constraints['pathPrefixes']
     if (Array.isArray(pathPrefixes) && pathPrefixes.length > 0 && typeof args['path'] === 'string') {
       const path = String(args['path'])
       if (!pathPrefixes.some((prefix) => typeof prefix === 'string' && path.startsWith(prefix))) {
-        deny(`路径 ${path} 超出授权目录范围`)
+        deny(t('路径 {path} 超出授权目录范围', { path }))
       }
     }
     // 行数上限：服务端钳制（不信任客户端自觉）
@@ -261,7 +262,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
     // 模型白名单：声明 allowedModels 时 args.model 必须命中（缺省按句柄 registryId）
     const allowedModels = constraints['allowedModels']
     if (tool.kind === 'model' && Array.isArray(allowedModels) && allowedModels.length > 0 && typeof args['model'] === 'string') {
-      if (!allowedModels.includes(args['model'])) deny(`模型 ${String(args['model'])} 不在授权模型范围内`)
+      if (!allowedModels.includes(args['model'])) deny(t('模型 {model} 不在授权模型范围内', { model: String(args['model']) }))
     }
   }
 
@@ -300,21 +301,21 @@ export class InvocationService extends Service implements WorkforceInvocations {
     }
     if (result.outcomeUnknown || (UNCERTAIN_TIMEOUT_PATTERN.test(message) && record.risk !== 'read')) {
       return this.settle(record, 'outcome_unknown', {
-        message: message || '外部结果不确定：请求可能已生效，请先查证核验，禁止自动重试写入',
+        message: message || t('外部结果不确定：请求可能已生效，请先查证核验，禁止自动重试写入'),
         gatewayRef: result.gatewayRef,
       }, started)
     }
     if (result.rateLimited) {
-      return this.settle(record, 'rate_limited', { message: message || '命中可重试流控，请按服务端重试策略退避', gatewayRef: result.gatewayRef }, started)
+      return this.settle(record, 'rate_limited', { message: message || t('命中可重试流控，请按服务端重试策略退避'), gatewayRef: result.gatewayRef }, started)
     }
     if (result.approvalRef) {
-      return this.settle(record, 'approval_required', { message: message || '该动作需要业务审批，请展示审批单并等待', approvalRef: result.approvalRef, gatewayRef: result.gatewayRef }, started)
+      return this.settle(record, 'approval_required', { message: message || t('该动作需要业务审批，请展示审批单并等待'), approvalRef: result.approvalRef, gatewayRef: result.gatewayRef }, started)
     }
     // 资源级拒绝（网关原有授权链/熔断）→ denied（停止，不换入口重试）；其余为 failed
     const denied = result.gatewayRef?.['outcome'] === 'denied'
     return this.settle(record, denied ? 'denied' : 'failed', {
       code: denied ? 'TOOL_NOT_GRANTED' : undefined,
-      message: message || (denied ? '资源网关拒绝该调用' : '执行失败'),
+      message: message || (denied ? t('资源网关拒绝该调用') : t('执行失败')),
       gatewayRef: result.gatewayRef,
     }, started)
   }
@@ -390,7 +391,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
       const userOrg = this.humanOrgId(caller)
       if (userOrg !== null && userOrg === workOrgId) return
     }
-    throw new WorkforceError('RUN_NOT_OWNED', '无权查看该调用记录（仅本人或同组织 workforce.read 主体）')
+    throw new WorkforceError('RUN_NOT_OWNED', t('无权查看该调用记录（仅本人或同组织 workforce.read 主体）'))
   }
 
   /** human 组织反查（结构化探测 iam；解析失败一律 fail-closed 拒绝）。 */
@@ -411,7 +412,7 @@ export class InvocationService extends Service implements WorkforceInvocations {
 
   async get(caller: WorkCallerRef, invocationId: string): Promise<InvocationRecord> {
     const record = this.store.invocations.get(invocationId)
-    if (!record) throw new WorkforceError('RUN_NOT_OWNED', '调用记录不存在或无权访问', 404)
+    if (!record) throw new WorkforceError('RUN_NOT_OWNED', t('调用记录不存在或无权访问'), 404)
     await this.assertReadable(caller, this.workOrgOf(record), record.employeeId)
     return record
   }
@@ -438,9 +439,9 @@ export class InvocationService extends Service implements WorkforceInvocations {
   /** outcome_unknown 核验回写（人工/对账后调用；仅允许从 outcome_unknown 迁移）。 */
   reconcile(id: string, status: 'completed' | 'failed', message: string, gatewayRef?: Record<string, unknown>): void {
     const record = this.store.invocations.get(id)
-    if (!record) throw new WorkforceError('RUN_NOT_OWNED', `调用记录不存在：${id}`, 404)
+    if (!record) throw new WorkforceError('RUN_NOT_OWNED', t('调用记录不存在：{id}', { id }), 404)
     if (record.status !== 'outcome_unknown') {
-      throw new WorkforceError('STEP_ARGUMENT_CONFLICT', `仅 outcome_unknown 记录可核验回写（当前 ${record.status}）`)
+      throw new WorkforceError('STEP_ARGUMENT_CONFLICT', t('仅 outcome_unknown 记录可核验回写（当前 {status}）', { status: record.status }))
     }
     this.store.invocations.update(id, {
       status,

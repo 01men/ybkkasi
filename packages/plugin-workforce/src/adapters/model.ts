@@ -8,6 +8,7 @@
  * subject 使用服务端确认的技术 Agent 归因（agent:<agentId>），预算按同一主体归口。
  */
 import { assertAgentAllowedDataClass, mapWorkDataClassToChannel } from '../domain.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type {
   AdapterInvokeInput,
   AdapterInvokeResult,
@@ -53,7 +54,7 @@ export function createModelAdapter(ctx: {
     async probeGrant(spec: ResourceGrantSpec, _resolution: IdentityResolution): Promise<AdapterProbeResult> {
       const hub = gateway()
       if (typeof hub.models !== 'function') {
-        return { ok: false, message: 'modelGateway 未提供模型目录查询能力' }
+        return { ok: false, message: t('modelGateway 未提供模型目录查询能力') }
       }
       const inCatalog = hub.models().all().some((model) => model.slug === spec.registryId)
       if (inCatalog) return { ok: true, ref: 'model-catalog' }
@@ -65,13 +66,13 @@ export function createModelAdapter(ctx: {
       } catch {
         // 渠道组查询缺席 → 按目录判定
       }
-      return { ok: false, message: `模型 ${spec.registryId} 不在模型网关目录中（渠道组亦未登记）` }
+      return { ok: false, message: t('模型 {modelId} 不在模型网关目录中（渠道组亦未登记）', { modelId: spec.registryId }) }
     },
 
     async invoke(input: AdapterInvokeInput): Promise<AdapterInvokeResult> {
       const hub = gateway()
       if (typeof hub.invoke !== 'function') {
-        return { ok: false, message: 'modelGateway 未提供 invoke 能力', gatewayRef: { outcome: 'denied' } }
+        return { ok: false, message: t('modelGateway 未提供 invoke 能力'), gatewayRef: { outcome: 'denied' } }
       }
       const work = input.work
       // 密级前置防线（D14）：topsecret 禁止 Agent 直接处理——映射之前先拒绝
@@ -83,11 +84,11 @@ export function createModelAdapter(ctx: {
       // 显式映射旧协议密级；映射缺失（confidential 等无对应渠道级）→ 拒绝，不静默回落
       const channel = mapWorkDataClassToChannel(work.dataClass as WorkDataClass)
       if (!channel) {
-        return { ok: false, message: '密级映射缺失，拒绝调用', gatewayRef: { outcome: 'denied', dataClass: work.dataClass } }
+        return { ok: false, message: t('密级映射缺失，拒绝调用'), gatewayRef: { outcome: 'denied', dataClass: work.dataClass } }
       }
       const messages = input.args['messages']
       if (!Array.isArray(messages) || messages.length === 0) {
-        return { ok: false, message: '模型调用参数缺少 messages 数组', gatewayRef: { outcome: 'denied' } }
+        return { ok: false, message: t('模型调用参数缺少 messages 数组'), gatewayRef: { outcome: 'denied' } }
       }
       const maxTokens = typeof input.tool.constraints?.['maxTokens'] === 'number'
         ? input.tool.constraints['maxTokens'] as number

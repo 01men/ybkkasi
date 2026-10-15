@@ -8,6 +8,7 @@
  *   - real ：配置 appKey/appSecret 后走真实钉钉 OpenAPI（可指定 apiBase 指向代理/专有部署）。
  *   - mock ：未配置凭证时的显式降级——内置演示目录，healthCheck 标注 mock:true，禁止冒充真实。
  */
+import { t } from '../../platform-i18n/src/index.ts'
 
 /** 登录场景：四种形态归一为三类（auth-identity docs/04）。 */
 export type LoginScene = 'web_qr' | 'h5' | 'in_app'
@@ -109,10 +110,10 @@ export class DingTalkAuthAdapter implements IdentityProviderAdapter {
     const consumedAt = this.consumedCodes.get(code)
     const now = Date.now()
     if (consumedAt !== undefined && now - consumedAt < CODE_TTL_MS) {
-      throw new ProviderAuthError('授权码已被使用（code 仅可消费一次）', 'CODE_REPLAY')
+      throw new ProviderAuthError(t('授权码已被使用（code 仅可消费一次）'), 'CODE_REPLAY')
     }
     const user = DINGTALK_DIRECTORY.users.find((item) => item.jobNumber === code || item.unionId === code)
-    if (!user) throw new ProviderAuthError('授权码无效或已过期', 'INVALID_CODE')
+    if (!user) throw new ProviderAuthError(t('授权码无效或已过期'), 'INVALID_CODE')
     this.consumedCodes.set(code, now)
     return {
       accessToken: `mock-user-token-${user.unionId}-${now}`,
@@ -124,7 +125,7 @@ export class DingTalkAuthAdapter implements IdentityProviderAdapter {
   async getUserInfo(tokenSet: ProviderTokenSet): Promise<unknown> {
     const raw = tokenSet.raw as { unionId: string }
     const user = DINGTALK_DIRECTORY.users.find((item) => item.unionId === raw.unionId)
-    if (!user) throw new ProviderAuthError('用户档案不存在', 'PROFILE_NOT_FOUND')
+    if (!user) throw new ProviderAuthError(t('用户档案不存在'), 'PROFILE_NOT_FOUND')
     return { ...user, corpId: DINGTALK_DIRECTORY.corpId }
   }
 
@@ -181,7 +182,7 @@ export class RealDingTalkAuthAdapter implements IdentityProviderAdapter {
     const consumedAt = this.consumedCodes.get(code)
     const now = Date.now()
     if (consumedAt !== undefined && now - consumedAt < CODE_TTL_MS) {
-      throw new ProviderAuthError('授权码已被使用（code 仅可消费一次）', 'CODE_REPLAY')
+      throw new ProviderAuthError(t('授权码已被使用（code 仅可消费一次）'), 'CODE_REPLAY')
     }
     const response = await fetch(`${this.apiBase}/v1.0/oauth2/userAccessToken`, {
       method: 'POST',
@@ -200,7 +201,7 @@ export class RealDingTalkAuthAdapter implements IdentityProviderAdapter {
       corpId?: string
     }
     if (!response.ok || !payload.accessToken) {
-      throw new ProviderAuthError(`钉钉 userAccessToken 换取失败（HTTP ${response.status}）`, 'INVALID_CODE')
+      throw new ProviderAuthError(t('钉钉 userAccessToken 换取失败（HTTP {status}）', { status: response.status }), 'INVALID_CODE')
     }
     this.consumedCodes.set(code, now)
     return {
@@ -224,12 +225,12 @@ export class RealDingTalkAuthAdapter implements IdentityProviderAdapter {
     }
     if (!response.ok) {
       // 诊断透出：钉钉返回体含 errcode/message/requiredScopes，token 企业用于识别「选错组织」场景
-      const tokenCorpId = (tokenSet.raw as { corpId?: string }).corpId ?? '未知'
+      const tokenCorpId = (tokenSet.raw as { corpId?: string }).corpId ?? t('未知')
       // AccessTokenPermissionDenied（requiredScopes 未覆盖）：多为应用新增权限点后老用户授权快照未刷新，
       // 单独错误码供回调层识别并自动发起一次 prompt=consent 重授权
       const scopeDenied = bodyText.includes('AccessTokenPermissionDenied')
       throw new ProviderAuthError(
-        `钉钉用户档案获取失败（HTTP ${response.status}，token企业=${tokenCorpId}）：${bodyText.slice(0, 500)}`,
+        t('钉钉用户档案获取失败（HTTP {status}，token企业={corpId}）：{body}', { status: response.status, corpId: tokenCorpId, body: bodyText.slice(0, 500) }),
         scopeDenied ? 'PROVIDER_SCOPE_DENIED' : 'PROFILE_NOT_FOUND',
       )
     }
@@ -242,7 +243,7 @@ export class RealDingTalkAuthAdapter implements IdentityProviderAdapter {
   normalizeProfile(raw: unknown): NormalizedProfile {
     const record = raw as { unionId?: string; userId?: string; nick?: string; name?: string; email?: string; corpId?: string }
     const providerUserId = record.unionId ?? record.userId
-    if (!providerUserId) throw new ProviderAuthError('钉钉档案缺少 unionId/userId', 'PROFILE_NOT_FOUND')
+    if (!providerUserId) throw new ProviderAuthError(t('钉钉档案缺少 unionId/userId'), 'PROFILE_NOT_FOUND')
     return {
       providerUserId,
       corpId: record.corpId ?? this.credentials.corpId,

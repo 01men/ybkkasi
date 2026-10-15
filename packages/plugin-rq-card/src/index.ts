@@ -26,6 +26,7 @@
  */
 
 import { CONSOLE_BASE } from './wire.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 
 /** summarizeForToolResult 的输入。 */
 export interface ToolResultSummaryInput {
@@ -58,10 +59,10 @@ export function summarizeForToolResult(input: ToolResultSummaryInput): string {
   const flag = input.isError ? '⚠ ' : ''
   lines.push(`**${input.toolName}** ${flag}${input.summary}`)
   for (const [key, value] of Object.entries(input.details ?? {})) {
-    lines.push(`- ${key}：${String(value)}`)
+    lines.push(`- ${t('{key}：{value}', { key, value: String(value) })}`)
   }
   if (input.consoleHash !== undefined) {
-    lines.push(`👉 [到元冰可控制台处理](${CONSOLE_BASE}${input.consoleHash})`)
+    lines.push(t('👉 [到元冰可控制台处理]({url})', { url: `${CONSOLE_BASE}${input.consoleHash}` }))
   }
   return lines.join('\n')
 }

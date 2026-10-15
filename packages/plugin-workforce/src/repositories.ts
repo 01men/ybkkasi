@@ -11,6 +11,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import type { SqlValue, SqliteTxnService } from '../../platform-core/src/sqlite.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import { WORKFORCE_TABLES } from './contract.ts'
 import type {
   AppointmentRecord,
@@ -126,7 +127,7 @@ class TxnTableStore<T extends { id: string }> implements TableStore<T> {
 
   delete(id: string): void {
     // 表名来自冻结契约（ensureTable 已按标识符白名单校验），此处仅拼接常量
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(this.spec.name)) throw new Error(`非法表名：${this.spec.name}`)
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(this.spec.name)) throw new Error(t('非法表名：{name}', { name: this.spec.name }))
     this.svc.run(`DELETE FROM ${this.spec.name} WHERE id = ?`, [id])
   }
 

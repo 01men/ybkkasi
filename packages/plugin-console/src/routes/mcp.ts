@@ -9,6 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { CallerInfo, HttpExchange } from '../../../platform-core/src/index.ts'
 import { workRefFromArgs } from '../../../plugin-mcp/src/tools.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export interface McpRouteDeps extends ConsoleRouteDeps {
@@ -63,7 +64,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   guarded('POST', '/api/mcp/import', 'mcp.service.write', async (exchange) => {
     const input = body<{ config: string | object; autoDeploy?: boolean }>(exchange)
     const rootOrg = ctx.iam.orgs().findOne((org) => org.parentId === null)
-    if (!rootOrg) throw new Error('组织数据未初始化，无法导入')
+    if (!rootOrg) throw new Error(t('组织数据未初始化，无法导入'))
     const result = await ctx.mcpRegistry.importServices({
       config: input.config,
       orgId: rootOrg.id,
@@ -102,11 +103,11 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   guarded('POST', '/api/mcp/services/:id/final-review', 'mcp.service.deploy', (exchange) => {
     const id = exchange.params['id']!
     const service = ctx.mcpRegistry.services().get(id)
-    if (!service) throw new Error(`MCP 服务不存在：${id}`)
+    if (!service) throw new Error(t('MCP 服务不存在：{id}', { id }))
     const info = caller(exchange)
     const mark = { approverId: info.userId ?? info.principalId, approverName: info.name, at: new Date().toISOString() }
     const updated = ctx.mcpRegistry.services().update(id, { finalReview: mark })
-    changeLog(exchange, 'mcp.final_review', 'mcp_service', id, service.name, '公司级终审标记：后续调用将附带水印')
+    changeLog(exchange, 'mcp.final_review', 'mcp_service', id, service.name, t('公司级终审标记：后续调用将附带水印'))
     return { id, finalReview: updated.finalReview }
   })
 
@@ -129,12 +130,12 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
 
   guarded('POST', '/api/mcp/services/:id/offline', 'mcp.service.offline', (exchange) => {
     const { reason, viaApproval } = body<{ reason?: string; viaApproval?: boolean }>(exchange)
-    if (!reason?.trim()) throw new Error('下线必须填写原因（护栏要求，下架分析依赖该口径）')
+    if (!reason?.trim()) throw new Error(t('下线必须填写原因（护栏要求，下架分析依赖该口径）'))
     const id = exchange.params['id']!
     if (viaApproval !== false) {
       const impact = ctx.resourceCore.impact('mcp_service', id)
-      const approval = ctx.mcpRegistry.requestOfflineApproval(id, { id: caller(exchange).userId ?? caller(exchange).principalId, name: caller(exchange).name }, reason ?? '', impact.map((item) => `${item.name}（${item.type}）`))
-      return { approval, note: '已创建 L4 审批单' }
+      const approval = ctx.mcpRegistry.requestOfflineApproval(id, { id: caller(exchange).userId ?? caller(exchange).principalId, name: caller(exchange).name }, reason ?? '', impact.map((item) => t('{name}（{type}）', { name: item.name, type: item.type })))
+      return { approval, note: t('已创建 L4 审批单') }
     }
     const service = ctx.mcpRegistry.offlineService(id, caller(exchange).name, reason ?? '')
     changeLog(exchange, 'mcp.service.offline', 'mcp_service', service.id, service.name, reason ?? '')
@@ -145,11 +146,11 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   guarded('DELETE', '/api/mcp/services/:id', 'mcp.service.write', (exchange) => {
     const id = exchange.params['id']!
     const service = ctx.mcpRegistry.services().get(id)
-    if (!service) throw new Error(`MCP 服务不存在：${id}`)
-    if (service.status !== 'offline') throw new Error(`当前状态 ${service.status} 不可删除，请先下线服务`)
+    if (!service) throw new Error(t('MCP 服务不存在：{id}', { id }))
+    if (service.status !== 'offline') throw new Error(t('当前状态 {status} 不可删除，请先下线服务', { status: service.status }))
     const referencingGroups = ctx.mcpRegistry.permGroups().find((group) => Object.keys(group.policies).includes(id))
     if (referencingGroups.length > 0) {
-      throw new Error(`该服务仍被权限组引用（${referencingGroups.map((group) => group.name).join('、')}），请先从权限组中移除`)
+      throw new Error(t('该服务仍被权限组引用（{groups}），请先从权限组中移除', { groups: referencingGroups.map((group) => group.name).join('、') }))
     }
     ctx.mcpRegistry.purgeService(id)
     changeLog(exchange, 'mcp.service.delete', 'mcp_service', id, service.name)
@@ -221,12 +222,12 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   // mcpToolRisks，cordis 严格注入下直接访问 ctx.mcpToolRisks 会被拦（without inject）。
   const risks = () => {
     const registry = ctx.mcpRegistry.riskRegistry()
-    if (!registry) throw new Error('MCP 工具风险登记服务未装配（请确认 plugin-mcp 版本）')
+    if (!registry) throw new Error(t('MCP 工具风险登记服务未装配（请确认 plugin-mcp 版本）'))
     return registry
   }
   guarded('POST', '/api/mcp/risk-registry', 'mcp.risk.admin', (exchange) => {
     const input = body<{ serviceId: string; toolName: string; risk: 'read' | 'write' | 'admin'; reason: string }>(exchange)
-    if (!input.reason?.trim()) throw new Error('登记必须填写原因（write/admin 风险更须说明用途与影响面）')
+    if (!input.reason?.trim()) throw new Error(t('登记必须填写原因（write/admin 风险更须说明用途与影响面）'))
     const info = caller(exchange)
     const record = risks().submit({
       serviceId: input.serviceId,
@@ -244,19 +245,19 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
     const id = exchange.params['id']!
     const record = risks().get(id)
     if (!record) {
-      exchange.fail(404, 'RISK_RECORD_NOT_FOUND', `风险登记不存在：${id}`)
+      exchange.fail(404, 'RISK_RECORD_NOT_FOUND', t('风险登记不存在：{id}', { id }))
       return
     }
     // level 与当前 pending 级别不匹配 → 400 中文错误（顺序状态机不可跳级，D-①）
     const pendingLevel = record.status === 'pending_domain' ? 'domain' : record.status === 'pending_security' ? 'security' : undefined
     if (!pendingLevel) {
-      exchange.fail(400, 'RISK_NOT_PENDING', `当前状态 ${record.status} 不可审批（仅 pending 态可审批）`)
+      exchange.fail(400, 'RISK_NOT_PENDING', t('当前状态 {status} 不可审批（仅 pending 态可审批）', { status: record.status }))
       return
     }
     if (input.level !== pendingLevel) {
       exchange.fail(400, 'RISK_LEVEL_MISMATCH', pendingLevel === 'domain'
-        ? '当前等待领域审批（level 须为 domain）'
-        : '当前等待安全审批（level 须为 security；write/admin 风险必须安全加签）')
+        ? t('当前等待领域审批（level 须为 domain）')
+        : t('当前等待安全审批（level 须为 security；write/admin 风险必须安全加签）'))
       return
     }
     const info = caller(exchange)
@@ -282,7 +283,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
 
   guarded('POST', '/api/mcp/risk-registry/:id/retire', 'mcp.risk.admin', (exchange) => {
     const input = body<{ reason: string }>(exchange)
-    if (!input.reason?.trim()) throw new Error('退场必须填写原因（护栏要求，重审与追溯依赖该口径）')
+    if (!input.reason?.trim()) throw new Error(t('退场必须填写原因（护栏要求，重审与追溯依赖该口径）'))
     const info = caller(exchange)
     const record = risks().retire(exchange.params['id']!, {
       reason: input.reason,
@@ -330,7 +331,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   const maskReference = <T extends { maskedProfile?: Record<string, string> }>(ref: T): T => ref
 
   const requireBodyOrg = (orgId: string | undefined): string => {
-    if (!orgId) throw new Error('orgId 必填（连接归属组织，org:<orgId>: 别名前缀由此而来）')
+    if (!orgId) throw new Error(t('orgId 必填（连接归属组织，org:<orgId>: 别名前缀由此而来）'))
     return orgId
   }
 
@@ -352,7 +353,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
         const parsed = JSON.parse(assumeRaw) as Record<string, boolean>
         return ctx.connectorHub.gatewayStatus(parsed)
       } catch {
-        throw new Error('assumeEnv 必须是 {"ENV_NAME": boolean} 形态的 JSON')
+        throw new Error(t('assumeEnv 必须是 {"ENV_NAME": boolean} 形态的 JSON'))
       }
     }
     return ctx.connectorHub.gatewayStatus()
@@ -379,21 +380,21 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   // connector.offline：网关维护下线（默认 L4 审批；viaApproval=false 需管理员显式绕行并留痕）
   guarded('POST', '/api/connector/gateway/offline', 'connector.gateway.write', async (exchange) => {
     const input = body<{ reason?: string; viaApproval?: boolean }>(exchange)
-    if (!input.reason?.trim()) throw new Error('下线必须填写原因（护栏要求，处置复盘依赖该口径）')
+    if (!input.reason?.trim()) throw new Error(t('下线必须填写原因（护栏要求，处置复盘依赖该口径）'))
     const info = caller(exchange)
     if (input.viaApproval === false) {
       const record = await ctx.connectorHub.offlineGateway(input.reason)
-      changeLog(exchange, 'connector.gateway.offline', 'connector_gateway', record?.id ?? 'gateway', input.reason, '直连模式（无审批）')
+      changeLog(exchange, 'connector.gateway.offline', 'connector_gateway', record?.id ?? 'gateway', input.reason, t('直连模式（无审批）'))
       return { offlined: true, mode: 'direct' }
     }
     const approval = ctx.audit.createApproval({
       kind: 'connector.offline',
-      title: `连接器网关维护下线：${input.reason.slice(0, 40)}`,
+      title: t('连接器网关维护下线：{reason}', { reason: input.reason.slice(0, 40) }),
       payload: { scope: 'gateway', reason: input.reason, requesterId: info.userId ?? info.principalId, requesterName: info.name },
       requesterId: info.userId ?? info.principalId,
       requesterName: info.name,
     })
-    changeLog(exchange, 'connector.gateway.offline.request', 'approval_center', approval.id, input.reason, 'L4 审批单已创建')
+    changeLog(exchange, 'connector.gateway.offline.request', 'approval_center', approval.id, input.reason, t('L4 审批单已创建'))
     return { approvalRequired: true, approvalId: approval.id }
   })
 
@@ -469,7 +470,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
     if ((result as { reference?: { id: string } }).reference) {
       changeLog(exchange, 'connector.connection.oauth.start', 'connector_connection', (result as { reference: { id: string } }).reference.id, input.provider, input.orgId)
     } else if ((result as { approvalRequired?: boolean }).approvalRequired) {
-      changeLog(exchange, 'connector.connection.approval', 'approval_center', (result as { approvalId?: string }).approvalId ?? '', input.provider, '连接创建进入审批门禁')
+      changeLog(exchange, 'connector.connection.approval', 'approval_center', (result as { approvalId?: string }).approvalId ?? '', input.provider, t('连接创建进入审批门禁'))
     }
     return result
   })
@@ -489,9 +490,9 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
       ...(input.approvalId ? { approvalId: input.approvalId } : {}),
     }))
     const ref = (result as { reference?: { id: string } }).reference
-    if (ref) changeLog(exchange, 'connector.connection.create', 'connector_connection', ref.id, input.provider, `${input.authType ?? 'api_key'} 直达 sidecar`)
+    if (ref) changeLog(exchange, 'connector.connection.create', 'connector_connection', ref.id, input.provider, t('{authType} 直达 sidecar', { authType: input.authType ?? 'api_key' }))
     else if ((result as { approvalRequired?: boolean }).approvalRequired) {
-      changeLog(exchange, 'connector.connection.approval', 'approval_center', (result as { approvalId?: string }).approvalId ?? '', input.provider, '连接创建进入审批门禁')
+      changeLog(exchange, 'connector.connection.approval', 'approval_center', (result as { approvalId?: string }).approvalId ?? '', input.provider, t('连接创建进入审批门禁'))
     }
     return result
   })
@@ -507,7 +508,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
       authType: 'no_auth',
     }))
     const ref = (result as { reference?: { id: string } }).reference
-    if (ref) changeLog(exchange, 'connector.connection.create', 'connector_connection', ref.id, input.provider, 'no_auth 虚拟连接登记')
+    if (ref) changeLog(exchange, 'connector.connection.create', 'connector_connection', ref.id, input.provider, t('no_auth 虚拟连接登记'))
     return result
   })
 
@@ -522,7 +523,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
 
   guarded('POST', '/api/connector/connections/:id/offline', 'connector.connection.write', async (exchange) => {
     const input = body<{ reason?: string; viaApproval?: boolean }>(exchange)
-    if (!input.reason?.trim()) throw new Error('下线必须填写原因（护栏要求）')
+    if (!input.reason?.trim()) throw new Error(t('下线必须填写原因（护栏要求）'))
     const id = exchange.params['id']!
     const info = caller(exchange)
     if (input.viaApproval === false) {
@@ -533,7 +534,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
     }
     const approval = ctx.audit.createApproval({
       kind: 'connector.offline',
-      title: `下线连接：${id}`,
+      title: t('下线连接：{id}', { id }),
       payload: { scope: 'connection', connectionId: id, reason: input.reason, requesterId: info.userId ?? info.principalId, requesterName: info.name },
       requesterId: info.userId ?? info.principalId,
       requesterName: info.name,

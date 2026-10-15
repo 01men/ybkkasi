@@ -33,6 +33,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { newId, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import * as usageTools from './tools.ts'
 
 // ---------------------------------------------------------------------------
@@ -254,7 +255,7 @@ export class UsageService extends Service {
     const price = this.priceOf(input.resource)
     // D2 非计费便捷构造：nonbillable 标记只允许配零费率规则（防「标了非计费却按计费规则入账」）
     if (input.nonbillable === true && !(price.list_cents_per_unit === 0 && price.cost_cents_per_unit === 0)) {
-      throw new Error(`非计费事件只允许命中零费率价格簿规则：资源 ${input.resource} 命中 ${price.pattern}（非零费率），请去掉 nonbillable 或先调零费率`)
+      throw new Error(t('非计费事件只允许命中零费率价格簿规则：资源 {resource} 命中 {pattern}（非零费率），请去掉 nonbillable 或先调零费率', { resource: input.resource, pattern: price.pattern }))
     }
     // 零费率规则产出的即非计费事件（统一零价快照口径）：charge_cents=0 + rate.nonbillable=true
     const nonbillable = input.nonbillable === true || (price.list_cents_per_unit === 0 && price.cost_cents_per_unit === 0)
@@ -262,8 +263,8 @@ export class UsageService extends Service {
     // 价格簿对调用方不可见（usage.admin），错误信息直接携带期望键供自纠）
     if (!input.meters.some((item) => item.key === price.meter_key)) {
       throw new Error(
-        `计量键不匹配：资源 ${input.resource} 按价格簿 ${price.pattern} 以「${price.meter_key}」计价，` +
-        `收到 [${input.meters.map((m) => m.key).join(', ')}]。请按 ${price.meter_key} 重报，不要编造计量键`,
+        t('计量键不匹配：资源 {resource} 按价格簿 {pattern} 以「{key}」计价，收到 [{received}]。请按 {key} 重报，不要编造计量键',
+          { resource: input.resource, pattern: price.pattern, key: price.meter_key, received: input.meters.map((m) => m.key).join(', ') }),
       )
     }
     const meter = input.meters.find((item) => item.key === price.meter_key)!
@@ -271,13 +272,13 @@ export class UsageService extends Service {
     // 合法数值走原值，计价结果不变。快照记录实际采用的修正值（非有限值 JSON 序列化为 null 会继续污染对账）
     const listRate = Number.isFinite(price.list_cents_per_unit) && price.list_cents_per_unit >= 0
       ? price.list_cents_per_unit
-      : this.warnDirtyData(`pricebook:${price.pattern}:list`, `价格簿 ${price.pattern} 的 list_cents_per_unit=${String(price.list_cents_per_unit)} 为非法数值，本次计价按 0 处理；请尽快修正价格簿（REL-11）`)
+      : this.warnDirtyData(`pricebook:${price.pattern}:list`, t('价格簿 {pattern} 的 list_cents_per_unit={value} 为非法数值，本次计价按 0 处理；请尽快修正价格簿（REL-11）', { pattern: price.pattern, value: String(price.list_cents_per_unit) }))
     const costRate = Number.isFinite(price.cost_cents_per_unit) && price.cost_cents_per_unit >= 0
       ? price.cost_cents_per_unit
-      : this.warnDirtyData(`pricebook:${price.pattern}:cost`, `价格簿 ${price.pattern} 的 cost_cents_per_unit=${String(price.cost_cents_per_unit)} 为非法数值，本次计价按 0 处理；请尽快修正价格簿（REL-11）`)
+      : this.warnDirtyData(`pricebook:${price.pattern}:cost`, t('价格簿 {pattern} 的 cost_cents_per_unit={value} 为非法数值，本次计价按 0 处理；请尽快修正价格簿（REL-11）', { pattern: price.pattern, value: String(price.cost_cents_per_unit) }))
     const step = Number.isFinite(price.units_per_step) && price.units_per_step > 0
       ? price.units_per_step
-      : this.warnDirtyData(`pricebook:${price.pattern}:step`, `价格簿 ${price.pattern} 的 units_per_step=${String(price.units_per_step)} 为非法数值（须为正数），本次计价按 0 处理；请尽快修正价格簿（REL-11）`)
+      : this.warnDirtyData(`pricebook:${price.pattern}:step`, t('价格簿 {pattern} 的 units_per_step={value} 为非法数值（须为正数），本次计价按 0 处理；请尽快修正价格簿（REL-11）', { pattern: price.pattern, value: String(price.units_per_step) }))
     const charge = step > 0 ? Math.round((meter.value / step) * listRate) : 0
     const cost = step > 0 ? Math.round((meter.value / step) * costRate) : 0
     const event: UsageEvent = {
@@ -314,7 +315,7 @@ export class UsageService extends Service {
     const inserted = this.ctx.txnStore.insertOrIgnore('usage_events', usageRow(event))
     if (!inserted) {
       const existing = this.ctx.txnStore.one<UsageRow>('usage_events', { idempotency_key: event.idempotency_key })
-      if (!existing) throw new Error(`幂等键异常：${event.idempotency_key} 已占用但记录缺失`)
+      if (!existing) throw new Error(t('幂等键异常：{key} 已占用但记录缺失', { key: event.idempotency_key }))
       // feedback 幂等口径（组4：同 messageId 改评分不双计）：键不含 score 段，score 随 meter unit
       // 落在内容里——同键改评属预期重放（first-write-wins，保留首次评分），不按内容冲突拒绝
       const sameContent = existing.org === event.org
@@ -323,7 +324,7 @@ export class UsageService extends Service {
         && existing.resource === event.resource
         && (existing.meters_json === JSON.stringify(event.meters) || event.idempotency_key.startsWith('feedback:'))
       if (!sameContent) {
-        throw new Error(`幂等键冲突：${event.idempotency_key} 已绑定事件 ${existing.id}，同键不同内容被拒绝`)
+        throw new Error(t('幂等键冲突：{key} 已绑定事件 {id}，同键不同内容被拒绝', { key: event.idempotency_key, id: existing.id }))
       }
       // 幂等重放：返回既有事件（计价快照以首次登记为准，不随费率变动重算）
       return rowToEvent(existing)
@@ -367,8 +368,8 @@ export class UsageService extends Service {
             error: error instanceof Error ? error.message : String(error), attempts: attempt,
           })
           this.ctx.platformBus.emit('audit.alert.fired', {
-            id: newId('alt'), severity: 'critical', title: 'usage 消费死信',
-            message: `消费方 ${consumerId} 处理事件 ${event.event_id} 连续失败 ${attempt} 次（含即时重试），已入死信，可通过 usage_deadletter_retry 重投`,
+            id: newId('alt'), severity: 'critical', title: t('usage 消费死信'),
+            message: t('消费方 {consumer} 处理事件 {id} 连续失败 {attempts} 次（含即时重试），已入死信，可通过 usage_deadletter_retry 重投', { consumer: consumerId, id: event.event_id, attempts: attempt }),
           })
         }
       }
@@ -411,7 +412,7 @@ export class UsageService extends Service {
       } catch (error) {
         this.deadLetters().insert({
           id: newId('dlq'), event_id: letter.event_id, consumer: letter.consumer,
-          error: `重投仍失败：${error instanceof Error ? error.message : String(error)}`, attempts: letter.attempts + 1,
+          error: t('重投仍失败：{message}', { message: error instanceof Error ? error.message : String(error) }), attempts: letter.attempts + 1,
         })
       }
     }
@@ -546,7 +547,7 @@ export class UsageService extends Service {
    * 权限分层由 HTTP 层负责：usage.read 可查任意主体，panel.read 只读自身组织（scope 收敛在端点做）。
    */
   summary(filter: { from: string; to: string; org?: string; subject?: string }): UsageSummary {
-    if (!filter.from || !filter.to) throw new Error('summary 需要 from/to 窗口')
+    if (!filter.from || !filter.to) throw new Error(t('summary 需要 from/to 窗口'))
     const conditions = ['e.occurred_at >= ?', 'e.occurred_at < ?']
     const params: Array<string | number> = [filter.from, filter.to]
     if (filter.org) { conditions.push('e.org = ?'); params.push(filter.org) }
@@ -649,7 +650,7 @@ export class UsageService extends Service {
    */
   monthlyReport(month?: string): MonthlyUsageReport {
     const period = month ?? new Date().toISOString().slice(0, 7)
-    if (!/^\d{4}-\d{2}$/.test(period)) throw new Error('报表月份格式应为 YYYY-MM')
+    if (!/^\d{4}-\d{2}$/.test(period)) throw new Error(t('报表月份格式应为 YYYY-MM'))
     const [from, to] = periodBoundsIso(period)
     // QA B-01：同 summary——子查询必须包进 SUM()，否则 GROUP BY 下每组只统计任意一行
     const tokensExpr = "COALESCE(SUM((SELECT SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)) FROM json_each(e.meters_json) m WHERE json_extract(m.value, '$.key') LIKE '%tokens%')), 0)"
@@ -692,7 +693,7 @@ export class UsageService extends Service {
    */
   costPenetration(month?: string): FinOpsCostPenetration {
     const period = month ?? new Date().toISOString().slice(0, 7)
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('报表月份格式应为 YYYY-MM（月份 01-12）')
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error(t('报表月份格式应为 YYYY-MM（月份 01-12）'))
     const [from, to] = periodBoundsIso(period)
     const [prevFrom, prevTo] = month === undefined ? currentPrevMonthBoundsIso() : prevMonthBoundsIso(period)
     const tokensExpr = "COALESCE(SUM((SELECT SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)) FROM json_each(e.meters_json) m WHERE json_extract(m.value, '$.key') LIKE '%tokens%')), 0)"
@@ -826,7 +827,7 @@ export class UsageService extends Service {
     let month = filter.month
     if (!from || !to) {
       month = month ?? new Date().toISOString().slice(0, 7)
-      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('报表月份格式应为 YYYY-MM（月份 01-12）')
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error(t('报表月份格式应为 YYYY-MM（月份 01-12）'))
       ;[from, to] = periodBoundsIso(month)
     }
     const idleWindowMs = Math.min(Math.max(Number(filter.idleWindowMinutes ?? 30), 1), 24 * 60) * 60_000
@@ -936,7 +937,7 @@ export class UsageService extends Service {
       ['units_per_step', entry.units_per_step, 1], // 计价除数：0 会产出 Infinity，负数会产出负金额
     ] as Array<[string, number, number]>) {
       if (!Number.isFinite(value) || value < min) {
-        throw new Error(`价格簿字段 ${field} 必须为有限数值且 ≥${min}，收到：${String(value)}`)
+        throw new Error(t('价格簿字段 {field} 必须为有限数值且 ≥{min}，收到：{value}', { field, min, value: String(value) }))
       }
     }
     const existing = this.priceBook().findOne((item) => item.pattern === entry.pattern)
@@ -951,7 +952,7 @@ export class UsageService extends Service {
     const prefix = book.filter((item) => item.pattern.endsWith(':*')).sort((a, b) => b.pattern.length - a.pattern.length)
       .find((item) => resource.startsWith(item.pattern.slice(0, -1)))
     if (prefix) return prefix
-    throw new Error(`资源 ${resource} 无计价规则：请先在价格簿登记（usage 价格簿）`)
+    throw new Error(t('资源 {resource} 无计价规则：请先在价格簿登记（usage 价格簿）', { resource }))
   }
 
   private ensureDefaultPriceBook(): void {
@@ -1005,7 +1006,7 @@ export class UsageService extends Service {
       const count = rows.reduce((sum, row) => sum + row.count, 0)
       // REL-11 读侧加固：投影集合中的存量脏行（非有限 charge_cents）按 0 计入对账，不再恒 mismatch 反复告警
       const charge = rows.reduce((sum, row) => sum + (Number.isFinite(row.charge_cents) ? row.charge_cents
-        : this.warnDirtyData(`projection-row:${consumerId}:${row.id}`, `usage 投影 ${consumerId} 窗口 ${row.window} 的 charge_cents 非有限（存量脏数据），对账按 0 计入（REL-11）`)), 0)
+        : this.warnDirtyData(`projection-row:${consumerId}:${row.id}`, t('usage 投影 {consumer} 窗口 {window} 的 charge_cents 非有限（存量脏数据），对账按 0 计入（REL-11）', { consumer: consumerId, window: row.window }))), 0)
       projections.push({
         consumer: consumerId,
         count,
@@ -1016,8 +1017,8 @@ export class UsageService extends Service {
     const mismatch = projections.some((item) => item.mismatch)
     if (mismatch) {
       this.ctx.platformBus.emit('audit.alert.fired', {
-        id: newId('alt'), severity: 'critical', title: 'usage 对账不平',
-        message: `usage 口径 count=${usageTotals.count} charge=${usageTotals.charge_cents} 分；消费方投影存在偏差：${JSON.stringify(projections)}`,
+        id: newId('alt'), severity: 'critical', title: t('usage 对账不平'),
+        message: t('usage 口径 count={count} charge={charge} 分；消费方投影存在偏差：{detail}', { count: usageTotals.count, charge: usageTotals.charge_cents, detail: JSON.stringify(projections) }),
       })
     }
     return { usage: { count: usageTotals.count, charge_cents: usageTotals.charge_cents }, projections, mismatch }
@@ -1030,7 +1031,7 @@ export class UsageService extends Service {
     // REL-11 读侧加固：存量脏事件的 charge_cents 非有限时按 0 投影（防对账口径持续失真），按事件去重告警
     const rawCharge = event.pricing.charge_cents
     const charge = Number.isFinite(rawCharge) ? rawCharge
-      : this.warnDirtyData(`projection:${event.event_id}`, `usage 事件 ${event.event_id} 的 pricing.charge_cents=${String(rawCharge)} 非有限（存量脏数据），本次投影按 0 计入（REL-11）`)
+      : this.warnDirtyData(`projection:${event.event_id}`, t('usage 事件 {id} 的 pricing.charge_cents={value} 非有限（存量脏数据），本次投影按 0 计入（REL-11）', { id: event.event_id, value: String(rawCharge) }))
     const existing = collection.findOne((row) => row.window === day)
     if (existing) {
       collection.update(existing.id, { count: existing.count + 1, charge_cents: existing.charge_cents + charge })
@@ -1070,8 +1071,8 @@ export class UsageService extends Service {
       if (ungranted.length > 0) {
         drift.push({ principal, consumed: [...consumedSet], granted, ungranted })
         this.ctx.platformBus.emit('audit.alert.fired', {
-          id: newId('alt'), severity: 'critical', title: 'usage 能力漂移',
-          message: `主体 ${principal} 实际消耗了未声明授权的资源：${ungranted.join(', ')}（运行时对账 M5）`,
+          id: newId('alt'), severity: 'critical', title: t('usage 能力漂移'),
+          message: t('主体 {principal} 实际消耗了未声明授权的资源：{resources}（运行时对账 M5）', { principal, resources: ungranted.join(', ') }),
           resourceType: 'usage_capability', resourceId: principal,
         })
       }
@@ -1093,7 +1094,7 @@ export class UsageService extends Service {
     if (!this.warnedDirtyKeys.has(key)) {
       this.warnedDirtyKeys.add(key)
       this.ctx.platformBus.emit('audit.alert.fired', {
-        id: newId('alt'), severity: 'warning', title: 'usage 脏数据按 0 兜底（REL-11）',
+        id: newId('alt'), severity: 'warning', title: t('usage 脏数据按 0 兜底（REL-11）'),
         message,
       })
     }
@@ -1101,16 +1102,16 @@ export class UsageService extends Service {
   }
 
   private validate(input: UsageRecordInput): void {
-    if (!input.org?.trim()) throw new Error('usage 事件 org 必填')
-    if (!input.subject?.trim()) throw new Error('usage 事件 subject 必填（user:<id> / agent:<id>）')
-    if (!input.principal?.trim()) throw new Error('usage 事件 principal 必填（org:<id> / plugin:<id> / platform）')
+    if (!input.org?.trim()) throw new Error(t('usage 事件 org 必填'))
+    if (!input.subject?.trim()) throw new Error(t('usage 事件 subject 必填（user:<id> / agent:<id>）'))
+    if (!input.principal?.trim()) throw new Error(t('usage 事件 principal 必填（org:<id> / plugin:<id> / platform）'))
     if (!input.resource?.trim() || !/^[a-z]+:[A-Za-z0-9._-]+$/.test(input.resource)) {
-      throw new Error(`usage 事件 resource 格式非法：${input.resource}（应为 model:<slug> / mcp:<slug> / plugin:<id> / skill:<id> / nas:<id> / app:<id> / kb:<orgId>）`)
+      throw new Error(t('usage 事件 resource 格式非法：{value}（应为 model:<slug> / mcp:<slug> / plugin:<id> / skill:<id> / nas:<id> / app:<id> / kb:<orgId>）', { value: String(input.resource) }))
     }
-    if (!Array.isArray(input.meters) || input.meters.length === 0) throw new Error('usage 事件 meters 至少一项')
+    if (!Array.isArray(input.meters) || input.meters.length === 0) throw new Error(t('usage 事件 meters 至少一项'))
     for (const meter of input.meters) {
-      if (!meter.key || !/^[a-z][a-z0-9_.]*$/.test(meter.key)) throw new Error(`计量键非法：${meter.key}（^[a-z][a-z0-9_.]*$）`)
-      if (!Number.isFinite(meter.value) || meter.value < 0) throw new Error(`计量值非法：${meter.key}=${meter.value}`)
+      if (!meter.key || !/^[a-z][a-z0-9_.]*$/.test(meter.key)) throw new Error(t('计量键非法：{key}（^[a-z][a-z0-9_.]*$）', { key: meter.key }))
+      if (!Number.isFinite(meter.value) || meter.value < 0) throw new Error(t('计量值非法：{key}={value}', { key: meter.key, value: meter.value }))
     }
   }
 

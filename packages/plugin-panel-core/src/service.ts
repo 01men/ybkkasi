@@ -27,6 +27,7 @@ import { PlatformEvents } from '../../platform-core/src/bus.ts'
 import type { SceneActivity, ScenegraphPack } from '../../platform-core/src/scenegraph.ts'
 import { ACTIVITY_LABELS } from '../../platform-core/src/scenegraph.ts'
 import { newId } from '../../platform-core/src/ids.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type { AuditLogRecord } from '../../plugin-audit/src/index.ts'
 
 // ---------------------------------------------------------------------------
@@ -255,7 +256,7 @@ export class PanelService extends Service {
 
   dept(dept: string): DeptConfigRecord {
     const config = this.deptConfigs().get(dept)
-    if (!config) throw new Error(`部门不存在：${dept}`)
+    if (!config) throw new Error(t('部门不存在：{dept}', { dept }))
     return config
   }
 
@@ -264,7 +265,7 @@ export class PanelService extends Service {
     const activation = this.activations().findOne((item) => item.orgId === orgId && item.status === 'active')
     if (!activation) return undefined
     const registry = INDUSTRY_REGISTRY.find((item) => item.code === activation.code)
-    return { code: activation.code.toLowerCase(), name: registry?.name ?? activation.code }
+    return { code: activation.code.toLowerCase(), name: registry ? t(registry.name) : activation.code }
   }
 
   // -- 账号组织打通：部门 ↔ 平台组织 -----------------------------------------
@@ -332,7 +333,7 @@ export class PanelService extends Service {
       const graphLoaded = this.ctx.scenegraphs.get(entry.code) !== undefined
       // 已激活但图谱包缺位（如被移除）→ 仍显示 active 但 graphLoaded=false，场景页诚实降级
       const pending = !active && pendingCodes.includes(entry.code)
-      return { ...entry, state: active ? 'active' : pending ? 'pending' : 'locked', graphLoaded }
+      return { ...entry, name: t(entry.name), sub: t(entry.sub), state: active ? 'active' : pending ? 'pending' : 'locked', graphLoaded } as IndustryRegistryEntry & { state: 'active' | 'pending' | 'locked'; graphLoaded: boolean }
     })
   }
 
@@ -344,8 +345,8 @@ export class PanelService extends Service {
     return async (payload, approverId) => {
       const code = String(payload.code ?? '')
       const orgId = String(payload.orgId ?? '')
-      if (!code || !orgId) throw new Error('行业激活审批单缺少 code/orgId')
-      if (!INDUSTRY_REGISTRY.some((item) => item.code === code)) throw new Error(`未登记行业：${code}`)
+      if (!code || !orgId) throw new Error(t('行业激活审批单缺少 code/orgId'))
+      if (!INDUSTRY_REGISTRY.some((item) => item.code === code)) throw new Error(t('未登记行业：{code}', { code }))
       const existing = this.activations().findOne((item) => item.orgId === orgId && item.code === code)
       if (existing) {
         this.activations().update(existing.id, { status: 'active', activatedAt: new Date().toISOString(), activatedBy: approverId })
@@ -379,7 +380,7 @@ export class PanelService extends Service {
   // -- widget 求值（照抄 portal.board() 的逐源独立降级范式） -------------------
 
   resolveWidgetSource(widget: DeptWidget): { rows: unknown[][]; degraded: boolean; sourceLabel: string } {
-    const labels = { manual: '手工登记', mock: '模拟数据', connector: '连接器', mcp: 'MCP' }
+    const labels = { manual: t('手工登记'), mock: t('模拟数据'), connector: t('连接器'), mcp: 'MCP' }
     if (widget.source === 'manual' || widget.source === 'mock') {
       return { rows: widget.rows, degraded: false, sourceLabel: labels[widget.source] }
     }
@@ -388,7 +389,7 @@ export class PanelService extends Service {
     return {
       rows: [],
       degraded: true,
-      sourceLabel: `${labels[widget.source]}（${widget.ref ?? '未配置'}）暂不可用——等待业务连接器接入`,
+      sourceLabel: t('{source}（{ref}）暂不可用——等待业务连接器接入', { source: labels[widget.source], ref: widget.ref ?? t('未配置') }),
     }
   }
 
@@ -399,7 +400,7 @@ export class PanelService extends Service {
         const resolved = this.resolveWidgetSource(widget)
         return { id: widget.id, type: widget.type, title: widget.title, ...(widget.live ? { live: true } : {}), source: resolved.sourceLabel, degraded: resolved.degraded, rows: resolved.rows }
       } catch {
-        return { id: widget.id, type: widget.type, title: widget.title, source: '求值失败', degraded: true, rows: [] as unknown[][] }
+        return { id: widget.id, type: widget.type, title: widget.title, source: t('求值失败'), degraded: true, rows: [] as unknown[][] }
       }
     })
   }
@@ -446,7 +447,7 @@ export class PanelService extends Service {
     skipAgentDispatch?: boolean
   }): Promise<MessageRecord> {
     const channel = this.channels().get(input.channelId)
-    if (!channel || channel.dept !== input.dept) throw new Error(`频道不存在或不属于该部门：${input.channelId}`)
+    if (!channel || channel.dept !== input.dept) throw new Error(t('频道不存在或不属于该部门：{channelId}', { channelId: input.channelId }))
     const mentions = extractMentions(input.text)
     const record = this.messages().insert({
       id: newId('pmsg'),
@@ -509,10 +510,10 @@ export class PanelService extends Service {
       return record
     }
     const fallbackToHuman = async (reason: string) => {
-      await reply(`「${agentCard.name}」暂不能自主应答：${reason}已转人工待办，请相关同事跟进。`)
+      await reply(t('「{name}」暂不能自主应答：{reason}已转人工待办，请相关同事跟进。', { name: agentCard.name, reason }))
       this.tasks().insert({
-        id: newId('ptask'), dept: dept.id, title: `跟进：${trigger.text.slice(0, 40)}`,
-        detail: `Agent「${agentCard.name}」不可用（${reason}），由消息 ${trigger.id} 转人工`,
+        id: newId('ptask'), dept: dept.id, title: t('跟进：{text}', { text: trigger.text.slice(0, 40) }),
+        detail: t('Agent「{name}」不可用（{reason}），由消息 {messageId} 转人工', { name: agentCard.name, reason, messageId: trigger.id }),
         lane: 'todo', assigneeType: 'human', createdBy: `agent:${agentCard.name}`, messageId: trigger.id,
       })
     }
@@ -525,10 +526,10 @@ export class PanelService extends Service {
     // 而降级路径（未绑定资产/未配置模型）会在本声明之前进入 reply——声明后置曾触发 TDZ
     // ReferenceError 令转人工任务落库被跳过（selftest「降级转人工待办落看板」实证）。
     const workforce = asset ? await this.managedWorkforceOf(asset.id) : undefined
-    if (!asset) return void fallbackToHuman('未绑定 Agent 资产（请在控制台「Agent 本体」登记并在此配置 agentRef）')
+    if (!asset) return void fallbackToHuman(t('未绑定 Agent 资产（请在控制台「Agent 本体」登记并在此配置 agentRef）'))
     // 模型取向：对话框显式切换的模型优先，未指定则跟随 Agent 资产的 model 属性
     const model = modelOverride ?? String((asset.attrs as Record<string, unknown> | undefined)?.model ?? '')
-    if (!model) return void fallbackToHuman('Agent 资产未配置模型（model 属性为空），且本次会话未指定模型')
+    if (!model) return void fallbackToHuman(t('Agent 资产未配置模型（model 属性为空），且本次会话未指定模型'))
     // 组装频道上下文（最近 8 条）+ 部门场景图谱摘要，单轮调用
     const recent = this.messages().find((m) => m.channelId === trigger.channelId).slice(-8)
     const contextText = recent.map((m) => `${m.senderName}: ${m.text}`).join('\n')
@@ -556,7 +557,7 @@ export class PanelService extends Service {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      await fallbackToHuman(`模型网关调用失败（${message}）。`)
+      await fallbackToHuman(t('模型网关调用失败（{message}）。', { message }))
       this.auditSafe({
         type: 'invoke', actorType: 'machine', actorId: `agent:${agentCard.name}`, actorName: agentCard.name,
         action: 'panel.agent.invoke', resourceType: 'agent', resourceId: asset.id, resourceName: agentCard.name,
@@ -603,7 +604,7 @@ export class PanelService extends Service {
       if (!port) return undefined
       const managed = await port.describeManagedAgent(agentId)
       if (!managed) return undefined
-      return { managed: true, employeeId: managed.employeeId, notice: '问答结果，不构成任务执行或交付验收' }
+      return { managed: true, employeeId: managed.employeeId, notice: t('问答结果，不构成任务执行或交付验收') }
     } catch {
       return undefined
     }
@@ -624,13 +625,13 @@ export class PanelService extends Service {
     const agentCard = dept.agents.find((card) => card.name === agentName)
     if (!agentCard) {
       const names = dept.agents.map((card) => card.name)
-      return { ok: false, reason: `部门 ${dept.id}（${dept.label}）名册无此 Agent。可用阵容：${names.join('、') || '（无）'}` }
+      return { ok: false, reason: t('部门 {dept}（{label}）名册无此 Agent。可用阵容：{names}', { dept: dept.id, label: dept.label, names: names.join('、') || t('（无）') }) }
     }
     const ref = agentCard.agentRef?.replace(/^agent:/, '') ?? ''
     const asset = ref ? this.ctx.resourceCore.list('agent').find((item) => item.id === ref || item.slug === ref || item.name === ref) : undefined
-    if (!asset) return { ok: false, reason: `Agent「${agentName}」未绑定 Agent 资产（agentRef），无法自主应答` }
+    if (!asset) return { ok: false, reason: t('Agent「{name}」未绑定 Agent 资产（agentRef），无法自主应答', { name: agentName }) }
     const model = options.modelOverride ?? String((asset.attrs as Record<string, unknown> | undefined)?.model ?? '')
-    if (!model) return { ok: false, reason: `Agent「${agentName}」未配置模型（model 属性为空），且本次未指定模型` }
+    if (!model) return { ok: false, reason: t('Agent「{name}」未配置模型（model 属性为空），且本次未指定模型', { name: agentName }) }
     // V16/D08 问答分型探测：命中受管员工 → 应答 additive 携带 workforce 标注（问答 ≠ 任务执行）；
     // 不新建 run、不改任务状态（问答与执行彻底分型）。
     const workforce = await this.managedWorkforceOf(asset.id)
@@ -669,7 +670,7 @@ export class PanelService extends Service {
         result: 'error', detail: `model=${model} 失败：${message}`,
         ...(options.sceneCode ? { sceneCode: options.sceneCode } : {}),
       })
-      return { ok: false, reason: `模型网关调用失败（${message}）` }
+      return { ok: false, reason: t('模型网关调用失败（{message}）', { message }) }
     } finally {
       // 与 invokeAgent 同风格的协作计量（org 主键缺省跳过；失败不阻塞应答）
       if (orgId) {
@@ -723,21 +724,21 @@ export class PanelService extends Service {
     options: { userId?: string; modelOverride?: string; contextNote?: string; sceneCode?: string } = {},
   ): Promise<{ ok: true; reply: string; model: string; skill: { name: string; version: string }; skillLoad?: PanelSkillLoad } | { ok: false; reason: string }> {
     const name = skillName.trim()
-    if (!name) return { ok: false, reason: '技能名为空（用 /技能名 或 panel_skill_invoke 点名）' }
+    if (!name) return { ok: false, reason: t('技能名为空（用 /技能名 或 panel_skill_invoke 点名）') }
     const orgId = this.callerOrgId(options.userId)
     const invokeable = this.listInvokeableSkills(orgId || undefined)
     // 按名全名匹配优先，slug 兜底（技能名常含中文与空格，通用 regex 兜不了）
     const skill = invokeable.find((item) => item.name === name) ?? invokeable.find((item) => item.slug === name)
     if (!skill) {
       const hint = this.ctx.skillHub.skills().all().find((item) => item.status === 'published' && (item.name === name || item.slug === name))
-      if (hint) return { ok: false, reason: `技能「${name}」未对当前用户组织开放（visibility=${hint.visibility}），无法直调` }
+      if (hint) return { ok: false, reason: t('技能「{name}」未对当前用户组织开放（visibility={visibility}），无法直调', { name, visibility: hint.visibility }) }
       const names = invokeable.slice(0, 8).map((item) => item.name)
-      return { ok: false, reason: `没有已上架且对您开放的技能「${name}」。可用技能：${names.join('、') || '（无）'}` }
+      return { ok: false, reason: t('没有已上架且对您开放的技能「{name}」。可用技能：{names}', { name, names: names.join('、') || t('（无）') }) }
     }
     const record = this.ctx.skillHub.skills().get(skill.id)
     const version = record?.versions.find((item) => item.version === skill.version && item.status === 'published')
     const content = version?.content?.trim() ?? ''
-    if (!content) return { ok: false, reason: `技能「${skill.name}」当前版本（${skill.version}）无指令内容，无法直调` }
+    if (!content) return { ok: false, reason: t('技能「{name}」当前版本（{version}）无指令内容，无法直调', { name: skill.name, version: skill.version }) }
     // D09/V16（additive）证据化加载：本次实际加载的技能 ID/版本/内容摘要随应答返回，
     // 供「安装版本 ↔ 加载摘要 ↔ 实际使用」三方对账（摘要现场计算，不落库不改 skillhub schema）。
     const skillLoad: PanelSkillLoad = {
@@ -751,7 +752,7 @@ export class PanelService extends Service {
     if (!model) {
       // 只自动选「在线且已配 endpoint」的模型——无 endpoint 的模型调用必失败，不应被自动选中
       const online = this.ctx.modelGateway.models().all().filter((item) => item.status === 'online' && item.endpoint.trim() !== '')
-      if (online.length === 0) return { ok: false, reason: '模型目录暂无在线模型——请管理员在「模型管理」中接入后再直调技能' }
+      if (online.length === 0) return { ok: false, reason: t('模型目录暂无在线模型——请管理员在「模型管理」中接入后再直调技能') }
       model = online[0]!.slug
     }
     const systemPrompt = [
@@ -788,7 +789,7 @@ export class PanelService extends Service {
         result: 'error', detail: `model=${model} 失败：${reason}`,
         ...(options.sceneCode ? { sceneCode: options.sceneCode } : {}),
       })
-      return { ok: false, reason: `模型网关调用失败（${reason}）` }
+      return { ok: false, reason: t('模型网关调用失败（{message}）', { message: reason }) }
     } finally {
       // 与 askAgent 同风格的协作计量（org 主键缺省跳过；失败不阻塞回包）
       if (orgId) {
@@ -825,25 +826,25 @@ export class PanelService extends Service {
 
   async cardAction(input: { messageId: string; opId: string; actorId: string; actorName: string; reason?: string }): Promise<{ message: MessageRecord; result: string }> {
     const message = this.messages().get(input.messageId)
-    if (!message?.card) throw new Error(`消息不存在或无操作卡片：${input.messageId}`)
+    if (!message?.card) throw new Error(t('消息不存在或无操作卡片：{id}', { id: input.messageId }))
     const op = message.card.ops.find((item) => item.id === input.opId)
-    if (!op) throw new Error(`操作项不存在：${input.opId}`)
-    if (message.card.done.includes(input.opId)) throw new Error('该操作已执行过（幂等保护）')
-    let result = '已记录'
+    if (!op) throw new Error(t('操作项不存在：{id}', { id: input.opId }))
+    if (message.card.done.includes(input.opId)) throw new Error(t('该操作已执行过（幂等保护）'))
+    let result = t('已记录')
     const action = op.action ?? 'ack'
     if (action === 'task.create') {
       this.tasks().insert({
         id: newId('ptask'), dept: message.dept, title: message.card.title,
-        detail: `来自消息卡片（${input.actorName} 确认）`, lane: 'todo', assigneeType: 'human',
+        detail: t('来自消息卡片（{actor} 确认）', { actor: input.actorName }), lane: 'todo', assigneeType: 'human',
         sceneCode: message.sceneCode, createdBy: input.actorId, messageId: message.id,
       })
-      result = `已生成任务：${message.card.title}`
+      result = t('已生成任务：{title}', { title: message.card.title })
     } else if (action === 'task.transition') {
       const task = this.tasks().find((item) => item.messageId === message.id).at(-1)
         ?? this.tasks().find((item) => item.dept === message.dept && item.lane !== 'done').at(-1)
-      if (!task) throw new Error('没有可流转的关联任务')
+      if (!task) throw new Error(t('没有可流转的关联任务'))
       this.transitionTask(task.id, op.lane ?? 'doing', input.actorId)
-      result = `任务 ${task.title} → ${LANE_LABELS[op.lane ?? 'doing']}`
+      result = t('任务 {title} → {lane}', { title: task.title, lane: t(LANE_LABELS[op.lane ?? 'doing']) })
     } else if (action === 'approval.request') {
       const approval = this.ctx.audit.createApproval({
         kind: 'panel.card-action',
@@ -853,10 +854,10 @@ export class PanelService extends Service {
         // QA A-06：卡片未声明风险级时缺省 high（fail-closed），不再「一次 approve 即执行」
         riskLevel: op.risk ?? 'high',
       })
-      result = `已提交审批（${approval.id}），在审批中心跟进`
+      result = t('已提交审批（{approvalId}），在审批中心跟进', { approvalId: approval.id })
     } else if (action === 'dd.push') {
       // 桥接订阅 panel.card.action（action=dd.push）执行投递；此处仅置意图与留痕
-      result = '已请求推送钉钉'
+      result = t('已请求推送钉钉')
     }
     const done = [...message.card.done, input.opId]
     this.messages().update(message.id, { card: { ...message.card, done } })
@@ -901,8 +902,8 @@ export class PanelService extends Service {
 
   transitionTask(taskId: string, lane: TaskLane, actorId: string): TaskRecord {
     const task = this.tasks().get(taskId)
-    if (!task) throw new Error(`任务不存在：${taskId}`)
-    if (!TASK_LANES.includes(lane)) throw new Error(`非法泳道：${lane}`)
+    if (!task) throw new Error(t('任务不存在：{id}', { id: taskId }))
+    if (!TASK_LANES.includes(lane)) throw new Error(t('非法泳道：{lane}', { lane }))
     const updated = this.tasks().update(taskId, { lane })
     this.ctx.platformBus.emit(PlatformEvents.PanelTaskUpdated, { taskId, dept: task.dept, lane, actorId, title: task.title })
     this.auditSafe({
@@ -920,24 +921,25 @@ export class PanelService extends Service {
   /** 场景编号规范引用（如 QB01-A-2-5）——会话产出沉淀回转型路线图的联动点。 */
   sceneContext(code: string): { pack: ScenegraphPack; activityLabel: string; sceneLabel: string } {
     const hit = this.ctx.scenegraphs.findScene(code)
-    if (!hit) throw new Error(`场景编号在已装载图谱中不存在：${code}`)
-    return { pack: hit.pack, activityLabel: ACTIVITY_LABELS[hit.activity], sceneLabel: `${hit.scene.name}（现状 ${'★'.repeat(hit.scene.s)}${'☆'.repeat(4 - hit.scene.s)}）` }
+    if (!hit) throw new Error(t('场景编号在已装载图谱中不存在：{code}', { code }))
+    const sceneLabel = t('{name}（现状 {stars}）', { name: hit.scene.name, stars: `${'★'.repeat(hit.scene.s)}${'☆'.repeat(4 - hit.scene.s)}` })
+    return { pack: hit.pack, activityLabel: ACTIVITY_LABELS[hit.activity], sceneLabel }
   }
 
   async diagnose(input: { dept: string; sceneCode: string; actorId: string; actorName: string }): Promise<{ message: MessageRecord; task: TaskRecord }> {
     const dept = this.dept(input.dept)
     const { pack, sceneLabel } = this.sceneContext(input.sceneCode)
     const channel = this.channels().find((item) => item.dept === input.dept).at(0)
-    if (!channel) throw new Error(`部门 ${dept.label} 暂无协作频道，请先建频道`)
+    if (!channel) throw new Error(t('部门 {label} 暂无协作频道，请先建频道', { label: dept.label }))
     const agentCard = dept.agents[0]
-    const text = `@${agentCard.name} 请对「${pack.name}」场景「${sceneLabel}」（${input.sceneCode}）做数字化诊断，按一图四清单框架评估差距/选型/优先级。`
+    const text = t('@{agent} 请对「{pack}」场景「{scene}」（{code}）做数字化诊断，按一图四清单框架评估差距/选型/优先级。', { agent: agentCard.name, pack: pack.name, scene: sceneLabel, code: input.sceneCode })
     const message = await this.sendMessage({
       dept: input.dept, channelId: channel.id, senderType: 'human', senderId: input.actorId,
       senderName: input.actorName, text, ddSync: false, sceneCode: input.sceneCode,
     })
     const task = this.createTask({
-      dept: input.dept, title: `场景诊断：${input.sceneCode} ${sceneLabel}`,
-      detail: `派 ${agentCard.name} 按一图四清单框架诊断（来自场景图谱 ${pack.code}）`,
+      dept: input.dept, title: t('场景诊断：{code} {scene}', { code: input.sceneCode, scene: sceneLabel }),
+      detail: t('派 {agent} 按一图四清单框架诊断（来自场景图谱 {pack}）', { agent: agentCard.name, pack: pack.code }),
       lane: 'todo', assigneeType: 'agent', assigneeName: agentCard.name,
       sceneCode: input.sceneCode, createdBy: input.actorId,
     })

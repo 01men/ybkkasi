@@ -16,6 +16,7 @@ import {
   type Collection, type RecordBase,
 } from '../../platform-core/src/index.ts'
 import { PermissionCatalog, SYSTEM_ACTOR } from '../../plugin-iam/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import * as authnTools from './tools.ts'
 import { OidcService } from './oidc.ts'
 import { EntryTicketService } from './entry-ticket.ts'
@@ -177,18 +178,18 @@ export class AuthnService extends Service {
     ctx.platformBus.on(PlatformEvents.UserFrozen, (payload) => {
       const { userId, reason } = payload as { userId: string; reason: string }
       const principal = this.humanPrincipal(userId)
-      if (principal) this.revokePrincipalTokens(principal.id, `账号冻结联动：${reason}`)
+      if (principal) this.revokePrincipalTokens(principal.id, t('账号冻结联动：{reason}', { reason }))
     })
     ctx.platformBus.on(PlatformEvents.AgentOfflined, (payload) => {
       const { id } = payload as { id: string }
       for (const principal of this.principals().find((item) => item.refType === 'agent' && item.refId === id)) {
-        this.disablePrincipal(principal.id, 'Agent 下线联动')
+        this.disablePrincipal(principal.id, t('Agent 下线联动'))
       }
     })
     ctx.platformBus.on(PlatformEvents.AppOfflined, (payload) => {
       const { id } = payload as { id: string }
       for (const principal of this.principals().find((item) => item.refType === 'app' && item.refId === id)) {
-        this.disablePrincipal(principal.id, '应用下线联动')
+        this.disablePrincipal(principal.id, t('应用下线联动'))
       }
     })
   }
@@ -249,9 +250,9 @@ export class AuthnService extends Service {
     const hash = sha256Hex(refreshToken)
     const recordId = this.refreshIndex.get(hash)
     const record = recordId ? this.tokens().get(recordId) : undefined
-    if (!record || record.kind !== 'refresh') throw new Error('refresh token 无效')
-    if (record.revokedAt) throw new Error('refresh token 已吊销：' + (record.revokedReason ?? ''))
-    if (new Date(record.expiresAt).getTime() < Date.now()) throw new Error('refresh token 已过期，请重新登录')
+    if (!record || record.kind !== 'refresh') throw new Error(t('refresh token 无效'))
+    if (record.revokedAt) throw new Error(t('refresh token 已吊销：{reason}', { reason: record.revokedReason ?? '' }))
+    if (new Date(record.expiresAt).getTime() < Date.now()) throw new Error(t('refresh token 已过期，请重新登录'))
     if (record.rotatedAt) {
       const rotatedAtMs = new Date(record.rotatedAt).getTime()
       const withinGrace = Date.now() - rotatedAtMs <= REFRESH_GRACE_MS
@@ -267,10 +268,10 @@ export class AuthnService extends Service {
         }
         // 窗口内超限：仅拒绝该次请求（bounded minting 兜底），不牵连整链——多标签风暴的第
         // N+1 个标签退化为重新登录，已签发的兄弟对不受影响。
-        throw new Error(`refresh token 宽限兑换已达上限（${REFRESH_GRACE_MAX_REDEMPTIONS} 次），请重新登录`)
+        throw new Error(t('refresh token 宽限兑换已达上限（{n} 次），请重新登录', { n: REFRESH_GRACE_MAX_REDEMPTIONS }))
       }
-      this.revokeChain(record.chainId ?? '', 'refresh token 重放检测（原轮转于 ' + record.rotatedAt + '）')
-      throw new Error('检测到 refresh token 重放：该会话整链已吊销，请重新登录')
+      this.revokeChain(record.chainId ?? '', t('refresh token 重放检测（原轮转于 {at}）', { at: record.rotatedAt }))
+      throw new Error(t('检测到 refresh token 重放：该会话整链已吊销，请重新登录'))
     }
     this.tokens().update(record.id, { rotatedAt: new Date().toISOString() })
     return this.issueSessionPair(record.principalId, {
@@ -317,7 +318,7 @@ export class AuthnService extends Service {
       ? this.ctx.iam.getAuthProviderByConfig(options.configId)
       : this.ctx.iam.getAuthProvider(provider)
     if (options.configId !== undefined && adapter.type !== provider) {
-      throw new Error(`连接器实例（${options.configId}）平台类型 ${adapter.type} 与请求 provider ${provider} 不一致`)
+      throw new Error(t('连接器实例（{configId}）平台类型 {type} 与请求 provider {provider} 不一致', { configId: options.configId, type: adapter.type, provider }))
     }
     const state = randomUUID().replace(/-/g, '')
     this.oauthStates().insert({
@@ -344,10 +345,10 @@ export class AuthnService extends Service {
    */
   async completeSso(provider: string, code: string, state: string): Promise<{ kind: 'hit'; session: { token: string; refreshToken: string; access: TokenRecord; sid: string }; userId: string } | { kind: 'pending'; pendingTicket: string; profileName: string }> {
     const stateRecord = this.oauthStates().get(state)
-    if (!stateRecord) throw new Error('state 无效（未发起授权或已消费）')
-    if (stateRecord.consumedAt) throw new Error('state 已被使用（防重放）')
-    if (stateRecord.purpose === 'bind') throw new Error('state 用途为账号绑定，不能用于登录')
-    if (Date.now() - new Date(stateRecord.createdAt).getTime() > 10 * 60_000) throw new Error('state 已过期')
+    if (!stateRecord) throw new Error(t('state 无效（未发起授权或已消费）'))
+    if (stateRecord.consumedAt) throw new Error(t('state 已被使用（防重放）'))
+    if (stateRecord.purpose === 'bind') throw new Error(t('state 用途为账号绑定，不能用于登录'))
+    if (Date.now() - new Date(stateRecord.createdAt).getTime() > 10 * 60_000) throw new Error(t('state 已过期'))
     this.oauthStates().update(state, { consumedAt: new Date().toISOString() })
 
     // 多主体：以 state 记录为准（provider 参数仅兼容旧调用）；configId 命中时按配置实例取适配器
@@ -362,8 +363,8 @@ export class AuthnService extends Service {
     const link = this.ctx.iam.findLinkByProfile(ssoProvider, profile.providerUserId, profile.corpId)
     if (link) {
       const user = this.ctx.iam.users().get(link.userId)
-      if (!user) throw new Error('身份链接指向的账号不存在')
-      if (user.status !== 'active') throw new Error('账号状态异常，无法登录')
+      if (!user) throw new Error(t('身份链接指向的账号不存在'))
+      if (user.status !== 'active') throw new Error(t('账号状态异常，无法登录'))
       const principal = this.ensureHumanPrincipal(user.id, user.displayName)
       const session = this.issueSessionPair(principal.id, { issuedBy: 'sso:' + ssoProvider })
       this.ctx.iam.markLogin(user.id)
@@ -389,7 +390,7 @@ export class AuthnService extends Service {
   /** 读取 state 记录的用途（回调路由分发用；不消费）。 */
   peekOAuthState(state: string): { provider: string; purpose: 'login' | 'bind'; userId?: string; configId?: string } {
     const record = this.oauthStates().get(state)
-    if (!record) throw new Error('state 无效（未发起授权或已消费）')
+    if (!record) throw new Error(t('state 无效（未发起授权或已消费）'))
     return {
       provider: record.provider,
       purpose: record.purpose ?? 'login',
@@ -405,11 +406,11 @@ export class AuthnService extends Service {
    */
   async completeSsoBind(code: string, state: string): Promise<{ userId: string; provider: string; displayName: string; providerUserId: string }> {
     const stateRecord = this.oauthStates().get(state)
-    if (!stateRecord) throw new Error('state 无效（未发起授权或已消费）')
-    if (stateRecord.consumedAt) throw new Error('state 已被使用（防重放）')
-    if ((stateRecord.purpose ?? 'login') !== 'bind') throw new Error('state 用途不是账号绑定')
-    if (!stateRecord.userId) throw new Error('绑定目标账号缺失，请重新发起绑定')
-    if (Date.now() - new Date(stateRecord.createdAt).getTime() > 10 * 60_000) throw new Error('state 已过期')
+    if (!stateRecord) throw new Error(t('state 无效（未发起授权或已消费）'))
+    if (stateRecord.consumedAt) throw new Error(t('state 已被使用（防重放）'))
+    if ((stateRecord.purpose ?? 'login') !== 'bind') throw new Error(t('state 用途不是账号绑定'))
+    if (!stateRecord.userId) throw new Error(t('绑定目标账号缺失，请重新发起绑定'))
+    if (Date.now() - new Date(stateRecord.createdAt).getTime() > 10 * 60_000) throw new Error(t('state 已过期'))
     this.oauthStates().update(state, { consumedAt: new Date().toISOString() })
 
     // 多主体：state 携带 configId 时按配置实例取适配器，否则取该 provider 第一个（旧行为）
@@ -421,14 +422,14 @@ export class AuthnService extends Service {
     const profile = adapter.normalizeProfile(raw)
 
     const user = this.ctx.iam.users().get(stateRecord.userId)
-    if (!user) throw new Error('绑定目标账号不存在')
-    if (user.status === 'deactivated') throw new Error('绑定目标账号已注销')
+    if (!user) throw new Error(t('绑定目标账号不存在'))
+    if (user.status === 'deactivated') throw new Error(t('绑定目标账号已注销'))
     const existing = this.ctx.iam.findLinkByProfile(stateRecord.provider, profile.providerUserId, profile.corpId)
     if (existing && existing.userId !== user.id) {
-      throw new Error('该钉钉身份已绑定其他平台账号（一人一号）')
+      throw new Error(t('该钉钉身份已绑定其他平台账号（一人一号）'))
     }
     if (user.bindings.some((item) => item.provider === stateRecord.provider) && !existing) {
-      throw new Error('该账号已绑定钉钉身份，请先解绑再重新绑定')
+      throw new Error(t('该账号已绑定钉钉身份，请先解绑再重新绑定'))
     }
     if (!existing) {
       this.ctx.iam.linkIdentity(user.id, {
@@ -472,7 +473,7 @@ export class AuthnService extends Service {
     const ticket = this.consumeTicket(pendingTicket)
     void ticket
     const defaultOrg = this.ctx.iam.orgs().all()[0]
-    if (!defaultOrg) throw new Error('平台尚未初始化组织，无法注册')
+    if (!defaultOrg) throw new Error(t('平台尚未初始化组织，无法注册'))
     const username = ticket.provider + '_' + (ticket.profile['providerUserId'] ?? '')
     const { user } = this.ctx.iam.createUser({
       username,
@@ -496,17 +497,17 @@ export class AuthnService extends Service {
   /** 读取票据（不消费）。 */
   private peekTicket(pendingTicket: string): { provider: string; profile: Record<string, string> } {
     const ticket = this.ssoTickets().get(pendingTicket)
-    if (!ticket) throw new Error('待绑定票据无效')
-    if (ticket.usedAt) throw new Error('票据已被使用')
-    if (new Date(ticket.expiresAt).getTime() < Date.now()) throw new Error('票据已过期，请重新发起授权')
+    if (!ticket) throw new Error(t('待绑定票据无效'))
+    if (ticket.usedAt) throw new Error(t('票据已被使用'))
+    if (new Date(ticket.expiresAt).getTime() < Date.now()) throw new Error(t('票据已过期，请重新发起授权'))
     return { provider: ticket.provider, profile: ticket.profile }
   }
 
   private consumeTicket(pendingTicket: string): { provider: string; profile: Record<string, string> } {
     const ticket = this.ssoTickets().get(pendingTicket)
-    if (!ticket) throw new Error('待绑定票据无效')
-    if (ticket.usedAt) throw new Error('票据已被使用')
-    if (new Date(ticket.expiresAt).getTime() < Date.now()) throw new Error('票据已过期，请重新发起授权')
+    if (!ticket) throw new Error(t('待绑定票据无效'))
+    if (ticket.usedAt) throw new Error(t('票据已被使用'))
+    if (new Date(ticket.expiresAt).getTime() < Date.now()) throw new Error(t('票据已过期，请重新发起授权'))
     this.ssoTickets().update(pendingTicket, { usedAt: new Date().toISOString() })
     return { provider: ticket.provider, profile: ticket.profile }
   }
@@ -614,7 +615,7 @@ export class AuthnService extends Service {
   }): { principal: PrincipalRecord; clientId: string; clientSecret: string } {
     this.assertMachineScopes(input.scopes)
     this.assertMachineRoles(input.roleIds ?? [])
-    if ((input.roleIds ?? []).length === 0 && input.scopes.length === 0) throw new Error('授权不能为空：至少选择机器角色或附加权限点')
+    if ((input.roleIds ?? []).length === 0 && input.scopes.length === 0) throw new Error(t('授权不能为空：至少选择机器角色或附加权限点'))
     const clientId = `mc-${newId('id').slice(3)}`
     const clientSecret = generateSecret('cs')
     const principal = this.principals().insert({
@@ -634,7 +635,7 @@ export class AuthnService extends Service {
 
   disablePrincipal(id: string, reason: string): PrincipalRecord {
     const principal = this.principals().get(id)
-    if (!principal) throw new Error(`身份不存在：${id}`)
+    if (!principal) throw new Error(t('身份不存在：{id}', { id }))
     this.revokePrincipalTokens(id, reason)
     return this.principals().update(id, { status: 'disabled' })
   }
@@ -643,18 +644,18 @@ export class AuthnService extends Service {
   private assertMachineScopes(scopes: string[]): void {
     if (scopes.length === 0) return
     if (scopes.includes('*')) {
-      if (scopes.length !== 1) throw new Error("'*' 不可与其他权限点混用")
+      if (scopes.length !== 1) throw new Error(t("'*' 不可与其他权限点混用"))
       return
     }
     const catalog = new Set(PermissionCatalog.map((item) => item.point))
     const invalid = scopes.filter((scope) => !catalog.has(scope))
-    if (invalid.length > 0) throw new Error(`非法权限点：${invalid.join('、')}（须为权限目录中的点，或仅 '*'）`)
+    if (invalid.length > 0) throw new Error(t('非法权限点：{points}（须为权限目录中的点，或仅 \'*\'）', { points: invalid.join('、') }))
   }
 
   /** 校验机器角色引用：角色必须真实存在（共用 iam:roles 存储）。 */
   private assertMachineRoles(roleIds: string[]): void {
     for (const roleId of roleIds) {
-      if (!this.ctx.iam.roles().get(roleId)) throw new Error(`机器角色不存在：${roleId}`)
+      if (!this.ctx.iam.roles().get(roleId)) throw new Error(t('机器角色不存在：{id}', { id: roleId }))
     }
   }
 
@@ -669,29 +670,29 @@ export class AuthnService extends Service {
   /** 调整机器身份授权（机器角色 / 附加权限点）；联动吊销全部存量令牌（收权即时生效，下次换牌按新范围签发）。 */
   updateMachineScopes(id: string, patch: { roleIds?: string[]; scopes?: string[] }): PrincipalRecord {
     const principal = this.principals().get(id)
-    if (!principal) throw new Error(`身份不存在：${id}`)
-    if (principal.type !== 'machine') throw new Error('仅机器身份支持调整权限范围')
+    if (!principal) throw new Error(t('身份不存在：{id}', { id }))
+    if (principal.type !== 'machine') throw new Error(t('仅机器身份支持调整权限范围'))
     const roleIds = patch.roleIds ?? principal.roleIds ?? []
     const scopes = patch.scopes ?? principal.scopes
     this.assertMachineScopes(scopes)
     this.assertMachineRoles(roleIds)
-    if (roleIds.length === 0 && scopes.length === 0) throw new Error('授权不能为空：至少保留机器角色或附加权限点')
+    if (roleIds.length === 0 && scopes.length === 0) throw new Error(t('授权不能为空：至少保留机器角色或附加权限点'))
     const updated = this.principals().update(id, {
       ...(patch.roleIds !== undefined ? { roleIds } : {}),
       ...(patch.scopes !== undefined ? { scopes } : {}),
     })
-    this.revokePrincipalTokens(id, '权限范围调整联动')
+    this.revokePrincipalTokens(id, t('权限范围调整联动'))
     return updated
   }
 
   /** 轮换机器凭证密钥：clientId 不变，旧 secret 立即失效，存量令牌全部吊销；新 secret 仅此一次返回。 */
   rotateMachineCredential(id: string): { principal: PrincipalRecord; clientSecret: string } {
     const principal = this.principals().get(id)
-    if (!principal) throw new Error(`身份不存在：${id}`)
-    if (principal.type !== 'machine' || !principal.clientId) throw new Error('仅机器凭证（clientId/clientSecret）支持轮换')
+    if (!principal) throw new Error(t('身份不存在：{id}', { id }))
+    if (principal.type !== 'machine' || !principal.clientId) throw new Error(t('仅机器凭证（clientId/clientSecret）支持轮换'))
     const clientSecret = generateSecret('cs')
     const updated = this.principals().update(id, { clientSecretHash: sha256Hex(clientSecret) })
-    this.revokePrincipalTokens(id, '凭证轮换联动')
+    this.revokePrincipalTokens(id, t('凭证轮换联动'))
     return { principal: updated, clientSecret }
   }
 
@@ -715,7 +716,7 @@ export class AuthnService extends Service {
     const remainMs = new Date(record.lockedUntil).getTime() - Date.now()
     if (remainMs > 0) {
       const minutes = Math.ceil(remainMs / 60_000)
-      throw new Error(`失败次数过多已锁定：请约 ${minutes} 分钟后重试（或联系管理员重置）`)
+      throw new Error(t('失败次数过多已锁定：请约 {minutes} 分钟后重试（或联系管理员重置）', { minutes }))
     }
   }
 
@@ -741,8 +742,8 @@ export class AuthnService extends Service {
       patch.lockedUntil = new Date(now + lockMs).toISOString()
       patch.fails = 0
       this.ctx.platformBus.emit(PlatformEvents.AlertFired, {
-        id: newId('alt'), severity: 'warning', title: '登录失败锁定触发',
-        message: `主体 ${key} 在 ${LOGIN_WINDOW_MS / 60_000} 分钟内连续失败 ${LOGIN_MAX_FAILS} 次，锁定 ${Math.round(lockMs / 60_000)} 分钟（暴力破解防护）`,
+        id: newId('alt'), severity: 'warning', title: t('登录失败锁定触发'),
+        message: t('主体 {key} 在 {window} 分钟内连续失败 {maxFails} 次，锁定 {lockMinutes} 分钟（暴力破解防护）', { key, window: LOGIN_WINDOW_MS / 60_000, maxFails: LOGIN_MAX_FAILS, lockMinutes: Math.round(lockMs / 60_000) }),
         resourceType: 'authn', resourceId: key,
       })
     }
@@ -779,10 +780,10 @@ export class AuthnService extends Service {
     const principal = this.principals().findOne((item) => item.clientId === clientId)
     if (!principal || principal.clientSecretHash !== sha256Hex(clientSecret)) {
       this.recordLoginFailure(throttleKey)
-      throw new Error('client_id 或 client_secret 错误')
+      throw new Error(t('client_id 或 client_secret 错误'))
     }
     this.recordLoginSuccess(throttleKey)
-    if (principal.status !== 'active') throw new Error('机器身份已禁用')
+    if (principal.status !== 'active') throw new Error(t('机器身份已禁用'))
     const { token, record } = this.issueToken(principal.id, {
       kind: 'machine',
       ttlHours: 2,
@@ -806,14 +807,14 @@ export class AuthnService extends Service {
     chainId?: string
   }): { token: string; record: TokenRecord } {
     const principal = this.principals().get(principalId)
-    if (!principal) throw new Error(`身份不存在：${principalId}`)
-    if (principal.status !== 'active') throw new Error('身份已禁用，无法签发令牌')
+    if (!principal) throw new Error(t('身份不存在：{id}', { id: principalId }))
+    if (principal.status !== 'active') throw new Error(t('身份已禁用，无法签发令牌'))
     // 插件受众收敛面（v1.2 第 1 步）：aud 为 plugin:<id> 时，scope 必须全部落在该插件命名空间内
     if (options.audience?.startsWith('plugin:')) {
       const namespace = `${options.audience}:`
       const offender = (options.scopes ?? []).find((scope) => scope !== '*' && !scope.startsWith(namespace))
       if (offender !== undefined) {
-        throw new Error(`插件令牌 scope 越界：${offender} 不在命名空间 ${namespace} 内`)
+        throw new Error(t('插件令牌 scope 越界：{scope} 不在命名空间 {namespace} 内', { scope: offender, namespace }))
       }
     }
     const jti = randomUUID()
@@ -854,7 +855,7 @@ export class AuthnService extends Service {
   /** on-behalf-of：以当前主体身份为另一主体签发透传令牌（act 链叠加）。 */
   issueOnBehalfOf(parent: VerifiedPrincipal, targetPrincipalId: string): { token: string; record: TokenRecord } {
     const target = this.principals().get(targetPrincipalId)
-    if (!target) throw new Error(`目标身份不存在：${targetPrincipalId}`)
+    if (!target) throw new Error(t('目标身份不存在：{id}', { id: targetPrincipalId }))
     const actChain: ActEntry[] = [
       ...parent.actChain,
       { principalId: parent.principal.id, name: parent.principal.name, type: parent.principal.type },
@@ -874,26 +875,26 @@ export class AuthnService extends Service {
    */
   verify(tokenString: string, options: { audience?: string } = {}): VerifiedPrincipal {
     const parts = tokenString.split('.')
-    if (parts.length !== 3 || parts[0] !== 'dst1') throw new Error('令牌格式不合法')
-    if (!this.signatureMatches(parts[1]!, parts[2]!)) throw new Error('令牌签名校验失败')
+    if (parts.length !== 3 || parts[0] !== 'dst1') throw new Error(t('令牌格式不合法'))
+    if (!this.signatureMatches(parts[1]!, parts[2]!)) throw new Error(t('令牌签名校验失败'))
     let payload: any
     try {
       payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'))
     } catch {
-      throw new Error('令牌载荷解析失败')
+      throw new Error(t('令牌载荷解析失败'))
     }
-    if (payload.iss !== 'dsh-ops-authn') throw new Error('令牌签发方（iss）不匹配')
-    if (payload.exp * 1000 < Date.now()) throw new Error('令牌已过期')
+    if (payload.iss !== 'dsh-ops-authn') throw new Error(t('令牌签发方（iss）不匹配'))
+    if (payload.exp * 1000 < Date.now()) throw new Error(t('令牌已过期'))
     if (options.audience !== undefined) {
-      if (payload.aud === undefined) throw new Error('令牌未绑定受众（aud），目标服务要求受众校验')
-      if (payload.aud !== options.audience) throw new Error(`令牌受众不匹配：期望 ${options.audience}，实际 ${payload.aud}`)
+      if (payload.aud === undefined) throw new Error(t('令牌未绑定受众（aud），目标服务要求受众校验'))
+      if (payload.aud !== options.audience) throw new Error(t('令牌受众不匹配：期望 {expected}，实际 {actual}', { expected: options.audience, actual: payload.aud }))
     }
     const record = this.tokens().get(payload.jti)
-    if (!record) throw new Error('令牌不存在或已被清理')
-    if (record.revokedAt) throw new Error(`令牌已被吊销：${record.revokedReason ?? '策略吊销'}`)
+    if (!record) throw new Error(t('令牌不存在或已被清理'))
+    if (record.revokedAt) throw new Error(t('令牌已被吊销：{reason}', { reason: record.revokedReason ?? t('策略吊销') }))
     const principal = this.principals().get(record.principalId)
-    if (!principal) throw new Error('令牌主体不存在')
-    if (principal.status !== 'active') throw new Error('令牌主体已禁用')
+    if (!principal) throw new Error(t('令牌主体不存在'))
+    if (principal.status !== 'active') throw new Error(t('令牌主体已禁用'))
     // 人机均实时解析：human 按用户角色、machine 按机器角色+附加权限点，角色变更即时同步到存量令牌
     let scopes = principal.type === 'human'
       ? this.ctx.iam.userPermissions(principal.refId ?? '')
@@ -914,7 +915,7 @@ export class AuthnService extends Service {
 
   revokeToken(jti: string, reason: string): TokenRecord {
     const record = this.tokens().get(jti)
-    if (!record) throw new Error(`令牌不存在：${jti}`)
+    if (!record) throw new Error(t('令牌不存在：{id}', { id: jti }))
     if (record.revokedAt) return record
     const updated = this.tokens().update(record.id, {
       revokedAt: new Date().toISOString(),

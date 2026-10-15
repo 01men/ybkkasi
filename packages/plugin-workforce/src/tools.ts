@@ -10,6 +10,7 @@ import { defineTool } from '../../platform-core/src/tools-lite.ts'
 import type { WorkCallerRef } from '../../platform-core/src/workforce-port.ts'
 import type { ToolPrincipal, ToolRunContext } from '../../platform-core/src/tools-lite.ts'
 import { WorkforceError } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type {
   ClaimOutcome,
   InvocationOutcome,
@@ -18,7 +19,7 @@ import type {
 /** exec.principal → 可信 caller（缺 refType/refId 时照实缺省——组1 resolver 只认 refType='agent'）。 */
 function callerRefOf(principal: ToolPrincipal | undefined): WorkCallerRef {
   if (!principal || !principal.principalId) {
-    throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', '缺少调用主体身份（fail-closed）：工具不允许从参数读取身份')
+    throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', t('缺少调用主体身份（fail-closed）：工具不允许从参数读取身份'))
   }
   return {
     kind: principal.kind,
@@ -49,7 +50,7 @@ function structuredServices(ctx: Context): {
     workforceDelivery?: import('./contract.ts').WorkforceDelivery
   }
   if (!source.workforceAdmission || !source.workforceInvocations || !source.workforceDelivery) {
-    throw new WorkforceError('WORKFORCE_NOT_READY', '数字员工服务未就绪', 503)
+    throw new WorkforceError('WORKFORCE_NOT_READY', t('数字员工服务未就绪'), 503)
   }
   return {
     admission: source.workforceAdmission,
@@ -63,7 +64,7 @@ export function registerWorkforceTools(ctx: Context): void {
     tools?: { register(definition: ReturnType<typeof defineTool>): unknown }
   }).tools
   if (!tools || typeof tools.register !== 'function') {
-    throw new Error('tools 运行时未就绪，workforce 工具无法注册')
+    throw new Error(t('tools 运行时未就绪，workforce 工具无法注册'))
   }
 
   tools.register(defineTool({

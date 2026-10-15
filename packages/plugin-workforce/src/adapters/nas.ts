@@ -20,6 +20,7 @@ import type {
 } from '../contract.ts'
 import type { IdentityResolution, ResourceGrantSpec } from '../contract.ts'
 import { ARTIFACT_MAX_BYTES } from '../contract.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { WorkExecutionContext } from '../../../platform-core/src/workforce-port.ts'
 
 /** nasRegistry 结构化探测面（真实签名见 plugin-nas/src/index.ts NasRegistryService）。 */
@@ -59,7 +60,7 @@ export function createNasAdapter(ctx: {
     const prefixes = tool.constraints?.['pathPrefixes']
     if (!Array.isArray(prefixes) || prefixes.length === 0) return null
     if (prefixes.some((prefix) => typeof prefix === 'string' && path.startsWith(prefix))) return null
-    return `路径 ${path} 超出授权目录范围`
+    return t('路径 {path} 超出授权目录范围', { path })
   }
 
   /** 人代办主体：仅当 work.requesterUserId 存在且与 args.onBehalfUser 一致才透传真人链。 */
@@ -67,9 +68,9 @@ export function createNasAdapter(ctx: {
     const requested = typeof args['onBehalfUser'] === 'string' ? args['onBehalfUser'] as string : ''
     // requesterUserId 缺失时忽略 onBehalfUser（防伪造真人链）；岗位服务主体不带身份头
     if (requested && work.requesterUserId && requested === work.requesterUserId) {
-      return { id: work.requesterUserId, name: `人代办:${work.employeeId}`, onBehalf: true }
+      return { id: work.requesterUserId, name: t('人代办:{id}', { id: work.employeeId }), onBehalf: true }
     }
-    return { id: `agent:${work.agentId}`, name: `数字员工:${work.employeeId}`, onBehalf: false }
+    return { id: `agent:${work.agentId}`, name: t('数字员工:{id}', { id: work.employeeId }), onBehalf: false }
   }
 
   return {
@@ -78,10 +79,10 @@ export function createNasAdapter(ctx: {
     async probeGrant(spec: ResourceGrantSpec, _resolution: IdentityResolution): Promise<AdapterProbeResult> {
       const hub = registry()
       if (typeof hub.get !== 'function') {
-        return { ok: false, message: 'nasRegistry 未提供资产查询能力' }
+        return { ok: false, message: t('nasRegistry 未提供资产查询能力') }
       }
       const nas = hub.get(spec.registryId)
-      if (!nas) return { ok: false, message: `NAS 资产不存在：${spec.registryId}` }
+      if (!nas) return { ok: false, message: t('NAS 资产不存在：{id}', { id: spec.registryId }) }
       const prefixes = spec.constraints?.['pathPrefixes']
       return {
         ok: true,
@@ -101,7 +102,7 @@ export function createNasAdapter(ctx: {
       try {
         switch (action) {
           case 'read': {
-            if (typeof hub.downloadFile !== 'function') return denied('nasRegistry 未提供文件下载能力，未支持')
+            if (typeof hub.downloadFile !== 'function') return denied(t('nasRegistry 未提供文件下载能力，未支持'))
             const result = await hub.downloadFile(input.tool.registryId, path, actor)
             // 内容经受控 staging 读取回传（≤8MB 文本）；不向员工暴露平台本地路径
             let content: string | undefined
@@ -119,34 +120,34 @@ export function createNasAdapter(ctx: {
               value: {
                 path,
                 bytes: result.bytes,
-                ...(content === undefined ? { note: '内容超限或读取失败，已落平台受控 staging，请经 artifact 通道获取' } : {}),
+                ...(content === undefined ? { note: t('内容超限或读取失败，已落平台受控 staging，请经 artifact 通道获取') } : {}),
               },
               gatewayRef: { nasId: input.tool.registryId, path, bytes: result.bytes, onBehalf: actor.onBehalf },
             }
           }
           case 'search': {
-            if (typeof hub.search !== 'function') return denied('nasRegistry 未提供文件检索能力，未支持')
+            if (typeof hub.search !== 'function') return denied(t('nasRegistry 未提供文件检索能力，未支持'))
             const pattern = typeof input.args['pattern'] === 'string' ? input.args['pattern'] as string : ''
-            if (!pattern) return denied('检索缺少 pattern 参数')
+            if (!pattern) return denied(t('检索缺少 pattern 参数'))
             const result = await hub.search(input.tool.registryId, pattern, path, actor)
             return { ok: true, value: result, gatewayRef: { nasId: input.tool.registryId, pattern, path, onBehalf: actor.onBehalf } }
           }
           case 'list': {
-            if (typeof hub.listFiles !== 'function') return denied('nasRegistry 未提供目录列举能力，未支持')
+            if (typeof hub.listFiles !== 'function') return denied(t('nasRegistry 未提供目录列举能力，未支持'))
             const result = await hub.listFiles(input.tool.registryId, path, actor)
             return { ok: true, value: result, gatewayRef: { nasId: input.tool.registryId, path, onBehalf: actor.onBehalf } }
           }
           case 'write': {
             // 写入只认受控 artifact 来源（V15：员工调用面拒绝任意本地路径）
             if (typeof input.args['localPath'] === 'string' || typeof input.args['localFile'] === 'string') {
-              return denied('禁止本地路径写入：write 内容仅允许来自受控 artifact')
+              return denied(t('禁止本地路径写入：write 内容仅允许来自受控 artifact'))
             }
-            if (typeof hub.uploadFile !== 'function') return denied('nasRegistry 未提供文件上传能力，未支持')
+            if (typeof hub.uploadFile !== 'function') return denied(t('nasRegistry 未提供文件上传能力，未支持'))
             const artifactId = typeof input.args['artifactId'] === 'string' ? input.args['artifactId'] as string : ''
-            if (!artifactId) return denied('NAS 写入必须引用受控 artifact（args.artifactId）')
+            if (!artifactId) return denied(t('NAS 写入必须引用受控 artifact（args.artifactId）'))
             const probe = artifacts()
             if (typeof probe.get !== 'function' || typeof probe.readBase64 !== 'function') {
-              return denied('workforceArtifacts 未就绪，无法读取受控 artifact')
+              return denied(t('workforceArtifacts 未就绪，无法读取受控 artifact'))
             }
             const caller = MACHINE_CALLER(work)
             const artifact = await probe.get(caller, artifactId)
@@ -174,9 +175,9 @@ export function createNasAdapter(ctx: {
           }
           case 'share':
             // 分享是独立权限动作（§4.5）；一期未开放（分享链接服务不在受控调用面）
-            return denied('NAS 分享动作适配一期未开放（外发分享需独立授权与人工通道）')
+            return denied(t('NAS 分享动作适配一期未开放（外发分享需独立授权与人工通道）'))
           default:
-            return denied(`未知 NAS 动作：${action}`)
+            return denied(t('未知 NAS 动作：{action}', { action }))
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

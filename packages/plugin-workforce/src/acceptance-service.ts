@@ -18,6 +18,7 @@ import type {
   WorkforceStore,
 } from './contract.ts'
 import { WorkforceError } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type { WorkCallerRef } from '../../platform-core/src/workforce-port.ts'
 
 export class DeliveryService extends Service implements WorkforceDelivery {
@@ -32,7 +33,7 @@ export class DeliveryService extends Service implements WorkforceDelivery {
   private get store(): WorkforceStore {
     const store = (this.ctx as unknown as { workforceStore?: WorkforceStore }).workforceStore
     if (!store || typeof store.txn !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceStore 未就绪（迁移未完成）', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceStore 未就绪（迁移未完成）'), 503)
     }
     return store
   }
@@ -40,7 +41,7 @@ export class DeliveryService extends Service implements WorkforceDelivery {
   private get identity(): WorkforceIdentityResolver {
     const resolver = (this.ctx as unknown as { workforceIdentity?: WorkforceIdentityResolver }).workforceIdentity
     if (!resolver || typeof resolver.resolveByCaller !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceIdentity 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceIdentity 未就绪'), 503)
     }
     return resolver
   }
@@ -50,7 +51,7 @@ export class DeliveryService extends Service implements WorkforceDelivery {
       workforceAdmission?: { verifyPermit?: import('./contract.ts').WorkforceAdmission['verifyPermit'] }
     }).workforceAdmission
     if (!admission || typeof admission.verifyPermit !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceAdmission 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceAdmission 未就绪'), 503)
     }
     return { verifyPermit: admission.verifyPermit.bind(admission) }
   }
@@ -77,10 +78,10 @@ export class DeliveryService extends Service implements WorkforceDelivery {
 
   async submit(caller: WorkCallerRef, input: { permitId: string; summary: string; artifactIds: string[] }): Promise<DeliverableRecord> {
     const permit = await this.admission().verifyPermit(caller, input.permitId, { requireRun: true })
-    if (!input.summary?.trim()) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '交付摘要不能为空')
+    if (!input.summary?.trim()) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('交付摘要不能为空'))
     if (!Array.isArray(input.artifactIds) || input.artifactIds.length === 0) {
       // V30：仅摘要没有交付证据，不能形成有效交付
-      throw new WorkforceError('ARTIFACT_SCOPE_DENIED', '交付必须引用至少一个 artifact 证据')
+      throw new WorkforceError('ARTIFACT_SCOPE_DENIED', t('交付必须引用至少一个 artifact 证据'))
     }
     // artifact 全部存在且属该员工/该 run
     for (const artifactId of input.artifactIds) {
@@ -88,7 +89,7 @@ export class DeliveryService extends Service implements WorkforceDelivery {
       if (!artifact
         || artifact.employeeId !== permit.employeeId
         || (artifact.runId !== '' && artifact.runId !== permit.runId)) {
-        throw new WorkforceError('ARTIFACT_SCOPE_DENIED', `artifact ${artifactId} 不存在或不属于该员工/该 run`)
+        throw new WorkforceError('ARTIFACT_SCOPE_DENIED', t('artifact {artifactId} 不存在或不属于该员工/该 run', { artifactId }))
       }
     }
     // 版本＝该 run max+1（退回重交不覆盖历史交付）。TableStore.insert 为 void——记录以
@@ -120,7 +121,7 @@ export class DeliveryService extends Service implements WorkforceDelivery {
         execHub?: { completeRun?: (runId: string, options?: { status?: string; summary?: string }) => unknown }
       }).execHub
       if (typeof hub?.completeRun === 'function') {
-        hub.completeRun(permit.runId, { status: 'completed', summary: `数字员工交付提交：${deliverable.id}` })
+        hub.completeRun(permit.runId, { status: 'completed', summary: t('数字员工交付提交：{id}', { id: deliverable.id }) })
       } else {
         this.warn(`execHub.completeRun 缺席：run ${permit.runId} 未自动转 review（交付 ${deliverable.id} 已落账，需人工对账）`)
       }
@@ -139,13 +140,13 @@ export class DeliveryService extends Service implements WorkforceDelivery {
   async decide(caller: WorkCallerRef, input: { deliverableId: string; decision: 'accepted' | 'rejected'; reason: string }): Promise<DeliverableRecord> {
     // 验收只能由真人作出（权限点 workforce.accept 由路由层把守，此处复核主体类型）
     if (caller.kind !== 'human') {
-      throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', '验收决定必须由真人作出（模型输出「成功」与 HTTP 200 都不能关闭业务任务）')
+      throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', t('验收决定必须由真人作出（模型输出「成功」与 HTTP 200 都不能关闭业务任务）'))
     }
-    if (!input.reason?.trim()) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '验收/退回必须附原因')
+    if (!input.reason?.trim()) throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('验收/退回必须附原因'))
     const deliverable = this.store.deliverables.get(input.deliverableId)
-    if (!deliverable) throw new WorkforceError('RUN_NOT_OWNED', `交付不存在：${input.deliverableId}`, 404)
+    if (!deliverable) throw new WorkforceError('RUN_NOT_OWNED', t('交付不存在：{id}', { id: input.deliverableId }), 404)
     if (deliverable.status !== 'submitted') {
-      throw new WorkforceError('STEP_ARGUMENT_CONFLICT', `该交付已${deliverable.status === 'accepted' ? '验收通过' : '被退回'}，不可重复决定`)
+      throw new WorkforceError('STEP_ARGUMENT_CONFLICT', t('该交付已{state}，不可重复决定', { state: deliverable.status === 'accepted' ? t('验收通过') : t('被退回') }))
     }
     const actor = caller.userId ?? caller.principalId
     if (input.decision === 'accepted') {
@@ -176,7 +177,7 @@ export class DeliveryService extends Service implements WorkforceDelivery {
    */
   private transitionIssue(deliverable: DeliverableRecord, to: 'done' | 'in_progress', actor: string, blocking: boolean): void {
     if (!deliverable.issueId) {
-      if (blocking) throw new WorkforceError('POLICY_INTERNAL_ERROR', '交付未关联任务，无法回写验收结果（请检查 permit 签发链）')
+      if (blocking) throw new WorkforceError('POLICY_INTERNAL_ERROR', t('交付未关联任务，无法回写验收结果（请检查 permit 签发链）'))
       this.warn(`交付 ${deliverable.id} 未关联任务，退回无需回写`)
       return
     }
@@ -185,20 +186,20 @@ export class DeliveryService extends Service implements WorkforceDelivery {
         execHub?: { transitionIssue?: (id: string, to: string, actor: string) => unknown; issues?: () => { get(id: string): { status?: string } | undefined } }
       }).execHub
       if (typeof hub?.transitionIssue !== 'function' || typeof hub?.issues !== 'function') {
-        if (blocking) throw new WorkforceError('POLICY_INTERNAL_ERROR', 'execHub.transitionIssue 缺席：验收通过但任务无法收口，请先接入执行中枢')
+        if (blocking) throw new WorkforceError('POLICY_INTERNAL_ERROR', t('execHub.transitionIssue 缺席：验收通过但任务无法收口，请先接入执行中枢'))
         this.warn(`execHub.transitionIssue 缺席：任务 ${deliverable.issueId} 未回写 ${to}（交付 ${deliverable.id}）`)
         return
       }
       const issue = hub.issues().get(deliverable.issueId)
       if (!issue) {
-        if (blocking) throw new WorkforceError('POLICY_INTERNAL_ERROR', `关联任务不存在：${deliverable.issueId}`)
+        if (blocking) throw new WorkforceError('POLICY_INTERNAL_ERROR', t('关联任务不存在：{id}', { id: deliverable.issueId }))
         this.warn(`关联任务不存在：${deliverable.issueId}（交付 ${deliverable.id}）`)
         return
       }
       hub.transitionIssue(deliverable.issueId, to, actor)
     } catch (error) {
       if (blocking) {
-        throw new WorkforceError('POLICY_INTERNAL_ERROR', `验收通过但任务状态回写失败：${error instanceof Error ? error.message : String(error)}`)
+        throw new WorkforceError('POLICY_INTERNAL_ERROR', t('验收通过但任务状态回写失败：{message}', { message: error instanceof Error ? error.message : String(error) }))
       }
       this.warn(`任务 ${deliverable.issueId} 回写 ${to} 失败（交付 ${deliverable.id}）：${error instanceof Error ? error.message : String(error)}`)
     }
@@ -208,7 +209,7 @@ export class DeliveryService extends Service implements WorkforceDelivery {
 
   async get(caller: WorkCallerRef, deliverableId: string): Promise<DeliverableRecord> {
     const record = this.store.deliverables.get(deliverableId)
-    if (!record) throw new WorkforceError('RUN_NOT_OWNED', `交付不存在：${deliverableId}`, 404)
+    if (!record) throw new WorkforceError('RUN_NOT_OWNED', t('交付不存在：{id}', { id: deliverableId }), 404)
     await this.assertReadable(caller, record.employeeId, this.workOrgOf(record))
     return record
   }
@@ -245,7 +246,7 @@ export class DeliveryService extends Service implements WorkforceDelivery {
         // fail-closed：落入末尾拒绝
       }
     }
-    throw new WorkforceError('RUN_NOT_OWNED', '无权查看该交付记录（仅本人或同组织主体）')
+    throw new WorkforceError('RUN_NOT_OWNED', t('无权查看该交付记录（仅本人或同组织主体）'))
   }
 
   private parseIds(text: string): string[] {

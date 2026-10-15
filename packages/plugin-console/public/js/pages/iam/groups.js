@@ -14,6 +14,7 @@ import {
   providerName, nameStatusMismatch, strategyName, fieldName, syncStatCard,
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
 } from './helpers.js'
+import rqI18n from '../../i18n.js'
 
 export async function renderGroups(ctx) {
   $('#iam-actions').innerHTML = `<button class="btn btn-primary" id="group-add">${icon('plus', 14)}新建用户组</button>`
@@ -41,16 +42,16 @@ export async function renderGroups(ctx) {
           </div>
           <div class="flex" style="flex-wrap:wrap;gap:6px">
             ${group.resolvedMembers.slice(0, 12).map((m) => `<span class="badge badge-muted no-dot">${icon('user', 12)}${esc(m.displayName)}</span>`).join('')}
-            ${group.resolvedMembers.length > 12 ? `<span class="fs-12 text-4">等 ${group.resolvedMembers.length} 人</span>` : ''}
+            ${group.resolvedMembers.length > 12 ? `<span class="fs-12 text-4">${esc(rqI18n.t('等 {n} 人', { n: group.resolvedMembers.length }))}</span>` : ''}
             ${group.resolvedMembers.length === 0 ? '<span class="fs-12 text-4">暂无成员（动态组按规则实时圈人）</span>' : ''}
           </div>
         </div>`)
       card.querySelector('[data-edit]').onclick = () => openGroupEditor(group, treeData)
       card.querySelector('[data-del]').onclick = async () => {
-        const result = await confirmDialog({ title: '删除用户组', message: `删除「${esc(group.name)}」后，基于该组的授权（MCP 权限组等）将同步失效。`, danger: true })
+        const result = await confirmDialog({ title: '删除用户组', message: esc(rqI18n.t('删除「{name}」后，基于该组的授权（MCP 权限组等）将同步失效。', { name: group.name })), danger: true })
         if (!result) return
         await api.delete(`/api/iam/groups/${group.id}`)
-        toast('已删除'); ctx.rerender()
+        toast(rqI18n.t('已删除')); ctx.rerender()
       }
       list.appendChild(card)
     }
@@ -86,7 +87,7 @@ export async function renderGroups(ctx) {
       try {
         if (group) await api.patch(`/api/iam/groups/${group.id}`, payload)
         else await api.post('/api/iam/groups', payload)
-        toast('已保存'); modal.close(); ctx.rerender()
+        toast(rqI18n.t('已保存')); modal.close(); ctx.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
   }

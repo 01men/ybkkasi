@@ -4,6 +4,7 @@
  * 自 pages/iam.js 逐字搬运，供五个 tab 模块统一转引。
  */
 import { api, session } from '../../api.js'
+import rqI18n from '../../i18n.js'
 import { icon } from '../../icons.js'
 import {
   h, $, $$, esc, toast, openDrawer, openModal, confirmDialog, copyText,
@@ -15,7 +16,7 @@ import {
 export function showUserCredentials({ userId, username, displayName, password, onDone }) {
   let current = password
   const modal = openModal({
-    title: `账号凭据（${esc(displayName)}）`,
+    title: esc(rqI18n.t('账号凭据（{name}）', { name: displayName })),
     body: `
       <div class="form-hint" style="margin-bottom:12px">请立即复制并安全传达给本人；口令仅本次展示，传达前可在下方直接二次修改。</div>
       <div class="muted-box mb-8" style="display:flex;align-items:center;gap:10px;justify-content:space-between">
@@ -53,13 +54,13 @@ export function showUserCredentials({ userId, username, displayName, password, o
   }
   modal.body.querySelector('#cred-copy-user').onclick = () => void copyText(username)
   modal.body.querySelector('#cred-copy-pw').onclick = () => void copyText(current)
-  modal.body.querySelector('#cred-copy-all').onclick = () => void copyText(`用户名：${username}\n口令：${current}`)
+  modal.body.querySelector('#cred-copy-all').onclick = () => void copyText(rqI18n.t('用户名：{u}\n口令：{p}', { u: username, p: current }))
   modal.body.querySelector('#cred-setpw').onclick = () => {
     const next = modal.body.querySelector('#cred-newpw').value.trim()
-    if (next.length < 8) return toast('口令长度不得少于 8 位', 'error')
-    void resetTo({ password: next }, '口令已更新为指定值，请重新复制传达')
+    if (next.length < 8) return toast(rqI18n.t('口令长度不得少于 8 位'), 'error')
+    void resetTo({ password: next }, rqI18n.t('口令已更新为指定值，请重新复制传达'))
   }
-  modal.body.querySelector('#cred-randpw').onclick = () => void resetTo({}, '已重新生成随机口令，请重新复制传达')
+  modal.body.querySelector('#cred-randpw').onclick = () => void resetTo({}, rqI18n.t('已重新生成随机口令，请重新复制传达'))
   modal.el.querySelector('[data-cancel]').onclick = () => { modal.close(); onDone?.() }
 }
 
@@ -75,7 +76,8 @@ export function nameStatusMismatch(user) {
   const keywords = ['废除', '已废', '离职', '退休', '辞退', '解聘', '停用', '注销', '删除']
   const hit = keywords.find((kw) => String(user.displayName ?? '').includes(kw))
   if (!hit) return ''
-  return ` <span class="badge badge-warn no-dot" title="姓名含「${esc(hit)}」字样，但账号状态仍为「正常」，可能是改名后未停用，请进入详情核实">名称疑似已${esc(hit)}？</span>`
+  const tip = rqI18n.t('姓名含「{state}」字样，但账号状态仍为「正常」，可能是改名后未停用，请进入详情核实', { state: hit })
+  return ` <span class="badge badge-warn no-dot" title="${esc(tip)}">${esc(rqI18n.t('名称疑似已{state}？', { state: hit }))}</span>`
 }
 export function strategyName(strategy) {
   return { manual: '人工确认', third_party_wins: '以三方为准', platform_wins: '以平台为准' }[strategy] ?? strategy

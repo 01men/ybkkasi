@@ -3,6 +3,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '../../platform-core/src/index.ts'
+import { t as translate } from '../../platform-i18n/src/index.ts'
 
 export const name = 'agent-tools'
 export const inject = ['tools', 'agentRegistry', 'resourceCore']
@@ -45,7 +46,7 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args) {
       const agent = ctx.resourceCore.get('agent', args.agentId)
-      if (!agent) throw new Error(`Agent 不存在：${args.agentId}`)
+      if (!agent) throw new Error(translate('Agent 不存在：{id}', { id: args.agentId }))
       return {
         ...agent,
         metrics: ctx.agentRegistry.metrics(agent.id),

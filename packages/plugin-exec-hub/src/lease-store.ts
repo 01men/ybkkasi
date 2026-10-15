@@ -17,6 +17,7 @@
 import { newId } from '../../platform-core/src/ids.ts'
 import type { SqlValue } from '../../platform-core/src/sqlite.ts'
 import { decideLeaseClaim, decideLeaseRenewal, type LeaseStatusLite } from './domain.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 
 /** 执行租约（结构镜像 plugin-workforce contract.ts RunLeaseRecord，冻结形状 V1.0）。 */
 export interface RunLeaseRecord {
@@ -172,7 +173,7 @@ export class LeaseStoreService {
       const row = input.leaseId
         ? this.txn.one<LeaseRow>(this.table, { id: input.leaseId })
         : this.latestLeaseRowForRun(input.runId ?? '')
-      if (!row) return { ok: false as const, code: 'LEASE_STALE' as const, message: '执行租约不存在（未认领或已被清理），请先重新认领' }
+      if (!row) return { ok: false as const, code: 'LEASE_STALE' as const, message: t('执行租约不存在（未认领或已被清理），请先重新认领') }
       const lease = this.rowToLease(row)
       const decision = decideLeaseRenewal({
         status: lease.status,
@@ -180,7 +181,7 @@ export class LeaseStoreService {
         principalMatches: input.principalId === undefined ? true : lease.principalId === input.principalId,
       })
       if (decision.kind === 'stale') {
-        return { ok: false as const, code: 'LEASE_STALE' as const, message: '执行租约已过期或被更高版本取代（旧租约），请先重新认领' }
+        return { ok: false as const, code: 'LEASE_STALE' as const, message: t('执行租约已过期或被更高版本取代（旧租约），请先重新认领') }
       }
       const ttlMs = input.ttlMs && input.ttlMs > 0 ? input.ttlMs : this.defaultTtlMs
       const renewed: RunLeaseRecord = {

@@ -8,6 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Collection, RecordBase } from '../../../platform-core/src/index.ts'
 import { newId, PlatformEvents } from '../../../platform-core/src/index.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
@@ -92,22 +93,22 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
   ctx.platformBus.on(PlatformEvents.AlertFired, (payload) => {
     const p = payload as { severity?: string; title?: string; message?: string }
     try {
-      pushNotification({ type: 'alert', title: p.title ?? '平台告警', body: p.message ?? '', scope: { kind: 'global' } })
+      pushNotification({ type: 'alert', title: p.title ?? t('平台告警'), body: p.message ?? '', scope: { kind: 'global' } })
     } catch { /* 通知落库失败不阻塞事件链 */ }
   })
   ctx.platformBus.on(PlatformEvents.ApprovalCreated, (payload) => {
     const p = payload as { approvalId?: string; title?: string }
     try {
-      pushNotification({ type: 'approval', title: `待审批：${p.title ?? p.approvalId ?? ''}`, body: '已在审批中心挂起，请及时处理', scope: { kind: 'global' } })
+      pushNotification({ type: 'approval', title: t('待审批：{title}', { title: p.title ?? p.approvalId ?? '' }), body: t('已在审批中心挂起，请及时处理'), scope: { kind: 'global' } })
     } catch { /* 通知落库失败不阻塞事件链 */ }
   })
   ctx.platformBus.on(PlatformEvents.PanelTaskUpdated, (payload) => {
     const p = payload as { taskId?: string; dept?: string; lane?: string; title?: string }
     try {
       const deptOrgId = ctx.opsStorage.collection<{ orgId?: string }>('panel:deptConfigs').get(p.dept ?? '')?.orgId
-      const laneLabel = ({ todo: '待办', doing: '进行中', review: '待审', done: '完成' } as Record<string, string>)[p.lane ?? ''] ?? p.lane ?? ''
+      const laneLabel = ({ todo: t('待办'), doing: t('进行中'), review: t('待审'), done: t('完成') } as Record<string, string>)[p.lane ?? ''] ?? p.lane ?? ''
       pushNotification({
-        type: 'task', title: `任务流转：${p.title ?? p.taskId ?? ''}`, body: `泳道 → ${laneLabel}`,
+        type: 'task', title: t('任务流转：{title}', { title: p.title ?? p.taskId ?? '' }), body: t('泳道 → {lane}', { lane: laneLabel }),
         scope: deptOrgId ? { kind: 'org', orgId: deptOrgId } : { kind: 'global' },
       })
     } catch { /* 通知落库失败不阻塞事件链 */ }
@@ -121,8 +122,8 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
       const agent = p.agentId ? ctx.opsStorage.collection<{ name?: string; orgId?: string }>('entity:agent').get(p.agentId) : undefined
       pushNotification({
         type: 'task',
-        title: `执行 run ${p.status === 'completed' ? '完成' : p.status === 'timeout' ? '超时回收' : '失败'}：${agent?.name ?? p.agentId ?? p.runId ?? ''}`,
-        body: p.issueIds?.length ? `关联任务 ${p.issueIds.length} 项（已释放执行锁）` : '例行唤醒收尾',
+        title: t('执行 run {result}：{name}', { result: p.status === 'completed' ? t('完成') : p.status === 'timeout' ? t('超时回收') : t('失败'), name: agent?.name ?? p.agentId ?? p.runId ?? '' }),
+        body: p.issueIds?.length ? t('关联任务 {n} 项（已释放执行锁）', { n: p.issueIds.length }) : t('例行唤醒收尾'),
         scope: agent?.orgId ? { kind: 'org', orgId: agent.orgId } : { kind: 'global' },
       })
     } catch { /* 通知落库失败不阻塞事件链 */ }
@@ -131,8 +132,8 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
     const p = payload as { issueId?: string; runId?: string; reason?: string }
     try {
       pushNotification({
-        type: 'alert', title: `执行锁僵尸回收：${p.issueId ?? ''}`,
-        body: `run ${p.runId ?? ''} 已超时（${p.reason ?? 'force-release'}），锁已强制释放，请核查执行方是否仍在运行`,
+        type: 'alert', title: t('执行锁僵尸回收：{issueId}', { issueId: p.issueId ?? '' }),
+        body: t('run {runId} 已超时（{reason}），锁已强制释放，请核查执行方是否仍在运行', { runId: p.runId ?? '', reason: p.reason ?? 'force-release' }),
         scope: { kind: 'global' },
       })
     } catch { /* 通知落库失败不阻塞事件链 */ }
@@ -142,8 +143,8 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
     try {
       const agent = p.agentId ? ctx.opsStorage.collection<{ name?: string; orgId?: string }>('entity:agent').get(p.agentId) : undefined
       pushNotification({
-        type: 'alert', title: `Agent 已冻结：${agent?.name ?? p.agentId ?? ''}`,
-        body: `${p.reason ?? '预算联动'}——已生成解冻审批单（L4），审批通过后自动解冻`,
+        type: 'alert', title: t('Agent 已冻结：{name}', { name: agent?.name ?? p.agentId ?? '' }),
+        body: t('{reason}——已生成解冻审批单（L4），审批通过后自动解冻', { reason: p.reason ?? t('预算联动') }),
         scope: agent?.orgId ? { kind: 'org', orgId: agent.orgId } : { kind: 'global' },
       })
     } catch { /* 通知落库失败不阻塞事件链 */ }
@@ -151,7 +152,7 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
 
   guarded('GET', '/api/notifications', 'console.login', (exchange) => {
     const info = caller(exchange)
-    if (!info.userId) return { items: [], unread: 0, readCursor: null, note: '机器主体无个人通知面（v1 口径）' }
+    if (!info.userId) return { items: [], unread: 0, readCursor: null, note: t('机器主体无个人通知面（v1 口径）') }
     const since = exchange.query.get('since') ?? ''
     const limit = Math.min(Number(exchange.query.get('limit') ?? 50) || 50, 200)
     const user = ctx.iam.users().get(info.userId)
@@ -171,7 +172,7 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
 
   guarded('POST', '/api/notifications/read-cursor', 'console.login', (exchange) => {
     const info = caller(exchange)
-    if (!info.userId) return exchange.fail(403, 'FORBIDDEN', '机器主体无个人通知面（v1 口径）')
+    if (!info.userId) return exchange.fail(403, 'FORBIDDEN', t('机器主体无个人通知面（v1 口径）'))
     const input = body<{ at?: string }>(exchange)
     const now = new Date().toISOString()
     const at = input.at && !Number.isNaN(Date.parse(input.at)) && input.at <= now ? input.at : now
@@ -265,7 +266,7 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
         slug: model.slug,
         status: model.status,
         health: model.status === 'online' ? (model.endpoint ? 'healthy' : 'down') : 'unknown',
-        org: '平台自营',
+        org: t('平台自营'),
         owner: model.provider,
         updatedAt: model.updatedAt,
         ...usageOf(`model:${model.slug}`),
@@ -319,7 +320,7 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
       checked.push({ type: 'model', id: model.id, name: model.displayName, status: model.status, latencyMs: 0 })
     }
     const abnormal = checked.filter((item) => item.status === 'down' || item.status === 'degraded' || item.status === 'unhealthy' || item.status === 'offline')
-    changeLog(exchange, 'assets.healthcheck', 'asset', 'batch', '健康巡检', `巡检 ${checked.length} 项，异常 ${abnormal.length} 项`)
+    changeLog(exchange, 'assets.healthcheck', 'asset', 'batch', t('健康巡检'), t('巡检 {total} 项，异常 {abnormal} 项', { total: checked.length, abnormal: abnormal.length }))
     return {
       checkedAt: new Date().toISOString(),
       checked: checked.length,
@@ -330,6 +331,7 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
   })
 
   // 资源/主体的展示名解析（成本报表与效益分析共用）
+  // 资源/主体的展示名解析（成本报表与效益分析共用）；标签为中文数据（t() 的键），展示处按请求语言即时翻译
   const RESOURCE_KIND_LABELS: Record<string, string> = {
     mcp: 'MCP 服务', model: '模型路由', skill: 'Skill', nas: 'NAS 存储', app: 'AI 应用', agent: 'Agent',
   }
@@ -337,7 +339,7 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
     const idx = resource.indexOf(':')
     const kind = idx >= 0 ? resource.slice(0, idx) : ''
     const key = idx >= 0 ? resource.slice(idx + 1) : resource
-    const unnamed = `未命名${RESOURCE_KIND_LABELS[kind] ?? ''}资产`
+    const unnamed = t('未命名{kind}资产', { kind: RESOURCE_KIND_LABELS[kind] !== undefined ? t(RESOURCE_KIND_LABELS[kind]) : '' })
     if (kind === 'mcp') return ctx.mcpRegistry.services().findOne((item) => item.slug === key)?.name ?? unnamed
     if (kind === 'model') return ctx.modelGateway.models().findOne((item) => item.slug === key)?.displayName ?? unnamed
     if (kind === 'skill') return ctx.skillHub.skills().get(key)?.name ?? unnamed
@@ -451,7 +453,7 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
     const fromIso = new Date(Date.now() - days * 86_400_000).toISOString()
     const buckets = new Map<string, { reason: string; count: number; byType: Record<string, number>; latestAt: string; samples: Array<{ type: string; name: string; at: string }> }>()
     const bucketOf = (reason: string) => {
-      const key = reason.trim() || '（未填写原因）'
+      const key = reason.trim() || t('（未填写原因）')
       let bucket = buckets.get(key)
       if (!bucket) {
         bucket = { reason: key, count: 0, byType: {}, latestAt: '', samples: [] }
@@ -511,7 +513,8 @@ const EVENT_VALUE_LABELS: Record<string, string> = {
   healthy: '健康', unavailable: '不可用', ok: '成功', failed: '失败', catalog: '目录',
 }
 
-/** 事件流人话摘要（测试 UI-03）：优先取业务字段拼「标签：值」句，绝不回退裸 JSON——原始 payload 走 detail 字段收进「详情」。 */
+/** 事件流人话摘要（测试 UI-03）：优先取业务字段拼「标签：值」句，绝不回退裸 JSON——原始 payload 走 detail 字段收进「详情」。
+ *  标签/枚举值常量为中文数据（t() 的键），展示边界在拼接处按请求语言即时翻译。 */
 function summarize(payload: unknown): string {
   if (payload === null || payload === undefined) return ''
   if (typeof payload !== 'object') return String(payload).slice(0, 120)
@@ -522,10 +525,10 @@ function summarize(payload: unknown): string {
     if (value === undefined || value === null || value === '') continue
     if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
     const text = String(value)
-    bits.push(`${label}：${EVENT_VALUE_LABELS[text] ?? text.slice(0, 80)}`)
+    bits.push(t('{label}：{value}', { label: t(label), value: EVENT_VALUE_LABELS[text] !== undefined ? t(EVENT_VALUE_LABELS[text]) : text.slice(0, 80) }))
     if (bits.length >= 3) break
   }
-  return bits.join('；')
+  return bits.join(t('；'))
 }
 
 /** 原始 payload 压缩串（仅用于「详情」折叠展示，防止误读也保留排查线索）。 */

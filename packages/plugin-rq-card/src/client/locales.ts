@@ -1,4 +1,4 @@
-/** `rq-card` 命名空间词典（执行卡 + 反馈条的全部文案）。 */
+/** `rq-card` 命名空间词典（执行卡 + 反馈条 + 降级角标的全部文案）。 */
 
 /** 简体中文词典（键集的权威来源）。 */
 export const zh = {
@@ -44,6 +44,9 @@ export const zh = {
   'fb.like': '有帮助',
   'fb.dislike': '没帮助',
   'fb.done': '已记录，感谢反馈',
+
+  // ── 降级角标（shell.overlay）──
+  'badge.degraded': '元冰可卡片未生效（纯文本模式）',
 } satisfies Record<string, string>
 
 /** `rq-card` 命名空间键联合。 */
@@ -93,4 +96,47 @@ export const en = {
   'fb.like': 'Helpful',
   'fb.dislike': 'Not helpful',
   'fb.done': 'Recorded — thanks for the feedback',
+
+  'badge.degraded': 'RongQi cards inactive (plain-text mode)',
+} satisfies Record<RqCardKey, string>
+
+/** 日文词典，与 zh/en 键集逐键核对（です・ます調）。 */
+export const ja = {
+  'card.state.calling': '呼び出し中',
+  'card.state.executing': '実行中',
+  'card.state.done': '完了',
+  'card.state.blocked': 'ブロック中',
+  'card.state.idle': '待機中',
+
+  'card.args.summary': '呼び出し引数',
+  'card.result.title': '実行結果',
+  'card.result.truncated': '（内容が長いため切り捨てました）',
+  'card.console.link': 'コンソールで開く',
+
+  'card.cancel.button': 'キャンセル',
+  'card.cancel.hint': 'キャンセルはホスト側の接続後に有効になります',
+
+  'card.degraded.hint': '時間がかかっています。バックグラウンドで処理中です',
+
+  'card.blocked.nas-authz-deny': 'アクセス権がありません。先に権限を申請してください',
+  'card.blocked.quota-exhausted': 'ウォレット残高を使い切りました。追加を申請してください',
+  'card.blocked.pdp-unreachable': 'ポリシー判定ポイント（PDP）に到達できないため、保護的に一時停止中です',
+  'card.blocked.breaker-open': 'サーキットブレーカーが作動中です。復旧後に再試行してください',
+  'card.blocked.down': 'サービスは現在利用できません。復旧後に再試行してください',
+  'card.blocked.binding-invalid': 'ID バインディングの有効期限が切れています。再バインドしてください',
+  'card.blocked.invoke-error': '実行エラーが発生しました。詳細は結果情報を確認してください',
+
+  'card.action.nas-authz-deny': 'アクセス申請',
+  'card.action.quota-exhausted': '残高を申請',
+  'card.action.pdp-unreachable': 'プラットフォーム状態を確認',
+  'card.action.breaker-open': 'サービス状態を確認',
+  'card.action.down': 'サービス状態を確認',
+  'card.action.binding-invalid': '再バインド',
+  'card.action.invoke-error': 'プラットフォーム状態を確認',
+
+  'fb.like': '役に立った',
+  'fb.dislike': '役に立たなかった',
+  'fb.done': '記録しました。フィードバックありがとうございます',
+
+  'badge.degraded': 'RongQi カードが無効です（テキストモード）',
 } satisfies Record<RqCardKey, string>

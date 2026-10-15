@@ -36,13 +36,39 @@
 > 2026-10-15 批次接线）· 审计证据锚点与场景维度时间线 · 通知中心持久化——
 > 详见 [docs/release-notes-2026-09-11-iaw-batch.md](docs/release-notes-2026-09-11-iaw-batch.md)。
 >
-> **语言口径（2026-10-13，REFACTOR-2026-10-13 阶段 2）**：本项目为**全中文单语**产品，不维护英文界面版本。
-> 表现层（控制台/面板/门户/CLI 输出/通知与审批文案/错误提示）一律中文；**协议层例外**——事件名、权限点、
-> 错误原因码、API 信封字段（ok/data/error）、环境变量名、浏览器存储键保留 ASCII 键不改写，因为它们是
-> 跨系统机器契约（RQ-DSH 定制轨、既有 MCP 客户端、selftest 断言、dsh 宿主校验均依赖）。每个协议键的中文
-> 释义见 [docs/协议键中文对照总表.md](docs/协议键中文对照总表.md)（R10）；新增对外协议键须同步该表。
+> **语言口径（2026-10-13 定稿 R10；2026-10-15 文档层国际化；2026-10-16 功能层全球化落地）**：
+> **运行时表现层自 2026-10-16 起内置多语言**——控制台/面板/CLI 输出/通知与审批文案/错误提示支持
+> **简体中文（默认）/ English (US) / 日本語** 实时切换：Web 端顶栏语言选择器（偏好存浏览器 `rq_lang`，
+> 请求级 `?lang=` / `Accept-Language` 协商）、CLI 走 `--lang` 旗标或 `DSHCTL_LANG`，安装级默认 `PLATFORM_LOCALE`，
+> 企业定制词条目录 `I18N_EXTRA_DIR`；词典未覆盖文案优雅降级中文，默认 zh-CN 输出与历史版本逐字节一致
+> （selftest 断言零影响）。**协议层红线不变**——事件名、权限点、错误原因码、API 信封字段（ok/data/error）、
+> 环境变量名、浏览器存储键保留 ASCII 键不改写（跨系统机器契约：RQ-DSH 定制轨、既有 MCP 客户端、selftest 断言、
+> dsh 宿主校验均依赖）；每个协议键的中文释义见 [docs/协议键中文对照总表.md](docs/协议键中文对照总表.md)（R10），
+> 新增对外协议键须同步该表（本次新增 `PLATFORM_LOCALE` / `DSHCTL_LANG` / `I18N_EXTRA_DIR` / `?lang=` / `rq_lang`）。
+> i18n 内核见 [packages/platform-i18n](packages/platform-i18n/src/index.ts)（t() 以中文原文为键、词典增量补齐不炸运行）。
+> **文档层国际化（2026-10-15 起）**：面向美/欧/印/非/澳/日/新市场的官方多语言文档版落地于
+> [docs/i18n/](docs/i18n/README.md)——英文与日文全量版（产品介绍/快速开始/DSH 生态/功能使用指南/企业部署/SSO 接入/用量报表/发布史摘要）
+> 及德/法/西/葡/印地产品概览；术语契约见 [docs/i18n/GLOSSARY.md](docs/i18n/GLOSSARY.md)。本次功能层发布说明见
+> [docs/release-notes-20261016-ui-i18n.md](docs/release-notes-20261016-ui-i18n.md)。
 
 ---
+
+## 〇、国际化文档（International Docs，2026-10-15 起）
+
+本项目面向**美国、欧洲、印度、非洲、澳洲、日本、新加坡**市场提供官方多语言文档，出处唯一为
+[docs/i18n/](docs/i18n/README.md)（治理规范与语言分层见该目录 README，术语契约见
+[docs/i18n/GLOSSARY.md](docs/i18n/GLOSSARY.md)）：
+
+| 层级 | 语言 | 覆盖市场 | 范围 |
+|---|---|---|---|
+| Tier 1 全量版 | [English](docs/i18n/en/README.md)（en-US 基线） | 美/澳/新/印（商务）/非洲英语区/欧洲商务 | 9 份：产品全景 · 产品介绍 · 快速开始 · DSH 生态 · 功能使用指南 · 企业部署 · App SSO 接入 · 用量报表 · 发布史摘要 |
+| Tier 1 全量版 | [日本語](docs/i18n/ja/README.md) | 日本 | 与英文版同集 9 份 |
+| Tier 2 概览 | [Deutsch](docs/i18n/de/product-overview.md) · [Français](docs/i18n/fr/product-overview.md) · [Español](docs/i18n/es/product-overview.md) · [Português](docs/i18n/pt/product-overview.md) · [हिन्दी](docs/i18n/hi/product-overview.md) | DACH · 法国与非洲法语区 · 西语市场 · 葡语区（含非洲）· 印度 | 产品一页纸 |
+
+本地化口径要点：**运行时界面已随 2026-10-16 批次内置三语切换**（zh-CN 默认 / en-US / ja-JP，顶栏选择器、
+CLI `--lang`/`DSHCTL_LANG`）；文档译稿中 UI 位置保留「译名（中文原文）」双标注（兼容中文固定部署与截图对照）；
+协议层 ASCII 键在任何语言版本中不改写；中文原文为权威版本。内部工程文档（契约/交接/QA/
+开发计划/发布说明全文）保持中文不翻译，对外内容已浓缩为各语言「发布史摘要」。
 
 ## 一、快速开始
 

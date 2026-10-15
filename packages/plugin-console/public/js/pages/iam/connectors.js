@@ -14,6 +14,7 @@ import {
   providerName, nameStatusMismatch, strategyName, fieldName, syncStatCard,
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
 } from './helpers.js'
+import rqI18n from '../../i18n.js'
 
 export async function renderConnectors(params2, ctx2) {
   const [data, orgs] = await Promise.all([api.get('/api/iam/connectors'), api.get('/api/iam/orgs')])
@@ -54,7 +55,7 @@ export async function renderConnectors(params2, ctx2) {
           <div class="grid-3 mb-14">
             ${syncStatCard('最近同步', config.lastSyncAt ? timeAgo(config.lastSyncAt) : '从未同步', config.lastSyncResult?.ok ? 'var(--ok)' : 'var(--text-3)')}
             ${syncStatCard('同步结果', config.lastSyncResult ? config.lastSyncResult.message : '—', 'var(--text-1)')}
-            ${syncStatCard('同步频率', (config.intervalMinutes ?? 60) > 0 ? `每 ${config.intervalMinutes ?? 60} 分钟（自动）` : '仅手动', 'var(--text-1)')}
+            ${syncStatCard('同步频率', (config.intervalMinutes ?? 60) > 0 ? rqI18n.t('每 {n} 分钟（自动）', { n: config.intervalMinutes ?? 60 }) : '仅手动', 'var(--text-1)')}
           </div>
           <div class="desc-grid">
             <div class="desc-item"><span class="k">平台</span><span class="v">${esc(providerName(config.provider))}</span></div>
@@ -77,7 +78,7 @@ export async function renderConnectors(params2, ctx2) {
       btn.classList.add('btn-loading')
       try {
         const result = await api.post(`/api/iam/connectors/${config.id}/test`)
-        toast(`${result.message}（${result.latencyMs}ms）`)
+        toast(rqI18n.t('{msg}（{ms}ms）', { msg: result.message, ms: result.latencyMs }))
       } catch (error) { toast(error.message, 'error') } finally { btn.classList.remove('btn-loading') }
     }
     card.querySelector('[data-sync]').onclick = async (e) => {
@@ -93,12 +94,12 @@ export async function renderConnectors(params2, ctx2) {
     card.querySelector('[data-del]').onclick = async () => {
       const result = await confirmDialog({
         title: '删除接入', danger: true,
-        message: `确定删除主体「${esc(config.name || config.corpId)}」的接入配置？将同时注销其运行时连接器与登录身份源（已同步的组织与账号保留）。`,
+        message: esc(rqI18n.t('确定删除主体「{name}」的接入配置？将同时注销其运行时连接器与登录身份源（已同步的组织与账号保留）。', { name: config.name || config.corpId })),
       })
       if (!result) return
       try {
         await api.delete(`/api/iam/connectors/${config.id}`)
-        toast('接入已删除'); ctx2.rerender()
+        toast(rqI18n.t('接入已删除')); ctx2.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
     return card
@@ -108,7 +109,7 @@ export async function renderConnectors(params2, ctx2) {
   function openConnectorEditor(config) {
     const isEdit = !!config
     const modal = openModal({
-      title: isEdit ? `接入配置（${esc(config.name || providerName(config.provider))}）` : '新增接入', wide: true,
+      title: isEdit ? esc(rqI18n.t('接入配置（{name}）', { name: config.name || providerName(config.provider) })) : '新增接入', wide: true,
       body: `
         <div class="form-grid">
           ${field('三方平台', '<code class="mono" style="line-height:32px">钉钉（dingtalk）</code>', { hint: '当前仅支持钉钉，更多平台陆续接入' })}
@@ -137,9 +138,9 @@ export async function renderConnectors(params2, ctx2) {
     modal.el.querySelector('#conn-copy-callback').onclick = () => copyText(callbackUrl)
     modal.el.querySelector('[data-ok]').onclick = async () => {
       const data2 = collectForm(modal.body)
-      if (!data2.name) return toast('主体名称不能为空', 'error')
-      if (!data2.corpId || !data2.appKey) return toast('CorpID 与 AppKey 不能为空', 'error')
-      if (!isEdit && !data2.appSecret) return toast('AppSecret 不能为空', 'error')
+      if (!data2.name) return toast(rqI18n.t('主体名称不能为空'), 'error')
+      if (!data2.corpId || !data2.appKey) return toast(rqI18n.t('CorpID 与 AppKey 不能为空'), 'error')
+      if (!isEdit && !data2.appSecret) return toast(rqI18n.t('AppSecret 不能为空'), 'error')
       const payload = {
         provider: 'dingtalk',
         name: data2.name,
@@ -156,10 +157,10 @@ export async function renderConnectors(params2, ctx2) {
       try {
         if (isEdit) {
           await api.put(`/api/iam/connectors/${config.id}`, payload)
-          toast('配置已更新（变更已审计）')
+          toast(rqI18n.t('配置已更新（变更已审计）'))
         } else {
           await api.post('/api/iam/connectors', payload)
-          toast('接入已创建')
+          toast(rqI18n.t('接入已创建'))
         }
         modal.close(); ctx2.rerender()
       } catch (error) { toast(error.message, 'error') }

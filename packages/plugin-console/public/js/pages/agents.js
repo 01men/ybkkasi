@@ -1,5 +1,6 @@
 /** Agent 本体：列表（卡片/表格双视图）+ 详情（概览/配置/权限/监控/审计/生命周期）。 */
 import { api, session } from '../api.js'
+import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import {
   h, $, $$, esc, toast, openDrawer, openModal, confirmDialog, copyText,
@@ -72,7 +73,7 @@ export async function renderAgents(content, params, ctx) {
       if (filter.q && !`${a.name}${a.slug}`.toLowerCase().includes(filter.q.toLowerCase())) return false
       return true
     })
-    $('#agent-count').textContent = `共 ${list.length} 个 Agent`
+    $('#agent-count').textContent = rqI18n.t('共 {n} 个 Agent', { n: list.length })
     const holder = $('#agent-list')
     holder.innerHTML = ''
     if (!list.length) {
@@ -94,11 +95,11 @@ export async function renderAgents(content, params, ctx) {
             <div class="res-desc">${esc(agent.attrs['description'] ?? '')}</div>
             <div class="flex" style="gap:6px;flex-wrap:wrap">
               <span class="badge badge-brand no-dot mono">${esc(agent.attrs['model'] ?? '—')}</span>
-              ${Array.isArray(agent.attrs['skills']) && agent.attrs['skills'].length ? `<span class="badge badge-muted no-dot">${agent.attrs['skills'].length} 个 Skill</span>` : ''}
-              ${agent.boundUserCount ? `<span class="badge badge-muted no-dot">${agent.boundUserCount} 绑定用户</span>` : ''}
+              ${Array.isArray(agent.attrs['skills']) && agent.attrs['skills'].length ? `<span class="badge badge-muted no-dot">${esc(rqI18n.t('{n} 个 Skill', { n: agent.attrs['skills'].length }))}</span>` : ''}
+              ${agent.boundUserCount ? `<span class="badge badge-muted no-dot">${esc(rqI18n.t('{n} 绑定用户', { n: agent.boundUserCount }))}</span>` : ''}
             </div>
             <div class="res-foot">
-              <span class="metric">${icon('activity', 13)}${fmtNum(agent.metrics.calls)} 调用</span>
+              <span class="metric">${icon('activity', 13)}${esc(rqI18n.t('{n} 调用', { n: fmtNum(agent.metrics.calls) }))}</span>
               <span class="metric">${icon('check', 13)}${fmtPct(agent.metrics.successRate)}</span>
               ${agent.attrs['entryUrl'] ? `<a class="btn btn-ghost btn-sm" data-entry href="javascript:void(0)">${icon('external', 13)}交互界面</a>` : ''}
               <span style="margin-left:auto" class="text-4">${esc(agent.attrs['ownerName'] ?? '')}</span>
@@ -164,9 +165,9 @@ async function openAgentDetail(id, ctx) {
     body: `
       <div class="flex mb-14" style="gap:8px;flex-wrap:wrap">
         ${statusBadge(agent.status)}
-        <span class="badge ${riskClass(agent.attrs['riskLevel'])} no-dot">风险：${riskLabel(agent.attrs['riskLevel'])}</span>
-        <span class="badge badge-info no-dot">密级：${dataClassLabel(agent.attrs['dataClass'])}</span>
-        ${agent.attrs['env'] ? `<span class="badge badge-muted no-dot">环境：${envLabel(agent.attrs['env'])}</span>` : ''}
+        <span class="badge ${riskClass(agent.attrs['riskLevel'])} no-dot">${esc(rqI18n.t('风险：{level}', { level: rqI18n.t(riskLabel(agent.attrs['riskLevel'])) }))}</span>
+        <span class="badge badge-info no-dot">${esc(rqI18n.t('密级：{level}', { level: rqI18n.t(dataClassLabel(agent.attrs['dataClass'])) }))}</span>
+        ${agent.attrs['env'] ? `<span class="badge badge-muted no-dot">${esc(rqI18n.t('环境：{env}', { env: rqI18n.t(envLabel(agent.attrs['env'])) }))}</span>` : ''}
       </div>
 
       <div class="stat-grid mb-20" style="grid-template-columns:repeat(4,1fr)">
@@ -210,7 +211,7 @@ async function openAgentDetail(id, ctx) {
           <div class="card-title mt-14 mb-8">凭证状态</div>
           <div class="desc-grid">
             <div class="desc-item"><span class="k">状态</span><span class="v">${agent.credential.status === 'active' ? '正常' : '已禁用'}</span></div>
-            <div class="desc-item"><span class="k">活跃令牌</span><span class="v">${agent.credential.activeTokens} 个</span></div>
+            <div class="desc-item"><span class="k">活跃令牌</span><span class="v">${esc(rqI18n.t('{n} 个', { n: agent.credential.activeTokens }))}</span></div>
           </div>
           <div class="flex mt-14">
             <button class="btn btn-default btn-sm" id="ag-obo">${icon('fingerprint', 13)}签发 on-behalf-of 令牌</button>
@@ -223,7 +224,7 @@ async function openAgentDetail(id, ctx) {
             title: '身份透传令牌（on-behalf-of）',
             body: `
               <div class="form-hint" style="margin-bottom:10px">该令牌携带完整 act 链：用户 → Agent。下游 MCP 可识别真实操作人，审计可还原完整链路。令牌仅本次完整展示，请立即复制保存。</div>
-              <div class="code-block" style="white-space:pre-wrap;word-break:break-all">act 链: ${esc(result.actChain.map((a) => `${a.name}(${a.type})`).join(' → '))}
+              <div class="code-block" style="white-space:pre-wrap;word-break:break-all">${esc(rqI18n.t('act 链: {chain}', { chain: result.actChain.map((a) => `${a.name}(${a.type})`).join(' → ') }))}
 
 token:    ${esc(result.token)}</div>`,
             foot: `<button class="btn btn-default" id="obo-copy">${icon('copy', 13)}复制完整令牌</button><button class="btn btn-primary" data-ok>关闭</button>`,
@@ -271,7 +272,7 @@ token:    ${esc(result.token)}</div>`,
               ${Object.entries(g.policies ?? {}).map(([sid, p]) => `
                 <div class="flex fs-12" style="padding:6px 0;border-bottom:1px solid var(--border)">
                   <span class="mono">${esc(svcName.get(sid) ?? sid)}</span>
-                  <span class="badge badge-muted no-dot" style="margin-left:auto">${p.allowedTools === '*' ? '全部工具' : `${(p.allowedTools ?? []).length} 个工具`}</span>
+                  <span class="badge badge-muted no-dot" style="margin-left:auto">${p.allowedTools === '*' ? esc(rqI18n.t('全部工具')) : esc(rqI18n.t('{n} 个工具', { n: (p.allowedTools ?? []).length }))}</span>
                   ${p.constraints?.readOnly ? '<span class="badge badge-info no-dot">只读</span>' : ''}
                 </div>`).join('')}
             </div>`).join('')}
@@ -284,13 +285,13 @@ token:    ${esc(result.token)}</div>`,
     }
     if (tab === 'access') {
       tabBody.innerHTML = `
-        <div class="card-title mb-8">绑定用户（${agent.boundUsers.length}）<span class="fs-12 text-3" style="font-weight:400;margin-left:8px">记录"哪些用户可使用该 Agent"，使用即授权留痕</span></div>
+        <div class="card-title mb-8">${esc(rqI18n.t('绑定用户（{n}）', { n: agent.boundUsers.length }))}<span class="fs-12 text-3" style="font-weight:400;margin-left:8px">记录"哪些用户可使用该 Agent"，使用即授权留痕</span></div>
         <div class="mb-14">
           ${agent.boundUsers.map((b) => `
             <div class="flex" style="padding:8px 0;border-bottom:1px solid var(--border)">
               <div class="avatar sm">${esc(b.userName.slice(0, 1))}</div>
               <span class="fs-13 grow">${esc(b.userName)}</span>
-              <span class="fs-11 text-4">${timeAgo(b.boundAt)} 由 ${esc(b.boundBy)} 绑定</span>
+              <span class="fs-11 text-4">${esc(rqI18n.t('{time} 由 {name} 绑定', { time: timeAgo(b.boundAt), name: b.boundBy }))}</span>
               <button class="btn btn-ghost btn-sm stop" data-unbind="${esc(b.userId)}" style="color:var(--danger)">${icon('x', 12)}</button>
             </div>`).join('') || '<span class="text-4 fs-12">暂无绑定用户</span>'}
         </div>
@@ -298,7 +299,7 @@ token:    ${esc(result.token)}</div>`,
       tabBody.querySelectorAll('[data-unbind]').forEach((btn) => {
         btn.onclick = async () => {
           await api.delete(`/api/agents/${agent.id}/bindings/${btn.dataset.unbind}`)
-          toast('已解绑'); drawer.close(); void openAgentDetail(id, ctx)
+          toast(rqI18n.t('已解绑')); drawer.close(); void openAgentDetail(id, ctx)
         }
       })
       tabBody.querySelector('#ag-bind').onclick = async () => {
@@ -306,7 +307,7 @@ token:    ${esc(result.token)}</div>`,
         const activeUsers = users.users.filter((u) => u.status === 'active')
         const modal = openModal({
           title: '绑定用户',
-          body: field('选择用户', searchableSelectField('userId', activeUsers.map((u) => ({ value: u.id, label: `${u.displayName}（${u.orgName ?? '—'}）` })), { placeholder: '点击选择，支持搜索姓名/组织' }), { required: true }),
+          body: field('选择用户', searchableSelectField('userId', activeUsers.map((u) => ({ value: u.id, label: rqI18n.t('{name}（{org}）', { name: u.displayName, org: u.orgName ?? '—' }) })), { placeholder: '点击选择，支持搜索姓名/组织' }), { required: true }),
           foot: '<button class="btn btn-default" data-cancel>取消</button><button class="btn btn-primary" data-ok>绑定</button>',
         })
         mountSearchableSelects(modal.el)
@@ -314,7 +315,7 @@ token:    ${esc(result.token)}</div>`,
         modal.el.querySelector('[data-ok]').onclick = async () => {
           try {
             await api.post(`/api/agents/${agent.id}/bindings`, { userId: collectForm(modal.body).userId })
-            toast('绑定成功（授权已留痕）'); modal.close(); drawer.close(); void openAgentDetail(id, ctx)
+            toast(rqI18n.t('绑定成功（授权已留痕）')); modal.close(); drawer.close(); void openAgentDetail(id, ctx)
           } catch (error) { toast(error.message, 'error') }
         }
       }
@@ -331,7 +332,7 @@ token:    ${esc(result.token)}</div>`,
         ${agent.impact.length ? `
           <div class="card card-pad mt-14" style="border-color:var(--warn-border);background:var(--warn-bg)">
             <div class="card-title mb-8">${icon('alert', 14)} 影响面（若下线）</div>
-            ${agent.impact.map((i) => `<div class="fs-13" style="padding:3px 0">· ${esc(i.name)}（${typeLabel(i.type)}）</div>`).join('')}
+            ${agent.impact.map((i) => `<div class="fs-13" style="padding:3px 0">${esc(rqI18n.t('· {name}（{type}）', { name: i.name, type: rqI18n.t(typeLabel(i.type)) }))}</div>`).join('')}
           </div>` : ''}`
     }
     if (tab === 'audit') {
@@ -352,8 +353,8 @@ token:    ${esc(result.token)}</div>`,
           ${agent.lifecycleHistory.map((entry, index) => `
             <div class="timeline-item ${index === agent.lifecycleHistory.length - 1 ? 'current' : 'ok'}">
               <div class="timeline-dot"></div>
-              <div class="timeline-title">${esc(entry.action === 'create' ? '注册创建' : actionLabel(entry.action))} → ${esc(stateLabel(entry.to))}</div>
-              <div class="timeline-time">${timeAgo(entry.at)} · 操作人 ${esc(entry.actor)}</div>
+              <div class="timeline-title">${esc(rqI18n.t('{action} → {state}', { action: entry.action === 'create' ? rqI18n.t('注册创建') : rqI18n.t(actionLabel(entry.action)), state: rqI18n.t(stateLabel(entry.to)) }))}</div>
+              <div class="timeline-time">${esc(rqI18n.t('{time} · 操作人 {name}', { time: timeAgo(entry.at), name: entry.actor }))}</div>
               ${entry.note ? `<div class="timeline-body">${esc(entry.note)}</div>` : ''}
             </div>`).join('')}
         </div>
@@ -384,15 +385,15 @@ token:    ${esc(result.token)}</div>`,
           danger: !isOnline,
           confirmText: '提交审批',
           message: isOnline
-            ? `上线 <b>${esc(agent.name)}</b> 将生成审批单，有审批权限的管理员通过后自动执行。`
-            : `下线 <b>${esc(agent.name)}</b> 后：机器凭证立即吊销、${agent.boundUsers.length} 名绑定用户收到通知、审计数据保留。`,
+            ? rqI18n.t('上线 <b>{name}</b> 将生成审批单，有审批权限的管理员通过后自动执行。', { name: esc(agent.name) })
+            : rqI18n.t('下线 <b>{name}</b> 后：机器凭证立即吊销、{n} 名绑定用户收到通知、审计数据保留。', { name: esc(agent.name), n: agent.boundUsers.length }),
         })
         if (!result) return
         try {
           const response = await api.post(`/api/agents/${agent.id}/transition`, {
             action: transition.action, note: result.reason ?? '上线申请',
           })
-          toast('已创建审批单（审批通过后自动执行）')
+          toast(rqI18n.t('已创建审批单（审批通过后自动执行）'))
           drawer.close(); ctx.rerender()
           void response
         } catch (error) { toast(error.message, 'error') }
@@ -413,16 +414,16 @@ token:    ${esc(result.token)}</div>`,
             modal.el.querySelector('[data-cancel]').onclick = () => modal.close()
             modal.el.querySelector('[data-ok]').onclick = async () => {
               const groupName = collectForm(modal.body).groups
-              if (!groupName) return toast('请选择试运行用户组', 'error')
+              if (!groupName) return toast(rqI18n.t('请选择试运行用户组'), 'error')
               const group = groupOptions.find((g) => g.value === groupName)
               await api.patch(`/api/agents/${agent.id}`, { attrs: { trialGroups: [group ? group.value : groupName] } })
               await api.post(`/api/agents/${agent.id}/transition`, { action: 'submit_trial' })
-              toast('已进入试运行'); modal.close(); drawer.close(); ctx.rerender()
+              toast(rqI18n.t('已进入试运行')); modal.close(); drawer.close(); ctx.rerender()
             }
             return
           }
           await api.post(`/api/agents/${agent.id}/transition`, { action: transition.action })
-          toast('状态已更新'); drawer.close(); ctx.rerender()
+          toast(rqI18n.t('状态已更新')); drawer.close(); ctx.rerender()
         } catch (error) { toast(error.message, 'error') }
       }
     }
@@ -434,13 +435,13 @@ token:    ${esc(result.token)}</div>`,
   const deleteBtn = drawer.el.querySelector('#ag-delete')
   if (deleteBtn) deleteBtn.onclick = async () => {
     const result = await confirmDialog({
-      title: `删除 Agent · ${agent.name}`, requireReason: true, danger: true, confirmText: '确认删除',
-      message: `将永久删除 <b>${esc(agent.name)}</b>：解绑全部绑定用户、吊销机器凭证、清理依赖关系，操作不可恢复；用量与审计数据保留。`,
+      title: rqI18n.t('删除 Agent · {name}', { name: agent.name }), requireReason: true, danger: true, confirmText: '确认删除',
+      message: rqI18n.t('将永久删除 <b>{name}</b>：解绑全部绑定用户、吊销机器凭证、清理依赖关系，操作不可恢复；用量与审计数据保留。', { name: esc(agent.name) }),
     })
     if (!result) return
     try {
       await api.delete(`/api/agents/${agent.id}`)
-      toast('已删除'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('已删除')); drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') }
   }
 }
@@ -459,7 +460,7 @@ function footForStatus(agent, ctx) {
 /** 生成 Agent 接入提示词：注册同款模板由平台侧生成；可选轮换机器凭证（旧 secret 失效）以携带完整凭证。与 app 同构。 */
 function openAgentOnboardPrompt(agent) {
   const modal = openModal({
-    title: `生成接入提示词 · ${agent.name}`,
+    title: rqI18n.t('生成接入提示词 · {name}', { name: agent.name }),
     body: `
       <div class="muted-box mb-14" style="display:flex;gap:8px;line-height:1.8">${icon('info', 15)}<span>按<b>注册同款模板</b>生成全文（换牌 → 运营数据提报 → 计量 → NAS 数据权限）。<br>
       <b>重新生成密钥并生成</b>：提示词携带完整 client_secret，<b>旧 secret 立即失效</b>——首次接入或密钥丢失时选这个；<br>
@@ -474,7 +475,7 @@ function openAgentOnboardPrompt(agent) {
       const result = await api.post(`/api/agents/${agent.id}/onboarding-prompt`, { rotate })
       modal.close()
       openOnboardingModal({
-        title: `接入提示词 · ${agent.name}${rotate ? '（密钥已重新生成）' : ''}`,
+        title: rqI18n.t('接入提示词 · {name}{suffix}', { name: agent.name, suffix: rotate ? rqI18n.t('（密钥已重新生成）') : '' }),
         resourceLabel: 'Agent',
         resource: agent,
         credential: result.credential,
@@ -555,7 +556,7 @@ async function openAgentCreate(schema, ctx) {
           guideText: buildAgentOnboardingText(result.agent, result.credential),
         })
       } else {
-        toast('注册成功')
+        toast(rqI18n.t('注册成功'))
       }
       ctx.rerender()
     } catch (error) { toast(error.message, 'error') }
@@ -575,7 +576,7 @@ async function openAgentCreate(schema, ctx) {
       const options = resourceOptions[f.key]
       if (options) {
         return field(f.label, options.length
-          ? multiSelectField(tagsName, options, { placeholder: `搜索并选择${f.label}，可多选` })
+          ? multiSelectField(tagsName, options, { placeholder: rqI18n.t('搜索并选择{label}，可多选', { label: f.label }) })
           : inputField(tagsName, { placeholder: '逗号分隔（平台暂无可选项，可手填）' }), { hint: f.hint, full: false })
       }
       return field(f.label, inputField(tagsName, { placeholder: '逗号分隔' }), { hint: f.hint, full: false })
@@ -687,7 +688,7 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
             ③ <code class="mono">access_token</code> 调 <code class="mono">/oauth/userinfo</code> 取用户身份（sub / org / roles / tenant）
           </div>
         </div>
-        ${enforced ? `<div class="muted-box mb-14" style="display:flex;gap:8px;border-color:var(--warn-border);background:var(--warn-bg)">${icon('alert', 15)}<span><b>Agent 上线门禁</b>：${mode === 'oidc' ? '未完成 SSO 签发前，上线审批将被拒绝。' : '既无 SSO 客户端也未登记 entryUrl 时，上线审批将被拒绝。'}</span></div>` : ''}
+        ${enforced ? `<div class="muted-box mb-14" style="display:flex;gap:8px;border-color:var(--warn-border);background:var(--warn-bg)">${icon('alert', 15)}<span><b>${esc(rqI18n.t('Agent 上线门禁'))}</b>${mode === 'oidc' ? esc(rqI18n.t('：未完成 SSO 签发前，上线审批将被拒绝。')) : esc(rqI18n.t('：既无 SSO 客户端也未登记 entryUrl 时，上线审批将被拒绝。'))}</span></div>` : ''}
         <button class="btn btn-primary" id="ag-sso-issue">${icon('key', 14)}签发 SSO 客户端</button>
         <div class="form-hint mt-8">本机联调免控制台：回调地址为环回（127.0.0.1 / localhost / 0.0.0.0）时，Agent 机器凭证可直接 <code class="mono">POST /api/agents/${esc(agent.id)}/sso-client</code> 自助签发（改回调 PATCH 同路径）。</div>
       </div>
@@ -756,7 +757,7 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
     const postLogoutUris = holder.querySelector('#ag-sso-postlogouts').value.split('\n').map((x) => x.trim()).filter(Boolean)
     try {
       await api.patch(`/api/agents/${agent.id}/sso-client`, { redirectUris, postLogoutUris, consentRequired: holder.querySelector('#ag-sso-consent').checked })
-      toast('SSO 配置已保存'); refresh()
+      toast(rqI18n.t('SSO 配置已保存')); refresh()
     } catch (error) { toast(error.message, 'error') }
   }
   const rotateBtn = holder.querySelector('#ag-sso-rotate')
@@ -780,14 +781,14 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
     if (!result) return
     try {
       await api.post(`/api/agents/${agent.id}/sso-client/disable`, { reason: result.reason })
-      toast('客户端已禁用'); refresh()
+      toast(rqI18n.t('客户端已禁用')); refresh()
     } catch (error) { toast(error.message, 'error') }
   }
   const enableBtn = holder.querySelector('#ag-sso-enable')
   if (enableBtn) enableBtn.onclick = async () => {
     try {
       await api.post(`/api/agents/${agent.id}/sso-client/enable`)
-      toast('客户端已启用'); refresh()
+      toast(rqI18n.t('客户端已启用')); refresh()
     } catch (error) { toast(error.message, 'error') }
   }
 }
@@ -795,7 +796,7 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
 /** 签发弹窗（redirect_uris 必填；dsh 单入口形态建议填 <dsh地址>/auth/oidc/callback）。 */
 function openAgentIssueSsoModal(agent, refresh) {
   const modal = openModal({
-    title: `签发 SSO 客户端：${agent.name}`,
+    title: rqI18n.t('签发 SSO 客户端：{name}', { name: agent.name }),
     body: `
       <div class="form-item">
         <label class="form-label">回调地址（redirect_uris，每行一个；https://，或 http:// 内网/本机地址）</label>
@@ -810,7 +811,7 @@ function openAgentIssueSsoModal(agent, refresh) {
   })
   modal.el.querySelector('#ag-sso-new-ok').onclick = async () => {
     const redirectUris = modal.el.querySelector('#ag-sso-new-redirects').value.split('\n').map((x) => x.trim()).filter(Boolean)
-    if (redirectUris.length === 0) { toast('至少填写一个回调地址', 'error'); return }
+    if (redirectUris.length === 0) { toast(rqI18n.t('至少填写一个回调地址'), 'error'); return }
     try {
       const created = await api.post(`/api/agents/${agent.id}/sso-client`, {
         redirectUris,

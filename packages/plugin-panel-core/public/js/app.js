@@ -5,6 +5,7 @@
  */
 import { api, session, setBase as apiSetBase, ApiError } from './api.js'
 import { setBase as depsSetBase, ui as uiDep, realtime as realtimeDep } from './deps.js'
+import rqI18n from './i18n.js'
 
 // ---------------------------------------------------------------------------
 // 小工具
@@ -261,7 +262,7 @@ function renderShell() {
       <div class="logo"><img src="./ybk-mark.png" alt="元冰可" style="width:22px;height:22px;border-radius:6px;vertical-align:-5px"> 元冰可 <span class="badge">部门工作台</span></div>
       <div class="ind-sel">
         <div class="ind-btn" id="indBtn">
-          <span>${esc(activeIndustry?.icon ?? '🏢')}</span><span>${esc(activeIndustry?.name ?? '未激活行业')}</span>
+          <span>${esc(activeIndustry?.icon ?? '🏢')}</span><span>${esc(activeIndustry?.name ?? rqI18n.t('未激活行业'))}</span>
           <span class="${activeIndustry ? 'dotok' : 'dotlock'}"></span><span style="color:#6b7280">▾</span>
         </div>
         <div class="ind-menu" id="indMenu"></div>
@@ -286,7 +287,7 @@ function renderIndMenu() {
     const badge = ind.state === 'active' ? '<span class="st ok">已激活</span>'
       : ind.state === 'pending' ? '<span class="st pending">审批中</span>'
         : '<span class="st lock">🔒 待授权</span>'
-    const sub = ind.state === 'active' ? `${ind.code} · 场景图谱${ind.graphLoaded ? '已挂载' : '缺位（请联系管理员）'}` : ind.sub
+    const sub = ind.state === 'active' ? `${ind.code} · ${ind.graphLoaded ? rqI18n.t('场景图谱已挂载') : rqI18n.t('场景图谱缺位（请联系管理员）')}` : ind.sub
     return `<div class="ind-opt ${ind.state === 'active' ? 'on' : ''}" data-code="${esc(ind.code)}">
       <span style="font-size:17px">${esc(ind.icon)}</span>
       <span>${esc(ind.name)}<span class="sub">${esc(sub)}</span></span>${badge}</div>`
@@ -311,17 +312,17 @@ async function pickIndustry(code) {
     return
   }
   if (ind.state === 'pending') {
-    void toast('该行业授权申请审批中，可在控制台「审批中心」跟进')
+    void toast(rqI18n.t('该行业授权申请审批中，可在控制台「审批中心」跟进'))
     return
   }
   showActivate(ind)
 }
 
 function showActivate(ind) {
-  showModal(`🔐 行业功能包授权激活 · ${ind.name}（${ind.code}）`, `
+  showModal(rqI18n.t('🔐 行业功能包授权激活 · {name}（{code}）', { name: ind.name, code: ind.code }), `
     <p class="note" style="margin-top:0">该行业场景图谱包尚未对本组织授权。行业切换与功能面板使用需经<b>宿主平台授权激活</b>——申请进入审批中心（高风险单需二次确认），激活后按 usage 计量、audit 全程留痕。</p>
     <div style="margin:14px 0">
-      <div class="lic-row"><span class="lr-ic">🗺</span><span>${esc(ind.name)}场景图谱包（一图四清单）<span style="display:block;font-size:10px;color:var(--txt2)">${esc(ind.sub)}</span></span><span class="lr-st">待授权</span></div>
+      <div class="lic-row"><span class="lr-ic">🗺</span><span>${esc(rqI18n.t('{name}场景图谱包（一图四清单）', { name: ind.name }))}<span style="display:block;font-size:10px;color:var(--txt2)">${esc(ind.sub)}</span></span><span class="lr-st">待授权</span></div>
       <div class="lic-row"><span class="lr-ic">🧩</span><span>部门面板行业化配置（五部门 × 场景挂载）</span><span class="lr-st">随审批生效</span></div>
       <div class="lic-row"><span class="lr-ic">🤖</span><span>行业 Agent 阵容与数据面连接器映射</span><span class="lr-st">随审批生效</span></div>
     </div>
@@ -330,7 +331,7 @@ function showActivate(ind) {
       <button class="btn primary" id="actSubmit">提交激活申请</button>
       <button class="btn" id="actCancel">取消</button>
     </div>
-    <p class="note">计量说明：激活后部门面板按 resource='panel:&lt;dept&gt;.${esc(ind.code.toLowerCase())}' 计量（零费率起步，费率由平台运营配置）。</p>`)
+    <p class="note">${esc(rqI18n.t("计量说明：激活后部门面板按 resource='panel:<dept>.{code}' 计量（零费率起步，费率由平台运营配置）。", { code: ind.code.toLowerCase() }))}</p>`)
   document.getElementById('actCancel').onclick = hideModal
   document.getElementById('actSubmit').onclick = async (event) => {
     event.target.disabled = true
@@ -353,7 +354,7 @@ function renderTopRight() {
   const bound = state.ddStatus?.bound
   const pill = state.ddStatus
     ? (bound
-        ? `<span class="pill dd-on" id="ddPill">⇄ 钉钉：${esc(bound.displayName)} 已绑定</span>`
+        ? `<span class="pill dd-on" id="ddPill">${esc(rqI18n.t('⇄ 钉钉：{name} 已绑定', { name: bound.displayName }))}</span>`
         : `<span class="pill dd-off" id="ddPill">⇄ 钉钉桥接：未绑定（点击绑定）</span>`)
     : `<span class="pill" id="ddPill">⇄ 钉钉桥接不可用</span>`
   const user = session.user
@@ -412,7 +413,7 @@ function renderRail() {
   rail.querySelectorAll('.rail-item').forEach((el) => {
     el.onclick = () => {
       const dept = state.depts.find((item) => item.id === el.dataset.dept)
-      if (dept?.allowed === false) { void toast('部门范围受限：该部门已绑定其他组织治理', 'error'); return }
+      if (dept?.allowed === false) { void toast(rqI18n.t('部门范围受限：该部门已绑定其他组织治理'), 'error'); return }
       void switchDept(el.dataset.dept)
     }
   })
@@ -458,14 +459,14 @@ function renderDept() {
   const host = document.getElementById('dept')
   host.innerHTML = `
     <div class="dept-head">
-      <div class="dept-title">${esc(dept.icon)} ${esc(dept.label)}工作台
+      <div class="dept-title">${esc(dept.icon)} ${esc(rqI18n.t('{label}工作台', { label: dept.label }))}
         <span class="tag">${esc(dept.theme)}</span>
-        <span class="tag gray">协作模式：${esc(dept.collab)}</span>
+        <span class="tag gray">${esc(rqI18n.t('协作模式：{mode}', { mode: dept.collab }))}</span>
         ${state.overview.org ? `<span class="tag gray">🏷 ${esc(state.overview.org.name)}</span>` : ''}
-        ${industry ? `<span class="tag gray">${esc(industry.name)} · 场景图谱已挂载</span>` : '<span class="tag gray">未激活行业（顶栏切换）</span>'}
+        ${industry ? `<span class="tag gray">${esc(industry.name)} · ${esc(rqI18n.t('场景图谱已挂载'))}</span>` : '<span class="tag gray">未激活行业（顶栏切换）</span>'}
       </div>
       <div class="dept-kpis">${state.overview.kpis.map((kpi) => `
-        <div class="kpi" title="来源：${esc(kpi.source)}"><div class="v">${esc(kpi.value)}</div><div class="k">${esc(kpi.label)}</div></div>`).join('')}
+        <div class="kpi" title="${esc(rqI18n.t('来源：{source}', { source: kpi.source }))}"><div class="v">${esc(kpi.value)}</div><div class="k">${esc(kpi.label)}</div></div>`).join('')}
       </div>
       <div class="head-actions">
         <button class="btn only-compact toggle-left" id="btnLeftDrawer" title="名册/频道（窄窗抽屉）">👥</button>
@@ -501,7 +502,11 @@ function renderColLeft() {
     ${dept.agents.map((agent) => {
       const statusColor = agent.asset ? (agent.asset.status === 'online' ? '#22c55e' : '#94a3b8') : ''
       const statusTitle = agent.asset
-        ? `Agent 资产：${agent.asset.name}（${AGENT_STATUS_LABELS[agent.asset.status] ?? agent.asset.status}${agent.asset.model ? ` · ${agent.asset.model}` : ''}）`
+        ? rqI18n.t('Agent 资产：{name}（{status}{model}）', {
+            name: agent.asset.name,
+            status: rqI18n.t(AGENT_STATUS_LABELS[agent.asset.status] ?? agent.asset.status),
+            model: agent.asset.model ? ` · ${agent.asset.model}` : '',
+          })
         : '未绑定 Agent 资产（面板配置中绑定后可真实调用）'
       return `
       <div class="agent-card" data-agent="${esc(agent.name)}" title="${esc(statusTitle)}">
@@ -587,7 +592,7 @@ function renderMain() {
       <div class="tab ${state.tab === 'chat' ? 'on' : ''}" data-tab="chat">💬 协作会话<span class="mini">人 × Agent × 钉钉</span></div>
       <div class="tab ${state.tab === 'tasks' ? 'on' : ''}" data-tab="tasks">📌 任务看板</div>
       <div class="tab ${state.tab === 'arts' ? 'on' : ''}" data-tab="arts">📁 部门知识</div>
-      <div class="tab ${state.tab === 'scene' ? 'on' : ''}" data-tab="scene">🗺 场景图谱<span class="mini">${esc(industry?.code ?? '未激活')}</span></div>
+      <div class="tab ${state.tab === 'scene' ? 'on' : ''}" data-tab="scene">🗺 场景图谱<span class="mini">${esc(industry?.code ?? rqI18n.t('未激活'))}</span></div>
     </div>
     <div id="tabBody"></div>
     ${state.tab === 'chat' ? composerHtml() : ''}`
@@ -718,7 +723,7 @@ function composerHtml() {
       </div>
       <div class="input-row">
         ${modelSwitch}
-        <input id="composerInput" placeholder="发消息给同事 / @Agent 下达任务${bound && state.ddSync ? ' / 本条将同步钉钉群' : ''}…（Enter 发送）">
+        <input id="composerInput" placeholder="${esc(rqI18n.t('发消息给同事 / @Agent 下达任务{sync}…（Enter 发送）', { sync: bound && state.ddSync ? rqI18n.t(' / 本条将同步钉钉群') : '' }))}">
         <button class="send" id="composerSend">发送</button>
       </div>
     </div>`
@@ -759,7 +764,7 @@ function wireComposer(host) {
 
 function atMention(name, inputEl) {
   const input = inputEl ?? document.querySelector('#composerInput')
-  if (!input) { void toast('请先切到「协作会话」再 @ 唤起'); return }
+  if (!input) { void toast(rqI18n.t('请先切到「协作会话」再 @ 唤起')); return }
   input.value = `@${name} ${input.value}`
   input.focus()
 }
@@ -841,14 +846,14 @@ function showNewTask(lane) {
       <input id="taskTitle" placeholder="任务标题" style="border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:13px">
       <input id="taskScene" placeholder="关联场景编号（可选，如 QB01-A-2-5）" style="border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:13px">
       <div style="display:flex;gap:10px">
-        <button class="btn primary" id="taskSubmit">创建到「${LANE_LABELS[lane]}」</button>
+        <button class="btn primary" id="taskSubmit">${esc(rqI18n.t('创建到「{lane}」', { lane: rqI18n.t(LANE_LABELS[lane]) }))}</button>
         <button class="btn" id="taskCancel">取消</button>
       </div>
     </div>`)
   document.getElementById('taskCancel').onclick = hideModal
   document.getElementById('taskSubmit').onclick = async (event) => {
     const title = document.getElementById('taskTitle').value.trim()
-    if (!title) { void toast('标题必填', 'error'); return }
+    if (!title) { void toast(rqI18n.t('标题必填'), 'error'); return }
     event.target.disabled = true
     try {
       await api.post(`/api/panel/${state.dept}/tasks`, {
@@ -888,7 +893,7 @@ function renderArtifacts(host) {
         renderMain()
         const input = document.querySelector('#composerInput')
         if (input) {
-          input.value = `请基于「${art.title}」继续推进：`
+          input.value = rqI18n.t('请基于「{title}」继续推进：', { title: art.title })
           input.focus()
         }
       })
@@ -911,13 +916,13 @@ function renderScenegraph(host) {
   const dept = state.overview.dept
   const acts = Object.entries(pack.activities).filter(([key]) => dept.acts.includes(key))
   host.innerHTML = `<div class="scene-wrap">
-    <div class="sys-line" style="margin-top:0"><span>🗺 ${esc(pack.name)}场景图谱（${esc(pack.code)} · ${esc(pack.version)} 版）· 一图四清单 · 环节：${esc(pack.chains)}</span></div>
+    <div class="sys-line" style="margin-top:0"><span>${esc(rqI18n.t('🗺 {name}场景图谱（{code} · {version} 版）· 一图四清单 · 环节：{chains}', { name: pack.name, code: pack.code, version: pack.version, chains: pack.chains }))}</span></div>
     ${acts.map(([activity, scenes]) => {
       const avg = Math.round(scenes.reduce((sum, scene) => sum + scene.s, 0) / scenes.length)
       return `<div class="scene-act">
         <div class="scene-act-h"><span class="an">${esc(activityLabel(activity))}</span>
-          <span class="ar">活动现状评级 ≈ ${stars(avg)}</span>
-          <span class="achain">${scenes.length} 个场景 · ${scenes.filter((scene) => scene.s <= 2).length} 个低于★★★ 建议优先改造</span></div>
+          <span class="ar">${esc(rqI18n.t('活动现状评级 ≈ {stars}', { stars: stars(avg) }))}</span>
+          <span class="achain">${esc(rqI18n.t('{total} 个场景 · {low} 个低于★★★ 建议优先改造', { total: scenes.length, low: scenes.filter((scene) => scene.s <= 2).length }))}</span></div>
         <div class="scene-grid">${scenes.map((scene) => sceneCardHtml(scene)).join('')}</div>
       </div>`
     }).join('') || '<div class="empty-line">本部门在当前行业图谱中没有挂载的业务活动。</div>'}
@@ -931,7 +936,7 @@ function renderScenegraph(host) {
         state.channelId = state.overview.channels[0]?.id ?? ''
         await loadTab()
         renderMain()
-        void toast('诊断任务已派发，请到协作会话跟进')
+        void toast(rqI18n.t('诊断任务已派发，请到协作会话跟进'))
       } catch (error) {
         el.disabled = false
         void toast(error.message, 'error')
@@ -944,7 +949,7 @@ function renderScenegraph(host) {
       el.disabled = true
       try {
         await api.post(`/api/panel/${state.dept}/scenes/${el.dataset.syncdd}/sync-dingtalk`)
-        void toast('场景卡已请求同步至钉钉协作群')
+        void toast(rqI18n.t('场景卡已请求同步至钉钉协作群'))
       } catch (error) {
         void toast(error.message, 'error')
       } finally {
@@ -989,12 +994,15 @@ async function showBind() {
     <div class="step ${connectorOk ? 'done' : ''}"><div class="no">${connectorOk ? '✓' : '1'}</div><div>
       <div class="st-t">宿主平台钉钉连接器</div>
       <div class="st-d">${connectorOk
-        ? `已配置（${esc(status.connector.name ?? status.connector.corpId)} · ${status.connector.mode === 'real' ? '真实模式' : 'mock 演示模式——真实投递需切 real'}）`
+        ? esc(rqI18n.t('已配置（{detail} · {mode}）', {
+            detail: status.connector.name ?? status.connector.corpId,
+            mode: status.connector.mode === 'real' ? rqI18n.t('真实模式') : rqI18n.t('mock 演示模式——真实投递需切 real'),
+          }))
         : '未配置：请管理员在控制台「组织与账号 → 三方集成」配置钉钉连接器'}</div></div></div>
     <div class="step ${bound ? 'done' : ''}"><div class="no">${bound ? '✓' : '2'}</div><div>
       <div class="st-t">绑定当前登录身份 ↔ 钉钉账号（iam 扫码绑定，事实源 identityLinks）</div>
       <div class="st-d">${bound
-        ? `已绑定：${esc(bound.displayName)}（${esc(bound.corpId)}）`
+        ? esc(rqI18n.t('已绑定：{name}（{corp}）', { name: bound.displayName, corp: bound.corpId }))
         : '点击下方按钮，在钉钉中完成扫码授权即可。绑定后面板消息可同步钉钉群、场景卡可推送钉钉。'}</div>
       ${bound ? '' : '<div style="margin-top:8px"><button class="btn dd" id="bindStart">📱 去钉钉扫码绑定</button></div>'}</div></div>
     <div class="step"><div class="no">3</div><div>
@@ -1011,10 +1019,10 @@ async function showBind() {
         if (url) {
           // dsh 完整页面体验（design-adaptation-spec §6）：不再 520x640 子窗口，同窗口整页跳转授权，
           // 完成后由服务商 redirect 回跳承接，回来重新打开绑定向导自动刷新状态。
-          void toast('即将跳转钉钉授权页，完成后将自动返回')
+          void toast(rqI18n.t('即将跳转钉钉授权页，完成后将自动返回'))
           setTimeout(() => { location.assign(url) }, 600)
         } else {
-          void toast('平台未返回授权地址，请检查钉钉连接器登录配置', 'error')
+          void toast(rqI18n.t('平台未返回授权地址，请检查钉钉连接器登录配置'), 'error')
         }
       } catch (error) {
         void toast(error.message, 'error')
@@ -1033,7 +1041,7 @@ async function showConfig() {
   try {
     orgs = (await api.get('/api/panel/orgs')).orgs
   } catch { /* 无 panel.config.write 或组织面不可用：隐藏绑定区 */ }
-  showModal(`⚙ ${dept.label}面板配置`, `
+  showModal(rqI18n.t('⚙ {label}面板配置', { label: dept.label }), `
     <p class="note" style="margin-top:0">配置需 panel.config.write 权限。修改立即生效（全程审计）。</p>
     ${orgs ? `
     <div style="margin:12px 0">
@@ -1049,7 +1057,7 @@ async function showConfig() {
       <div class="col-title"><span>AGENT 阵容（@唤起键 · 绑定 Agent 资产后可真实调用）</span></div>
       ${dept.agents.map((agent, index) => `
         <div class="lic-row"><span class="lr-ic">${esc(agent.icon)}</span>
-          <span style="flex:1">${esc(agent.name)}${agent.asset ? `<span style="font-size:10px;color:${agent.asset.status === 'online' ? '#16a34a' : 'var(--txt2)'}"> · 资产 ${esc(agent.asset.name)}（${esc(AGENT_STATUS_LABELS[agent.asset.status] ?? agent.asset.status)}）</span>` : ''}<span style="display:block;font-size:10px;color:var(--txt2)">${esc(agent.desc)}</span></span>
+          <span style="flex:1">${esc(agent.name)}${agent.asset ? `<span style="font-size:10px;color:${agent.asset.status === 'online' ? '#16a34a' : 'var(--txt2)'}">${esc(rqI18n.t(' · 资产 {name}（{status}）', { name: agent.asset.name, status: rqI18n.t(AGENT_STATUS_LABELS[agent.asset.status] ?? agent.asset.status) }))}</span>` : ''}<span style="display:block;font-size:10px;color:var(--txt2)">${esc(agent.desc)}</span></span>
           <input id="agentRef${index}" value="${esc(agent.agentRef ?? '')}" placeholder="agent:资产id/slug（可空）"
             style="border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:11px;width:180px">
         </div>`).join('')}
@@ -1077,7 +1085,7 @@ async function showConfig() {
       const [agentsRes] = await Promise.all(promises)
       state.overview.dept.agents = agentsRes.agents
       hideModal()
-      void toast('配置已保存（范围权限/阵容绑定立即生效）')
+      void toast(rqI18n.t('配置已保存（范围权限/阵容绑定立即生效）'))
       void refreshOverview()
     } catch (error) {
       event.target.disabled = false
@@ -1105,8 +1113,8 @@ async function showModels() {
       <span class="lr-ic">🧠</span>
       <span style="flex:1;min-width:0">
         ${esc(model.displayName || model.slug)} <span class="mono">${esc(model.slug)}</span>
-        <span style="display:block;font-size:10px;color:var(--txt2)">${esc(model.provider)} · ${esc(model.endpoint || '（未配置 endpoint，拒绝调用）')}</span>
-        <span style="display:block;font-size:10px;color:var(--txt2)">挂牌 ${esc(model.listCentsPerKTokens)} / 成本 ${esc(model.costCentsPerKTokens)} 分/千tokens · 密钥 ${esc(model.apiKey)}</span>
+        <span style="display:block;font-size:10px;color:var(--txt2)">${esc(model.provider)} · ${esc(model.endpoint || rqI18n.t('（未配置 endpoint，拒绝调用）'))}</span>
+        <span style="display:block;font-size:10px;color:var(--txt2)">${esc(rqI18n.t('挂牌 {list} / 成本 {cost} 分/千tokens · 密钥 {key}', { list: model.listCentsPerKTokens, cost: model.costCentsPerKTokens, key: model.apiKey }))}</span>
       </span>
       <span class="st ${model.status === 'online' ? 'ok' : 'lock'}" style="margin-left:0">${model.status === 'online' ? '在线' : '离线'}</span>
       ${canEdit ? `<span class="model-ops">
@@ -1132,7 +1140,7 @@ async function showModels() {
       el.disabled = true
       try {
         const result = await api.post(`/api/panel/models/${encodeURIComponent(el.dataset.mtest)}/test`)
-        void toast(result.ok ? `✓ ${result.model} 连通正常（输出 ${result.outputTokens} tokens）` : `✗ 连通失败：${result.error}`, result.ok ? undefined : 'error')
+        void toast(result.ok ? rqI18n.t('✓ {model} 连通正常（输出 {tokens} tokens）', { model: result.model, tokens: result.outputTokens }) : rqI18n.t('✗ 连通失败：{error}', { error: result.error }), result.ok ? undefined : 'error')
       } catch (error) {
         void toast(error.message, 'error')
       } finally {
@@ -1146,11 +1154,11 @@ async function showModels() {
   document.querySelectorAll('[data-mdel]').forEach((el) => {
     el.onclick = async () => {
       const model = models.find((item) => item.id === el.dataset.mdel)
-      if (!window.confirm(`确定从模型目录移除「${model?.slug ?? el.dataset.mdel}」？（绑定该模型的 Agent 将无法调用）`)) return
+      if (!window.confirm(rqI18n.t('确定从模型目录移除「{slug}」？（绑定该模型的 Agent 将无法调用）', { slug: model?.slug ?? el.dataset.mdel }))) return
       el.disabled = true
       try {
         await api.delete(`/api/panel/models/${el.dataset.mdel}`)
-        void toast('已移除模型登记')
+        void toast(rqI18n.t('已移除模型登记'))
         void showModels()
         void refreshModels().then(() => { if (state.tab === 'chat') renderMain() })
       } catch (error) {
@@ -1162,7 +1170,7 @@ async function showModels() {
 }
 
 function showModelForm(existing) {
-  showModal(existing ? `🧠 编辑模型 · ${esc(existing.slug)}` : '🧠 登记模型（OpenAI 兼容 chat/completions）', `
+  showModal(existing ? rqI18n.t('🧠 编辑模型 · {slug}', { slug: existing.slug }) : '🧠 登记模型（OpenAI 兼容 chat/completions）', `
     <div class="mform">
       <label>模型 slug（唯一标识；Agent 资产 model 属性与对话框切换均使用它）*
         <input id="mfSlug" value="${esc(existing?.slug ?? '')}" ${existing ? 'disabled title="slug 是登记主键，如需变更请新建登记"' : ''} placeholder="如 deepseek-chat"></label>
@@ -1198,12 +1206,12 @@ function showModelForm(existing) {
     if (cost !== '') payload.costCentsPerKTokens = Number(cost)
     const key = document.getElementById('mfKey').value.trim()
     if (key) payload.apiKey = key
-    if (!payload.slug) { void toast('模型 slug 必填', 'error'); return }
-    if (!payload.endpoint) { void toast('Endpoint 必填（未配置不可调用）', 'error'); return }
+    if (!payload.slug) { void toast(rqI18n.t('模型 slug 必填'), 'error'); return }
+    if (!payload.endpoint) { void toast(rqI18n.t('Endpoint 必填（未配置不可调用）'), 'error'); return }
     event.target.disabled = true
     try {
       await api.post('/api/panel/models', payload)
-      void toast(`模型 ${payload.slug} 已保存`)
+      void toast(rqI18n.t('模型 {slug} 已保存', { slug: payload.slug }))
       await refreshModels()
       if (state.tab === 'chat') renderMain()
       void showModels()
@@ -1226,7 +1234,7 @@ function showNewChannel() {
   document.getElementById('chanCancel').onclick = hideModal
   document.getElementById('chanSubmit').onclick = async (event) => {
     const name = document.getElementById('chanName').value.trim()
-    if (!name) { void toast('频道名必填', 'error'); return }
+    if (!name) { void toast(rqI18n.t('频道名必填'), 'error'); return }
     event.target.disabled = true
     try {
       const result = await api.post(`/api/panel/${state.dept}/channels`, { name })

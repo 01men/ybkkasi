@@ -10,6 +10,7 @@ import {
   h, $, $$, esc, toast, openModal, collectForm, field, textareaField, statusBadge, timeAgo,
   emptyState, confirmDialog, sectionHead, tabRow,
 } from '../ui.js'
+import rqI18n from '../i18n.js'
 
 export async function renderApprovals(content, params, ctx) {
   const data = await api.get('/api/approvals')
@@ -37,11 +38,11 @@ export async function renderApprovals(content, params, ctx) {
     <div id="ap-tabs" style="margin-bottom:14px"></div>
     ${sla ? `
     <div class="card card-pad mb-14" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
-      <div class="card-title" style="margin:0">${icon('clock', 15)} 审批 SLA（近 ${sla.windowDays} 天）</div>
+      <div class="card-title" style="margin:0">${icon('clock', 15)} ${esc(rqI18n.t('审批 SLA（近 {n} 天）', { n: sla.windowDays }))}</div>
       <div style="font-size:22px;font-weight:700;color:${sla.achievementRate >= 0.9 ? 'var(--ok)' : 'var(--danger)'}">${Math.round(sla.achievementRate * 1000) / 10}%</div>
-      <span class="fs-12 text-3">≤2 工作日达成率 · 已决 ${sla.decided} 单${sla.breached.length ? ` · 超期 ${sla.breached.length} 单` : ''}</span>
+      <span class="fs-12 text-3">${esc(rqI18n.t('≤2 工作日达成率 · 已决 {n} 单{over}', { n: sla.decided, over: sla.breached.length ? rqI18n.t(' · 超期 {n} 单', { n: sla.breached.length }) : '' }))}</span>
       <span class="fs-11 text-4">${esc(sla.calendarNote)}</span>
-      ${sla.breached.length ? `<div class="fs-12" style="flex-basis:100%;color:var(--danger)">超期单：${sla.breached.slice(0, 3).map((item) => `${esc(item.title)}（${item.businessDays} 工作日）`).join('、')}${sla.breached.length > 3 ? ' 等' : ''}</div>` : ''}
+      ${sla.breached.length ? `<div class="fs-12" style="flex-basis:100%;color:var(--danger)">${esc(rqI18n.t('超期单：{items}{more}', { items: sla.breached.slice(0, 3).map((item) => `${esc(item.title)}${esc(rqI18n.t('（{n} 工作日）', { n: item.businessDays }))}`).join(rqI18n.t('、')), more: sla.breached.length > 3 ? rqI18n.t('等') : '' }))}</div>` : ''}
     </div>` : ''}
     <div class="grid-2" style="grid-template-columns:2fr 3fr;align-items:start">
       <div id="ap-list" style="display:flex;flex-direction:column;gap:8px"></div>
@@ -109,7 +110,7 @@ export async function renderApprovals(content, params, ctx) {
           <div style="min-width:0">
             <div style="font-size:15px;font-weight:600">${esc(approval.title)}</div>
             <div style="margin-top:4px;font-size:12px;color:var(--text-3)">
-              <span class="mono">${esc(approval.id)}</span> · ${esc(kindLabel(approval.kind))} · ${esc(approval.requesterName)} 提交于 ${esc(timeAgo(approval.createdAt))}
+              <span class="mono">${esc(approval.id)}</span> · ${esc(kindLabel(approval.kind))}${esc(rqI18n.t(' · {name} 提交于 {time}', { name: approval.requesterName, time: timeAgo(approval.createdAt) }))}
             </div>
           </div>
           ${riskPill(approval.riskLevel)}
@@ -156,7 +157,7 @@ export async function renderApprovals(content, params, ctx) {
             <div style="min-width:0">
               <div style="font-size:13px">${decisionTitle(approval.status)}</div>
               <div class="tnum mono fs-11 text-3" style="margin-top:2px">${esc(timeAgo(approval.decidedAt))} · ${esc(approval.approverName ?? '')}</div>
-              ${approval.opinion ? `<div class="fs-12-5 text-2" style="margin-top:4px;line-height:1.6">意见：${esc(approval.opinion)}</div>` : ''}
+              ${approval.opinion ? `<div class="fs-12-5 text-2" style="margin-top:4px;line-height:1.6">${esc(rqI18n.t('意见：{opinion}', { opinion: approval.opinion }))}</div>` : ''}
               ${approval.execution ? `<div class="fs-12 mono" style="margin-top:4px;word-break:break-all">${esc(approval.execution.error ?? approval.execution.result)}</div>` : ''}
             </div>
           </div>
@@ -232,13 +233,13 @@ function decidedCopy(approval) {
 /** 删除驳回审批单：仅清理已驳回单（不涉及已执行单与业务资产），服务端校验状态。——既有逻辑原样保留。 */
 async function deleteApproval(approval, ctx) {
   const result = await confirmDialog({
-    title: `删除审批单 · ${approval.title}`, danger: true, confirmText: '确认删除',
-    message: '将删除该<b>已驳回</b>审批单（仅清理审批列表，不影响审计记录与业务资产），操作不可恢复。',
+    title: rqI18n.t('删除审批单 · {title}', { title: approval.title }), danger: true, confirmText: rqI18n.t('确认删除'),
+    message: `${rqI18n.t('将删除该')}<b>${rqI18n.t('已驳回')}</b>${rqI18n.t('审批单（仅清理审批列表，不影响审计记录与业务资产），操作不可恢复。')}`,
   })
   if (!result) return
   try {
     await api.delete(`/api/approvals/${approval.id}`)
-    toast('已删除驳回审批单')
+    toast(rqI18n.t('已删除驳回审批单'))
     ctx.rerender()
   } catch (error) { toast(error.message, 'error') }
 }
@@ -247,42 +248,42 @@ async function deleteApproval(approval, ctx) {
 function openDecision(id, decision, ctx, approval) {
   const isHighRisk = approval?.riskLevel === 'high'
   const modal = openModal({
-    title: decision === 'approve' ? '审批通过' : '驳回申请',
+    title: decision === 'approve' ? rqI18n.t('审批通过') : rqI18n.t('驳回申请'),
     body: `
       ${decision === 'approve' ? `
         <div class="muted-box mb-14" style="display:flex;gap:8px;border-color:var(--ok-border);background:var(--ok-bg)">
-          ${icon('check', 15)}<span>通过后将<b>自动执行</b>对应的高危操作（执行结果会回写审批单）。</span>
+          ${icon('check', 15)}<span>${rqI18n.t('通过后将')}<b>${rqI18n.t('自动执行')}</b>${rqI18n.t('对应的高危操作（执行结果会回写审批单）。')}</span>
         </div>` : ''}
       ${isHighRisk && decision === 'approve' ? `
         <div class="muted-box mb-14" style="display:flex;gap:8px;border-color:var(--danger-border);background:var(--danger-bg)">
-          ${icon('alert', 15)}<span><b>高风险审批（L1 公司级终审）</b>：通过前请复核影响面；通过后将自动落公司级终审标记并写入审计。</span>
+          ${icon('alert', 15)}<span><b>${rqI18n.t('高风险审批（L1 公司级终审）')}</b>${rqI18n.t('：通过前请复核影响面；通过后将自动落公司级终审标记并写入审计。')}</span>
         </div>
         <label class="flex mb-14" style="gap:8px;align-items:flex-start;cursor:pointer">
           <input type="checkbox" id="apc-confirm" style="margin-top:3px">
-          <span class="fs-12 text-2">二次确认：我已完整复核该高风险操作的影响面与回滚方案（不勾选将无法通过，服务端强制）。</span>
+          <span class="fs-12 text-2">${rqI18n.t('二次确认：我已完整复核该高风险操作的影响面与回滚方案（不勾选将无法通过，服务端强制）。')}</span>
         </label>` : ''}
       ${decision === 'approve' && !isHighRisk ? `
         <label class="flex mb-14" style="gap:8px;align-items:flex-start;cursor:pointer">
           <input type="checkbox" id="apc-final" style="margin-top:3px">
-          <span class="fs-12 text-2">同时落「公司级终审标记」（审计可追溯，非高风险默认可选）。</span>
+          <span class="fs-12 text-2">${rqI18n.t('同时落「公司级终审标记」（审计可追溯，非高风险默认可选）。')}</span>
         </label>` : ''}
-      ${field('审批意见', textareaField('opinion', { placeholder: decision === 'approve' ? '如：已确认影响面，同意执行' : '请说明驳回原因…' }), { required: true })}`,
-    foot: `<button class="btn btn-default" data-cancel>取消</button><button class="btn ${decision === 'approve' ? 'btn-primary' : 'btn-danger'}" data-ok>${decision === 'approve' ? '确认通过' : '确认驳回'}</button>`,
+      ${field(rqI18n.t('审批意见'), textareaField('opinion', { placeholder: decision === 'approve' ? rqI18n.t('如：已确认影响面，同意执行') : rqI18n.t('请说明驳回原因…') }), { required: true })}`,
+    foot: `<button class="btn btn-default" data-cancel>${rqI18n.t('取消')}</button><button class="btn ${decision === 'approve' ? 'btn-primary' : 'btn-danger'}" data-ok>${decision === 'approve' ? rqI18n.t('确认通过') : rqI18n.t('确认驳回')}</button>`,
   })
   modal.el.querySelector('[data-cancel]').onclick = () => modal.close()
   modal.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const opinion = collectForm(modal.body).opinion
-    if (!opinion) return toast('请填写审批意见', 'error')
+    if (!opinion) return toast(rqI18n.t('请填写审批意见'), 'error')
     if (isHighRisk && decision === 'approve' && !modal.body.querySelector('#apc-confirm')?.checked) {
-      return toast('高风险审批需勾选二次确认（服务端强制）', 'error')
+      return toast(rqI18n.t('高风险审批需勾选二次确认（服务端强制）'), 'error')
     }
     const confirmed = isHighRisk && decision === 'approve'
     const finalReview = Boolean(modal.body.querySelector('#apc-final')?.checked)
     btn.classList.add('btn-loading')
     try {
       const result = await api.post(`/api/approvals/${id}/decide`, { decision, opinion, confirmed, finalReview })
-      toast(decision === 'approve' ? `审批通过，状态：${result.status}` : '已驳回')
+      toast(decision === 'approve' ? rqI18n.t('审批通过，状态：{status}', { status: result.status }) : rqI18n.t('已驳回'))
       modal.close(); ctx.rerender()
     } catch (error) {
       toast(error.message, 'error')

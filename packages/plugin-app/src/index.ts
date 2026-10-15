@@ -12,6 +12,7 @@ import {
   PlatformEvents, newId,
   type Collection, type RecordBase, type ResourceTypeSpec, type TopologyNode,
 } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import { OidcService } from '../../plugin-authn/src/oidc.ts'
 import * as appTools from './tools.ts'
 import { APP_TYPE_SPEC } from './schema.ts'
@@ -85,8 +86,8 @@ export class AppRegistryService extends Service {
     const agentIds = input.agentIds ?? (Array.isArray(input.attrs?.['agentIds']) ? input.attrs!['agentIds'] as string[] : [])
     for (const agentId of agentIds) {
       const agent = this.ctx.resourceCore.get('agent', agentId)
-      if (!agent) throw new Error(`编排的 Agent 不存在：${agentId}`)
-      if (agent.status !== 'online') throw new Error(`Agent「${agent.name}」未上线，不能被应用编排`)
+      if (!agent) throw new Error(t('编排的 Agent 不存在：{id}', { id: agentId }))
+      if (agent.status !== 'online') throw new Error(t('Agent「{name}」未上线，不能被应用编排', { name: agent.name }))
     }
     const attrs = { ownerName: input.ownerName, ...(input.attrs ?? {}) }
     const app = this.ctx.resourceCore.create('app', { ...input, attrs })
@@ -126,9 +127,9 @@ export class AppRegistryService extends Service {
     rotated: boolean
   } {
     const app = this.ctx.resourceCore.get('app', appId)
-    if (!app) throw new Error(`应用不存在：${appId}`)
+    if (!app) throw new Error(t('应用不存在：{id}', { id: appId }))
     const principal = this.ctx.authn.principals().findOne((item) => item.refType === 'app' && item.refId === appId)
-    if (!principal) throw new Error(`应用机器凭证不存在（可能已被禁用或删除），无法生成接入提示词`)
+    if (!principal) throw new Error(t('应用机器凭证不存在（可能已被禁用或删除），无法生成接入提示词'))
     let credential: AppOnboardingCredential
     let rotated = false
     if (opts.rotate) {
@@ -166,16 +167,16 @@ export class AppRegistryService extends Service {
 
   requestOnline(appId: string, requester: { id: string; name: string }) {
     const app = this.ctx.resourceCore.get('app', appId)
-    if (!app) throw new Error(`应用不存在：${appId}`)
+    if (!app) throw new Error(t('应用不存在：{id}', { id: appId }))
     const errors = this.ctx.resourceCore.validateAttrs('app', app.attrs, 'online')
-    if (errors.length > 0) throw new Error(`上线条件不满足：${errors.join('；')}`)
+    if (errors.length > 0) throw new Error(t('上线条件不满足：{errors}', { errors: errors.join('；') }))
     // 上线门禁（点 1，早反馈）：门禁形态（默认 web,h5）必须有 active SSO 客户端
     const ssoClientId = this.checkSsoGate(app)
     return this.ctx.audit.createApproval({
       kind: 'app.online',
       // WP-10/L1：L4 高危操作统一高风险——通过需二次确认，通过即落公司级终审标记
       riskLevel: 'high',
-      title: `AI 应用上线：${app.name}`,
+      title: t('AI 应用上线：{name}', { name: app.name }),
       payload: { appId, requesterId: requester.id, ...(ssoClientId !== undefined ? { ssoClientId } : {}) },
       requesterId: requester.id,
       requesterName: requester.name,
@@ -190,20 +191,20 @@ export class AppRegistryService extends Service {
     if (!enforce.includes(appType)) return this.activeSsoClient(app.id)?.clientId
     const active = this.activeSsoClient(app.id)
     if (!active) {
-      throw new Error(`上线门禁：${appType} 形态应用上线前必须完成身份纳管——请在「AI 应用 → 应用详情 → SSO 配置」签发 OIDC 客户端（当前门禁形态：${enforce.join('/')}）；回调地址为本机环回（127.0.0.1 / localhost / 0.0.0.0）时，应用可凭自身机器凭证直接调 POST /api/apps/:id/sso-client 自助签发`)
+      throw new Error(t('上线门禁：{appType} 形态应用上线前必须完成身份纳管——请在「AI 应用 → 应用详情 → SSO 配置」签发 OIDC 客户端（当前门禁形态：{enforce}）；回调地址为本机环回（127.0.0.1 / localhost / 0.0.0.0）时，应用可凭自身机器凭证直接调 POST /api/apps/:id/sso-client 自助签发', { appType, enforce: enforce.join('/') }))
     }
     return active.clientId
   }
 
   requestOffline(appId: string, requester: { id: string; name: string }, reason: string) {
     const app = this.ctx.resourceCore.get('app', appId)
-    if (!app) throw new Error(`应用不存在：${appId}`)
-    if (!reason?.trim()) throw new Error('下架必须填写原因（护栏要求）')
+    if (!app) throw new Error(t('应用不存在：{id}', { id: appId }))
+    if (!reason?.trim()) throw new Error(t('下架必须填写原因（护栏要求）'))
     return this.ctx.audit.createApproval({
       kind: 'app.offline',
       // WP-10/L1：L4 高危操作统一高风险——通过需二次确认，通过即落公司级终审标记
       riskLevel: 'high',
-      title: `AI 应用下架：${app.name}`,
+      title: t('AI 应用下架：{name}', { name: app.name }),
       payload: { appId, reason },
       requesterId: requester.id,
       requesterName: requester.name,
@@ -254,12 +255,12 @@ export class AppRegistryService extends Service {
    */
   assertSsoManage(app: { id: string; name: string; ownerId: string }, caller: { kind: string; userId?: string; permissions: string[] }): void {
     if (caller.kind !== 'human' || !caller.userId) {
-      throw new Error('SSO 客户端管理仅限用户身份（owner 校验），机器身份不可操作')
+      throw new Error(t('SSO 客户端管理仅限用户身份（owner 校验），机器身份不可操作'))
     }
     const isOwner = app.ownerId === caller.userId
     const hasAdmin = caller.permissions.includes('*') || caller.permissions.includes('authn.oidc.write')
     if (!isOwner && !hasAdmin) {
-      throw new Error(`仅应用 owner 或持有 authn.oidc.write 的管理员可管理「${app.name}」的 SSO 客户端`)
+      throw new Error(t('仅应用 owner 或持有 authn.oidc.write 的管理员可管理「{name}」的 SSO 客户端', { name: app.name }))
     }
   }
 
@@ -269,14 +270,14 @@ export class AppRegistryService extends Service {
    * 公共静态：plugin-console 的管理端 OIDC 客户端路由复用同一份口径。
    */
   static assertRedirectUris(uris: string[]): void {
-    if (!Array.isArray(uris) || uris.length === 0) throw new Error('redirectUris 必填（至少一个回调地址）')
+    if (!Array.isArray(uris) || uris.length === 0) throw new Error(t('redirectUris 必填（至少一个回调地址）'))
     const allowAnyHttp = String(process.env.APP_SSO_ALLOW_HTTP ?? '') === '1'
     for (const uri of uris) {
       let parsed: URL
-      try { parsed = new URL(uri) } catch { throw new Error(`回调地址非法：${uri}`) }
+      try { parsed = new URL(uri) } catch { throw new Error(t('回调地址非法：{uri}', { uri })) }
       if (parsed.protocol === 'https:') continue
       if (parsed.protocol === 'http:' && (allowAnyHttp || AppRegistryService.isIntranetHost(parsed.hostname))) continue
-      throw new Error(`回调地址必须为 https://，或 http:// 的内网地址（localhost / 127.0.0.1 / 0.0.0.0 / 10.x / 172.16-31.x / 192.168.x）（收到：${uri}）`)
+      throw new Error(t('回调地址必须为 https://，或 http:// 的内网地址（localhost / 127.0.0.1 / 0.0.0.0 / 10.x / 172.16-31.x / 192.168.x）（收到：{uri}）', { uri }))
     }
   }
 
@@ -332,23 +333,23 @@ export class AppRegistryService extends Service {
   ): { allowed: true } | { allowed: false; reason: string } {
     if (caller.kind !== 'human') {
       if (!AppRegistryService.machineSsoSelfServiceEnabled()) {
-        return { allowed: false, reason: 'SSO 客户端管理仅限用户身份（owner 校验），机器身份不可操作' }
+        return { allowed: false, reason: t('SSO 客户端管理仅限用户身份（owner 校验），机器身份不可操作') }
       }
       const bound = (caller.refType !== undefined && caller.refId === resource.id)
         || resource.ownerId === caller.principalId
       if (!bound) {
-        return { allowed: false, reason: `机器身份仅可管理自身绑定资源的 SSO 客户端（「${resource.name}」须为凭证 refType/refId 命中或登记 owner）` }
+        return { allowed: false, reason: t('机器身份仅可管理自身绑定资源的 SSO 客户端（「{name}」须为凭证 refType/refId 命中或登记 owner）', { name: resource.name }) }
       }
       if (op === 'disable') return { allowed: true } // 禁用纯降险，恒放行
       if (!AppRegistryService.isLoopbackOnlyCallback([...effective.redirectUris, ...effective.postLogoutUris])) {
-        return { allowed: false, reason: '机器身份自助仅限环回回调地址（http://127.0.0.1:PORT、http://localhost:PORT、0.0.0.0）；非环回回调请由应用 owner 或管理员在控制台操作' }
+        return { allowed: false, reason: t('机器身份自助仅限环回回调地址（http://127.0.0.1:PORT、http://localhost:PORT、0.0.0.0）；非环回回调请由应用 owner 或管理员在控制台操作') }
       }
       return { allowed: true }
     }
     const isOwner = Boolean(caller.userId) && resource.ownerId === caller.userId
     const hasAdmin = caller.permissions.includes('*') || caller.permissions.includes('authn.oidc.write')
     if (!isOwner && !hasAdmin) {
-      return { allowed: false, reason: `仅资源 owner 或持有 authn.oidc.write 的管理员可管理「${resource.name}」的 SSO 客户端` }
+      return { allowed: false, reason: t('仅资源 owner 或持有 authn.oidc.write 的管理员可管理「{name}」的 SSO 客户端', { name: resource.name }) }
     }
     return { allowed: true }
   }
@@ -380,10 +381,10 @@ export class AppRegistryService extends Service {
     description?: string
   }): { client: ReturnType<OidcService['clientsForApp']>[number]; clientSecret: string } {
     const app = this.ctx.resourceCore.get('app', appId)
-    if (!app) throw new Error(`应用不存在：${appId}`)
+    if (!app) throw new Error(t('应用不存在：{id}', { id: appId }))
     AppRegistryService.assertRedirectUris(input.redirectUris)
     const existing = this.ctx.oidc.clientsForApp(appId)
-    if (existing.length > 0) throw new Error(`该应用已签发 SSO 客户端（${existing[0]!.clientId}），请直接管理或先禁用后重新签发`)
+    if (existing.length > 0) throw new Error(t('该应用已签发 SSO 客户端（{clientId}），请直接管理或先禁用后重新签发', { clientId: existing[0]!.clientId }))
     const created = this.ctx.oidc.createClient({
       name: app.name,
       redirectUris: input.redirectUris,
@@ -417,7 +418,7 @@ export class AppRegistryService extends Service {
 
   private requireSsoClient(appId: string) {
     const clients = this.ctx.oidc.clientsForApp(appId)
-    if (clients.length === 0) throw new Error(`该应用尚未签发 SSO 客户端`)
+    if (clients.length === 0) throw new Error(t('该应用尚未签发 SSO 客户端'))
     return clients[0]!
   }
 
@@ -440,7 +441,7 @@ export class AppRegistryService extends Service {
     orgs?: Array<{ id: string; name: string; parentId: string | null; order: number; status: string; leaderUserIds: string[]; updatedAt: string }>
     users?: Array<{ id: string; username: string; displayName: string; title: string; jobNumber: string; orgId: string; orgName: string; primaryOrgId?: string; status: string; accountType?: string; updatedAt: string }>
   } {
-    if (!this.ctx.resourceCore.get('app', appId)) throw new Error(`应用不存在：${appId}`)
+    if (!this.ctx.resourceCore.get('app', appId)) throw new Error(t('应用不存在：{id}', { id: appId }))
     const orgNames = new Map(this.ctx.iam.orgs().all().map((org) => [org.id, org.name]))
     const orgs = this.ctx.iam.orgs().all()
       .map((org) => ({
@@ -486,16 +487,16 @@ export class AppRegistryService extends Service {
    * 语义：同日 DAU/UV 取最大、会话数/PV 累加；可指定 date 补录历史（YYYY-MM-DD）。
    */
   recordUsage(appId: string, usage: { dau?: number; sessions?: number; avgDepth?: number; retention7?: number; pv?: number; uv?: number; date?: string }): void {
-    if (!this.ctx.resourceCore.get('app', appId)) throw new Error(`应用不存在：${appId}`)
+    if (!this.ctx.resourceCore.get('app', appId)) throw new Error(t('应用不存在：{id}', { id: appId }))
     const date = usage.date ?? new Date().toISOString().slice(0, 10)
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(`date 格式非法：${date}（应为 YYYY-MM-DD）`)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error(t('date 格式非法：{date}（应为 YYYY-MM-DD）', { date }))
     // REL-04：指标入参校验（对照 beacon 侧 trackVisit 的非负钳制口径）——负数 pv/uv/dau/sessions
     // 可刷减累计/取大口径，retention7 越界会污染留存口径，一律 400 拒收
     for (const [key, value] of [['pv', usage.pv], ['uv', usage.uv], ['dau', usage.dau], ['sessions', usage.sessions]] as const) {
-      if (value !== undefined && (!Number.isInteger(value) || value < 0)) throw new Error(`${key} 必须是非负整数（收到：${value}）`)
+      if (value !== undefined && (!Number.isInteger(value) || value < 0)) throw new Error(t('{key} 必须是非负整数（收到：{value}）', { key, value }))
     }
     if (usage.retention7 !== undefined && (!Number.isFinite(usage.retention7) || usage.retention7 < 0 || usage.retention7 > 1)) {
-      throw new Error(`retention7 必须是 0..1 之间的数值（收到：${usage.retention7}）`)
+      throw new Error(t('retention7 必须是 0..1 之间的数值（收到：{value}）', { value: usage.retention7 }))
     }
     const existing = this.usage().findOne((item) => item.appId === appId && item.date === date)
     if (existing) {
@@ -645,7 +646,7 @@ export function apply(ctx: Context) {
       const enforce = AppRegistryService.ssoEnforceTypes()
       const appType = String(app.attrs['appType'] ?? '')
       if (enforce.includes(appType) && !registry.activeSsoClient(app.id)) {
-        throw new Error(`执行期复核失败：审批期间 SSO 客户端已失效（${appType} 形态门禁），请重新签发后再发起上线`)
+        throw new Error(t('执行期复核失败：审批期间 SSO 客户端已失效（{appType} 形态门禁），请重新签发后再发起上线', { appType }))
       }
     }
     return registry.online(String(payload['appId']), 'approval-center')

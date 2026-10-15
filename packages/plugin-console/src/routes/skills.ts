@@ -6,6 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { SkillRecord } from '../../../plugin-skillhub/src/index.ts'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
@@ -106,34 +107,34 @@ export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
     const skill = ctx.skillHub.detail(exchange.params['id']!)
     const asAdmin = info.permissions.includes('*') || info.permissions.includes('skill.publish')
     if (skill.authorId !== (info.userId ?? info.principalId) && !asAdmin) {
-      exchange.fail(403, 'FORBIDDEN', '仅 Skill 作者或平台管理员可编辑该 Skill 信息')
+      exchange.fail(403, 'FORBIDDEN', t('仅 Skill 作者或平台管理员可编辑该 Skill 信息'))
       return
     }
     const result = ctx.skillHub.update(skill.id, input, { id: info.userId ?? info.principalId, name: info.name }, { asAdmin })
-    changeLog(exchange, 'skill.update', 'skill', skill.id, result.name, `编辑字段：${Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined).join('、') || '无'}`)
+    changeLog(exchange, 'skill.update', 'skill', skill.id, result.name, t('编辑字段：{fields}', { fields: Object.keys(input).filter((key) => input[key as keyof typeof input] !== undefined).join('、') || t('无') }))
     return result
   })
 
   /** 重新手动上传当前已发布版本的 skill.zip 资源包（原地替换，版本号不变）。 */
   guarded('PUT', '/api/skills/:id/package', 'skill.submit', async (exchange) => {
     const { packageBase64 } = body<{ packageBase64?: string }>(exchange)
-    if (!packageBase64) throw new Error('packageBase64 必填')
+    if (!packageBase64) throw new Error(t('packageBase64 必填'))
     const info = caller(exchange)
     const skill = ctx.skillHub.detail(exchange.params['id']!)
     const asAdmin = info.permissions.includes('*') || info.permissions.includes('skill.publish')
     if (skill.authorId !== (info.userId ?? info.principalId) && !asAdmin) {
-      exchange.fail(403, 'FORBIDDEN', '仅 Skill 作者或平台管理员可更新该 Skill 资源包')
+      exchange.fail(403, 'FORBIDDEN', t('仅 Skill 作者或平台管理员可更新该 Skill 资源包'))
       return
     }
     const result = await ctx.skillHub.replacePackage(skill.id, packageBase64, { id: info.userId ?? info.principalId, name: info.name }, { asAdmin })
     const pkg = result.versions.find((item) => item.version === result.currentVersion)?.package
-    changeLog(exchange, 'skill.package.replace', 'skill', skill.id, skill.name, `v${result.currentVersion} 资源包重传（${pkg?.storage === 'nas' ? 'NAS' : '平台本地'}${pkg?.sizeBytes !== undefined ? ` · ${pkg.sizeBytes}B` : ''}）`)
+    changeLog(exchange, 'skill.package.replace', 'skill', skill.id, skill.name, t('v{version} 资源包重传（{storage}{size}）', { version: result.currentVersion, storage: pkg?.storage === 'nas' ? 'NAS' : t('平台本地'), size: pkg?.sizeBytes !== undefined ? t(' · {bytes}B', { bytes: pkg.sizeBytes }) : '' }))
     return { skill: result, package: pkg }
   })
 
   guarded('POST', '/api/skills/:id/deprecate', 'skill.publish', (exchange) => {
     const { reason, force } = body<{ reason?: string; force?: boolean }>(exchange)
-    if (!reason?.trim()) throw new Error('弃用必须填写原因（护栏要求，下架分析依赖该口径）')
+    if (!reason?.trim()) throw new Error(t('弃用必须填写原因（护栏要求，下架分析依赖该口径）'))
     const result = ctx.skillHub.deprecate(exchange.params['id']!, caller(exchange).name, reason, force)
     changeLog(exchange, 'skill.deprecate', 'skill', result.skill.id, result.skill.name, reason)
     return result
@@ -143,15 +144,15 @@ export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   guarded('DELETE', '/api/skills/:id', 'skill.publish', (exchange) => {
     const id = exchange.params['id']!
     const skill = ctx.skillHub.skills().get(id)
-    if (!skill) throw new Error(`Skill 不存在：${id}`)
+    if (!skill) throw new Error(t('Skill 不存在：{id}', { id }))
     if (!['deprecated', 'offline', 'rejected'].includes(skill.status)) {
-      throw new Error(`当前状态 ${skill.status} 不可删除（仅已弃用/强制下架/审批驳回可删）`)
+      throw new Error(t('当前状态 {status} 不可删除（仅已弃用/强制下架/审批驳回可删）', { status: skill.status }))
     }
     const referencing = ctx.resourceCore.dependencies().find((record) => record.kind === 'skill' && record.toId === id)
       .map((record) => ctx.resourceCore.get('agent', record.fromId))
       .filter((agent) => agent !== undefined && agent.status !== 'archived')
     if (referencing.length > 0) {
-      throw new Error(`该 Skill 仍被 ${referencing.map((agent) => agent!.name).join('、')} 引用，请先卸载或归档相关 Agent`)
+      throw new Error(t('该 Skill 仍被 {names} 引用，请先卸载或归档相关 Agent', { names: referencing.map((agent) => agent!.name).join('、') }))
     }
     ctx.skillHub.purge(id)
     changeLog(exchange, 'skill.delete', 'skill', id, skill.name)
@@ -211,7 +212,7 @@ export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   guarded('PUT', '/api/skill-storage', 'skill.storage.write', (exchange) => {
     const input = body<{ mode?: 'local' | 'nas'; nasId?: string; basePath?: string }>(exchange)
     const config = ctx.nasRegistry.setSkillStorage(input, caller(exchange).name)
-    changeLog(exchange, 'skill.storage.update', 'skill_storage', config.id, 'Skill 包存储', `${config.mode}${config.nasId ? ` → ${config.nasId}:${config.basePath}` : ''}`)
+    changeLog(exchange, 'skill.storage.update', 'skill_storage', config.id, t('Skill 包存储'), `${config.mode}${config.nasId ? ` → ${config.nasId}:${config.basePath}` : ''}`)
     return config
   })
 }

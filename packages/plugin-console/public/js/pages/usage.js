@@ -9,6 +9,7 @@ import {
   $, esc, toast, fmtNum, fmtCost, emptyState, sectionHead, tabRow, areaChart, hBarList,
   progressBar, emptyHint,
 } from '../ui.js'
+import rqI18n from '../i18n.js'
 
 export async function renderUsage(content, params, ctx) {
   const dim = params.get('dim') === 'cost' ? 'cost' : 'tokens'
@@ -39,7 +40,7 @@ export async function renderUsage(content, params, ctx) {
       title: loadError.status === 403 ? '无用量报表读取权限' : '用量报表暂不可用',
       desc: loadError.status === 403
         ? '用量报表接口需要 usage.read 权限；如需查看请联系管理员开通。'
-        : `${loadError.message}——/api/usage/report（28 天报表）可能尚未在当前宿主部署，可先前往财务视图查看月度口径报表。`,
+        : rqI18n.t('{msg}——/api/usage/report（28 天报表）可能尚未在当前宿主部署，可先前往财务视图查看月度口径报表。', { msg: loadError.message }),
       actionText: '重试',
       onAction: () => ctx.rerender(),
       icon: 'chart',
@@ -80,10 +81,10 @@ export async function renderUsage(content, params, ctx) {
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
           <div id="usage-tabs"></div>
           <span class="tnum mono fs-12 text-3">
-            ${days} 天合计 <b class="tnum mono" style="color:var(--text-1);font-size:13px">${dim === 'cost' ? fmtCost(total) : fmtNum(total)}</b> ${dim === 'cost' ? '元' : 'tokens'}
+            ${esc(rqI18n.t('{n} 天合计', { n: days }))} <b class="tnum mono" style="color:var(--text-1);font-size:13px">${dim === 'cost' ? fmtCost(total) : fmtNum(total)}</b> ${dim === 'cost' ? esc(rqI18n.t('元')) : 'tokens'}
           </span>
         </div>
-        ${series.length ? chartHtml : emptyHint('近 ' + days + ' 天暂无用量数据——资产开始调用后每日序列自动累积')}
+        ${series.length ? chartHtml : emptyHint(rqI18n.t('近 {n} 天暂无用量数据——资产开始调用后每日序列自动累积', { n: days }))}
         <div class="fs-11 text-3" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap">
           <span>口径：零价快照计量（charge 恒 0）+ 内部成本参考</span>
           <span style="margin-left:auto">金额不对外结算，仅用于内部穿透与预算熔断</span>
@@ -94,7 +95,7 @@ export async function renderUsage(content, params, ctx) {
         ${hBarList(topAssets.map((asset) => ({
           name: asset.name || asset.key,
           value: yuan(asset.cost),
-          hint: `${fmtNum(asset.calls)} 次调用`,
+          hint: rqI18n.t('{n} 次调用', { n: fmtNum(asset.calls) }),
         })), { format: (value) => fmtCost(value) })}
       </div>
     </div>
@@ -135,7 +136,7 @@ export async function renderUsage(content, params, ctx) {
                   <span class="tnum mono fs-12" style="${high ? 'color:var(--warn-strong)' : ''}">${fmtCost(perDau)} <span class="text-3" style="font-family:var(--font)">/ DAU</span></span>
                 </div>
                 <div class="bar" style="width:100%"><span class="bar-fill${high ? ' warn' : ' ok'}" style="width:${((perDau / max) * 100).toFixed(1)}%"></span></div>
-                <div class="fs-11 text-4" style="margin-top:3px">窗口 DAU ${fmtNum(u.dau)}</div>
+                <div class="fs-11 text-4" style="margin-top:3px">${esc(rqI18n.t('窗口 DAU {n}', { n: fmtNum(u.dau) }))}</div>
               </div>`
             }).join('')
           })()}
@@ -154,7 +155,7 @@ export async function renderUsage(content, params, ctx) {
 function bindExport(report) {
   $('#usage-csv').onclick = () => {
     if (!report || !report.series?.length) {
-      toast('暂无可导出的用量数据（报表为空或未加载）', 'error')
+      toast(rqI18n.t('暂无可导出的用量数据（报表为空或未加载）'), 'error')
       return
     }
     const cell = (value) => {
@@ -193,6 +194,6 @@ function bindExport(report) {
     link.click()
     link.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
-    toast(`已生成 CSV（usage-report-${new Date().toISOString().slice(0, 10)}.csv · 自助导出）`)
+    toast(rqI18n.t('已生成 CSV（{file} · 自助导出）', { file: `usage-report-${new Date().toISOString().slice(0, 10)}.csv` }))
   }
 }

@@ -37,6 +37,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Service } from '@deepseek-ai/cordis'
+import { t } from '../../platform-i18n/src/index.ts'
 import type { HttpServerService } from '../../platform-core/src/index.ts'
 
 /** dsh webServer 的最小结构类型（不依赖 dsh 包，仅消费 register 契约）。 */
@@ -297,15 +298,15 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
   }
   const bindingService = prebound ?? new IdentityBindingService(ctx, { cookieName: config.cookieName, bindTtlSeconds: config.bindTtlSeconds })
   if (!mountPath.startsWith('/') || mountPath === '/') {
-    throw new Error(`dsh-bridge mountPath 非法：${JSON.stringify(config.mountPath)}（须为以 / 开头的非根路径）`)
+    throw new Error(t('dsh-bridge mountPath 非法：{value}（须为以 / 开头的非根路径）', { value: JSON.stringify(config.mountPath) }))
   }
   const webServer = (ctx as unknown as { webServer?: DshWebServerLike }).webServer
   const httpServer = (ctx as unknown as { httpServer?: HttpServerService }).httpServer
   if (!webServer || typeof webServer.register !== 'function') {
-    throw new Error('dsh-bridge 需要 ctx.webServer（仅在完整 dsh web 宿主下装配本插件）')
+    throw new Error(t('dsh-bridge 需要 ctx.webServer（仅在完整 dsh web 宿主下装配本插件）'))
   }
   if (!httpServer) {
-    throw new Error('dsh-bridge 需要 ctx.httpServer（platform-core 必须先于本插件装配）')
+    throw new Error(t('dsh-bridge 需要 ctx.httpServer（platform-core 必须先于本插件装配）'))
   }
 
   // ---- 挂载半：元冰可数据面 → /rq 前缀 ----------------------------------------
@@ -341,7 +342,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
   }
   const redeemTicket = (ticket: string) => {
     const entryTickets = entryTicketsAt()
-    if (!entryTickets) throw new Error('entryTickets 服务未就绪（装配进行中），请稍后重试')
+    if (!entryTickets) throw new Error(t('entryTickets 服务未就绪（装配进行中），请稍后重试'))
     return entryTickets.redeem(ticket, 'dsh-bridge')
   }
 
@@ -386,7 +387,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
           location: '/',
         }).end()
       } catch (error) {
-        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end(`entry_ticket 无效或已过期：${error instanceof Error ? error.message : String(error)}`)
+        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end(t('entry_ticket 无效或已过期：{reason}', { reason: error instanceof Error ? error.message : String(error) }))
       }
     },
   })
@@ -447,7 +448,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
         void (async () => {
           const status = binding.bindingStatus(req.headers.cookie)
           if (!status.bound || !status.identity) {
-            json(401, { ok: false, error: { code: 'NOT_BOUND', message: `宿主会话未绑定（${status.reason ?? 'unknown'}）——请从 dsh 宿主入口进入或使用入场票据` } })
+            json(401, { ok: false, error: { code: 'NOT_BOUND', message: t('宿主会话未绑定（{reason}）——请从 dsh 宿主入口进入或使用入场票据', { reason: status.reason ?? 'unknown' }) } })
             return
           }
           const deps = {
@@ -456,12 +457,12 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
             get audit() { return softRead(ctx, 'audit') },
           } as unknown as BridgeSessionDeps
           if (!deps.authn || !deps.iam) {
-            json(503, { ok: false, error: { code: 'AUTHN_UNAVAILABLE', message: 'authn 服务不可用（挂载形态装配不完整）' } })
+            json(503, { ok: false, error: { code: 'AUTHN_UNAVAILABLE', message: t('authn 服务不可用（挂载形态装配不完整）') } })
             return
           }
           const user = deps.iam.users().get(String(status.identity.sub))
           if (!user || (user.status !== undefined && user.status !== 'active')) {
-            json(401, { ok: false, error: { code: 'ACCOUNT_INACTIVE', message: '绑定账号已冻结或不存在（fail-closed）' } })
+            json(401, { ok: false, error: { code: 'ACCOUNT_INACTIVE', message: t('绑定账号已冻结或不存在（fail-closed）') } })
             return
           }
           const principal = deps.authn.ensureHumanPrincipal(user.id, user.displayName)
@@ -470,7 +471,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
           deps.audit?.record({
             type: 'auth', actorType: 'human', actorId: user.id, actorName: user.displayName,
             action: 'dsh_bridge.cookie.session', resourceType: 'dsh_bridge', resourceId: 'rq_sid',
-            resourceName: '宿主会话', result: 'ok', detail: '宿主 Cookie 绑定身份兑换平台会话（免登直达元冰可数据面）',
+            resourceName: t('宿主会话'), result: 'ok', detail: t('宿主 Cookie 绑定身份兑换平台会话（免登直达元冰可数据面）'),
           })
           json(200, {
             ok: true,
@@ -489,7 +490,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
         })()
         return
       }
-      json(404, { ok: false, error: { code: 'NOT_FOUND', message: `未知端点：${req.method} /dsh-bridge/${endpoint}` } })
+      json(404, { ok: false, error: { code: 'NOT_FOUND', message: t('未知端点：{method} /dsh-bridge/{endpoint}', { method: req.method ?? '', endpoint }) } })
     },
   })
   // ---- OIDC 授权码通道（/auth/oidc/start → 平台授权页 → /auth/oidc/callback） --------
@@ -543,7 +544,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
             const pending = pendingOidc.get(state)
             pendingOidc.delete(state)
             if (!code || !pending || Date.now() - pending.issuedAt > OIDC_PENDING_TTL) {
-              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end('OIDC 回跳无效或已过期，请重新发起登录')
+              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end(t('OIDC 回跳无效或已过期，请重新发起登录'))
               return
             }
             try {
@@ -562,10 +563,10 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
               })
               const tokenPayload = await tokenRes.json().catch(() => null)
               const accessToken = tokenPayload?.access_token
-              if (!tokenRes.ok || !accessToken) throw new Error(tokenPayload?.error_description ?? `token 端点失败（${tokenRes.status}）`)
+              if (!tokenRes.ok || !accessToken) throw new Error(tokenPayload?.error_description ?? t('token 端点失败（{status}）', { status: tokenRes.status }))
               const userinfoRes = await fetch(`${oidc.issuer()}/oauth/userinfo`, { headers: { authorization: `Bearer ${accessToken}` } })
               const userinfo = await userinfoRes.json().catch(() => null)
-              if (!userinfoRes.ok || !userinfo?.sub) throw new Error('userinfo 换取失败')
+              if (!userinfoRes.ok || !userinfo?.sub) throw new Error(t('userinfo 换取失败'))
               const identity = {
                 sub: String(userinfo.sub),
                 name: typeof userinfo.name === 'string' ? userinfo.name : undefined,
@@ -578,7 +579,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
                 location: '/',
               }).end()
             } catch (error) {
-              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end(`OIDC 登录失败：${error instanceof Error ? error.message : String(error)}`)
+              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' }).end(t('OIDC 登录失败：{reason}', { reason: error instanceof Error ? error.message : String(error) }))
             }
           })()
         },

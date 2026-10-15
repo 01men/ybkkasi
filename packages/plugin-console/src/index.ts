@@ -10,13 +10,14 @@
 import { join, dirname, extname } from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { existsSync, readdirSync, createReadStream } from 'node:fs'
+import { existsSync, readdirSync, createReadStream, readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange, Collection, RecordBase, CallerInfo } from '../../platform-core/src/index.ts'
 import { createRestGate } from '../../platform-core/src/index.ts'
 import { createPluginContext, newId, platformVersionInfo, PlatformEvents } from '../../platform-core/src/index.ts'
 import { PermissionCatalog, type UserManageActor } from '../../plugin-iam/src/index.ts'
 import { ProviderAuthError } from '../../plugin-iam/src/providers.ts'
+import { normalizeLocale, readCatalogDir, DEFAULT_LOCALE, t } from '../../platform-i18n/src/index.ts'
 import { AppRegistryService } from '../../plugin-app/src/index.ts'
 import { seedAll } from './seed.ts'
 import { registerMarketRoutes } from './routes/market.ts'
@@ -139,7 +140,7 @@ export function apply(ctx: Context) {
     if (!exchange.path.startsWith('/api/') || PUBLIC_PATHS.has(exchange.path) || PUBLIC_PATH_PREFIXES.some((prefix) => exchange.path.startsWith(prefix)) || ticketDownload || signedLinkDownload) return
     const header = String(exchange.headers['authorization'] ?? '')
     if (!header.startsWith('Bearer ')) {
-      exchange.fail(401, 'UNAUTHORIZED', '缺少 Bearer 令牌，请先登录')
+      exchange.fail(401, 'UNAUTHORIZED', t('缺少 Bearer 令牌，请先登录'))
       return true
     }
     try {
@@ -172,10 +173,9 @@ export function apply(ctx: Context) {
    * 返回 false 表示已回 403（并发 audit.authz.denied 事件）。
    */
   const ssoManageGuard = (refType: 'app' | 'agent') => {
-    const kindName = refType === 'app' ? '应用' : 'Agent'
     const resourceOf = (exchange: HttpExchange): { id: string; name: string; ownerId: string } => {
       const record = ctx.resourceCore.get(refType, exchange.params['id']!) as { id: string; name: string; ownerId: string } | undefined
-      if (!record) throw new Error(`${kindName}不存在：${exchange.params['id']}`)
+      if (!record) throw new Error(refType === 'app' ? t('应用不存在：{id}', { id: exchange.params['id'] }) : t('Agent 不存在：{id}', { id: exchange.params['id'] }))
       return { id: record.id, name: record.name, ownerId: record.ownerId }
     }
     const existingClientOf = (id: string): { redirectUris?: string[]; postLogoutUris?: string[] } | undefined =>
@@ -254,6 +254,25 @@ export function apply(ctx: Context) {
     http.serveStatic('/', publicDir, '/index.html')
   }
 
+  // -- UI 全球化（2026-10-16）：/locales/:locale 词典合并端点 -----------------
+  // 三层词典一次取齐（前端 i18n.js 单请求加载）：服务端文案（platform-i18n/locales，
+  // 覆盖 API 错误消息/通知/审批文案——SPA 展示服务端错误时同样走前端词典翻译）
+  // + 控制台 SPA 词典（public/locales/<locale>/*.json）+ 面板 SPA 词典
+  // （plugin-panel-core/public/locales/<locale>/*.json）。多文件按文件名序浅合并，
+  // 多团队并行维护互不覆盖；企业定制走 I18N_EXTRA_DIR（platform-i18n 内核已并）。
+  // 非 /api 路径：鉴权中间件天然放行（词典为静态文案，不含任何业务数据）。
+  const packagesRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+  http.register('GET', '/locales/:locale', (exchange) => {
+    const locale = normalizeLocale(exchange.params['locale']) ?? DEFAULT_LOCALE
+    const merged: Record<string, string> = {
+      ...readCatalogDir(join(packagesRoot, 'platform-i18n', 'locales', locale)),
+      ...readCatalogDir(join(packagesRoot, 'plugin-console', 'public', 'locales', locale)),
+      ...readCatalogDir(join(packagesRoot, 'plugin-panel-core', 'public', 'locales', locale)),
+    }
+    exchange.res.setHeader('cache-control', 'no-cache')
+    exchange.ok({ locale, count: Object.keys(merged).length, catalog: merged })
+  })
+
   // -- /docs 文档发布（默认拒绝白名单，见 PUBLIC_DOCS）：仅白名单内文档随服务可直接访问 ----
   // 源码检出与 dsh plugin add 两种形态下本文件均位于 <root>/packages/plugin-console/src/，
   // docs 目录恒为 <root>/docs。本路由面为纯匿名静态服务（鉴权中间件只覆盖 /api/*），
@@ -272,7 +291,7 @@ export function apply(ctx: Context) {
         name = decodeURIComponent(exchange.path.slice('/docs/'.length))
       } catch { /* 畸形编码按白名单外处理 */ }
       if (!PUBLIC_DOCS.has(name)) {
-        exchange.fail(404, 'NOT_FOUND', '文档不存在')
+        exchange.fail(404, 'NOT_FOUND', t('文档不存在'))
         return true
       }
       exchange.file(join(docsDir, name))
@@ -282,16 +301,16 @@ export function apply(ctx: Context) {
       const escapeHtml = (text: string) => text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch] ?? ch)
       const files = readdirSync(docsDir).filter((name) => PUBLIC_DOCS.has(name)).sort()
       const items = files.map((name) => {
-        const hint = name === 'app-onboarding.md' ? '（AI 应用接入总览）'
-          : name === 'agent-onboarding.md' ? '（Agent 接入指引）'
-          : name === 'app-sso-integration.md' ? '（应用统一身份接入指南）'
-          : name === 'app-org-sync.md' ? '（应用组织架构同步指南）'
-          : name === 'app-rbac-guide.md' ? '（应用内权限（RBAC）构造指南）'
-          : name === 'ecosystem-design-v1.2.md' ? '（平台生态设计 v1.2）' : ''
+        const hint = name === 'app-onboarding.md' ? t('（AI 应用接入总览）')
+          : name === 'agent-onboarding.md' ? t('（Agent 接入指引）')
+          : name === 'app-sso-integration.md' ? t('（应用统一身份接入指南）')
+          : name === 'app-org-sync.md' ? t('（应用组织架构同步指南）')
+          : name === 'app-rbac-guide.md' ? t('（应用内权限（RBAC）构造指南）')
+          : name === 'ecosystem-design-v1.2.md' ? t('（平台生态设计 v1.2）') : ''
         return `<li><a href="/docs/${encodeURIComponent(name)}">${escapeHtml(name)}</a>${hint}</li>`
       }).join('')
       exchange.res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      exchange.res.end(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>元冰可 · 平台文档</title><style>body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#1f2328}h1{font-size:20px}li{margin:8px 0;font-size:14px}a{color:#2563eb}</style></head><body><h1>元冰可 · 平台文档</h1><p>以下对外文档随本服务发布，可直接打开阅读：</p><ul>${items}</ul></body></html>`)
+      exchange.res.end(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t('元冰可 · 平台文档')}</title><style>body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:640px;margin:48px auto;padding:0 16px;color:#1f2328}h1{font-size:20px}li{margin:8px 0;font-size:14px}a{color:#2563eb}</style></head><body><h1>${t('元冰可 · 平台文档')}</h1><p>${t('以下对外文档随本服务发布，可直接打开阅读：')}</p><ul>${items}</ul></body></html>`)
     })
   }
 
@@ -315,7 +334,8 @@ const EVENT_VALUE_LABELS: Record<string, string> = {
   healthy: '健康', unavailable: '不可用', ok: '成功', failed: '失败', catalog: '目录',
 }
 
-/** 事件流人话摘要（测试 UI-03）：优先取业务字段拼「标签：值」句，绝不回退裸 JSON——原始 payload 走 detail 字段收进「详情」。 */
+/** 事件流人话摘要（测试 UI-03）：优先取业务字段拼「标签：值」句，绝不回退裸 JSON——原始 payload 走 detail 字段收进「详情」。
+ *  标签/枚举值常量为中文数据（t() 的键），展示边界在拼接处按请求语言即时翻译。 */
 function summarize(payload: unknown): string {
   if (payload === null || payload === undefined) return ''
   if (typeof payload !== 'object') return String(payload).slice(0, 120)
@@ -326,10 +346,10 @@ function summarize(payload: unknown): string {
     if (value === undefined || value === null || value === '') continue
     if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
     const text = String(value)
-    bits.push(`${label}：${EVENT_VALUE_LABELS[text] ?? text.slice(0, 80)}`)
+    bits.push(t('{label}：{value}', { label: t(label), value: EVENT_VALUE_LABELS[text] !== undefined ? t(EVENT_VALUE_LABELS[text]) : text.slice(0, 80) }))
     if (bits.length >= 3) break
   }
-  return bits.join('；')
+  return bits.join(t('；'))
 }
 
 /** 原始 payload 压缩串（仅用于「详情」折叠展示，防止误读也保留排查线索）。 */

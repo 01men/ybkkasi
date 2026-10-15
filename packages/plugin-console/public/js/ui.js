@@ -1,4 +1,5 @@
 /** 组件库：Toast / Drawer / Modal / 图表 / 徽章 / 空状态 / 表格 / 下拉。 */
+import rqI18n from './i18n.js'
 import { icon, PATHS } from './icons.js'
 
 // ---------- 基础 DOM 助手 ----------
@@ -20,8 +21,14 @@ export function $$(selector, root = document) { return [...root.querySelectorAll
 // ---------- 格式化 ----------
 export function fmtNum(value) {
   const n = Number(value ?? 0)
-  if (n >= 1e8) return (n / 1e8).toFixed(1) + ' 亿'
-  if (n >= 1e4) return (n / 1e4).toFixed(1) + ' 万'
+  if (n >= 1e8) {
+    if (rqI18n.lang === 'en-US') return `${(n / 1e6).toLocaleString('en-US', { maximumFractionDigits: 0 })}M`
+    return rqI18n.t('{v} 亿', { v: (n / 1e8).toFixed(1) })
+  }
+  if (n >= 1e4) {
+    if (rqI18n.lang === 'en-US') return `${(n / 1e3).toLocaleString('en-US', { maximumFractionDigits: 0 })}K`
+    return rqI18n.t('{v} 万', { v: (n / 1e4).toFixed(1) })
+  }
   return n.toLocaleString('zh-CN')
 }
 export function fmtCost(value) {
@@ -36,10 +43,10 @@ export function fmtTime(iso) {
 export function timeAgo(iso) {
   if (!iso) return '—'
   const diff = Date.now() - new Date(iso).getTime()
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3600_000) return Math.floor(diff / 60_000) + ' 分钟前'
-  if (diff < 86400_000) return Math.floor(diff / 3600_000) + ' 小时前'
-  if (diff < 7 * 86400_000) return Math.floor(diff / 86400_000) + ' 天前'
+  if (diff < 60_000) return rqI18n.t('刚刚')
+  if (diff < 3600_000) return rqI18n.t('{n} 分钟前', { n: Math.floor(diff / 60_000) })
+  if (diff < 86400_000) return rqI18n.t('{n} 小时前', { n: Math.floor(diff / 3600_000) })
+  if (diff < 7 * 86400_000) return rqI18n.t('{n} 天前', { n: Math.floor(diff / 86400_000) })
   return fmtTime(iso)
 }
 export function fmtPct(value) {
@@ -93,14 +100,14 @@ export function toast(message, type = 'success') {
 export function copyText(text) {
   if (navigator.clipboard?.writeText) {
     return navigator.clipboard.writeText(text)
-      .then(() => toast('已复制到剪贴板'))
+      .then(() => toast(rqI18n.t('已复制到剪贴板')))
       .catch(() => {
-        if (copyTextFallback(text)) toast('已复制到剪贴板')
-        else toast('复制失败，请手动选择复制', 'error')
+        if (copyTextFallback(text)) toast(rqI18n.t('已复制到剪贴板'))
+        else toast(rqI18n.t('复制失败，请手动选择复制'), 'error')
       })
   }
-  if (copyTextFallback(text)) toast('已复制到剪贴板')
-  else toast('复制失败，请手动选择复制', 'error')
+  if (copyTextFallback(text)) toast(rqI18n.t('已复制到剪贴板'))
+  else toast(rqI18n.t('复制失败，请手动选择复制'), 'error')
 }
 
 /** 非安全上下文下的剪贴板降级：临时 textarea + execCommand('copy')。 */
@@ -218,7 +225,7 @@ export function confirmDialog({ title, message, requireReason, danger, confirmTe
     modal.el.querySelector('#dlg-ok').onclick = () => {
       const reason = modal.body.querySelector('#dlg-reason')?.value.trim()
       if (requireReason && !reason) {
-        toast('请填写操作原因（审计要求）', 'error')
+        toast(rqI18n.t('请填写操作原因（审计要求）'), 'error')
         return
       }
       modal.close()
@@ -550,7 +557,7 @@ export function heatStrip(values, { big = false } = {}) {
   const max = Math.max(...vals, 1)
   const cells = vals.map((v, i) => {
     const bg = v === 0 ? '#eae7e1' : `hsl(201 88% ${Math.round(68 - (v / max) * 40)}%)`
-    return `<span class="heat-cell" style="background:${bg}" title="第 ${i + 1} 天 · ${v} 次"></span>`
+    return `<span class="heat-cell" style="background:${bg}" title="${esc(rqI18n.t('第 {i} 天 · {n} 次', { i: i + 1, n: v }))}"></span>`
   }).join('')
   return `<span class="heat-strip${big ? ' big' : ''}">${cells}</span>`
 }
@@ -898,11 +905,11 @@ export function maybeShowConceptCard(contentEl, key, { icon: ic = 'info', title,
     <div class="concept-banner mb-14">
       <div class="concept-icon">${icon(ic, 22)}</div>
       <div class="grow">
-        <div class="concept-title">初次了解 · ${esc(title)}</div>
+        <div class="concept-title">${esc(rqI18n.t('初次了解 · {title}', { title }))}</div>
         <div class="concept-sub">${esc(subtitle)}</div>
         <ul class="concept-points">${points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
       </div>
-      <button class="btn btn-default btn-sm" data-concept-ok>知道了</button>
+      <button class="btn btn-default btn-sm" data-concept-ok>${esc(rqI18n.t('知道了'))}</button>
     </div>`)
   card.querySelector('[data-concept-ok]').onclick = () => {
     card.remove()
@@ -918,7 +925,7 @@ export function pagination(total, page, pageSize, onPage) {
   if (pages <= 1) return h('<span></span>')
   const el = h(`
     <div class="flex" style="justify-content:flex-end;margin-top:14px;gap:6px">
-      <span class="fs-12 text-3">共 ${total} 条</span>
+      <span class="fs-12 text-3">${esc(rqI18n.t('共 {n} 条', { n: total }))}</span>
       <button class="btn btn-ghost btn-sm" data-p="${page - 1}" ${page <= 1 ? 'disabled' : ''}>‹ 上一页</button>
       <span class="fs-13" style="padding:0 6px">${page} / ${pages}</span>
       <button class="btn btn-ghost btn-sm" data-p="${page + 1}" ${page >= pages ? 'disabled' : ''}>下一页 ›</button>

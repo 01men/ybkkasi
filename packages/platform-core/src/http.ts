@@ -9,6 +9,7 @@ import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
+import { parseCookieHeader, resolveRequestLocale, runWithLocale, t } from '../../platform-i18n/src/index.ts'
 
 export interface HttpExchange {
   method: string
@@ -272,6 +273,16 @@ export class HttpServerService extends Service {
     const pathSegments = url.pathname.split('/').filter(Boolean).map((s) => s)
     const method = (req.method ?? 'GET').toUpperCase()
 
+    // UI 全球化（2026-10-16）：请求级语言决议（?lang= > Cookie rq_lang > Accept-Language >
+    // PLATFORM_LOCALE > zh-CN），以 AsyncLocalStorage 包裹中间件+处理器+静态兜底全链——
+    // 任意深度的路由/服务代码调 t() 即得当前请求语言；默认 zh-CN 输出逐字节不变（selftest 零影响）。
+    const requestLocale = resolveRequestLocale({
+      query: url.searchParams.get('lang'),
+      cookie: parseCookieHeader(req.headers.cookie)['rq_lang'],
+      acceptLanguage: req.headers['accept-language'],
+      env: process.env.PLATFORM_LOCALE,
+    })
+
     // 边缘明文口兜底下跳（外部 QA-20261014 QA-01 / 内部 G1-F1）：平台自身仅 HTTP（TLS 由
     // Cloudflare Tunnel/反代承接），x-forwarded-proto: http 即代表用户走了明文入口，308 保方法
     // 跳转 HTTPS；未带该头的本机/内网直连与 dsh 挂载形态不受影响。根治仍需边缘层
@@ -398,53 +409,65 @@ export class HttpServerService extends Service {
     }
 
     try {
-      for (const middleware of this.middlewares) {
-        const blocked = await middleware(exchange)
-        if (blocked === true) return
-        if (res.writableEnded) return
-      }
-
-      const matched = this.match(method, pathSegments)
-      if (matched) {
-        exchange.params = matched.params
-        await matched.route.handler(exchange)
-        return
-      }
-
-      // 静态目录最长前缀优先（/docs 等子路径挂载先于 / 兜底；同长保持注册顺序）
-      const staticCandidates = this.staticDirs
-        .map((entry) => ({ entry, prefix: entry.prefix.replace(/\/$/, '') }))
-        .filter(({ prefix }) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
-        .sort((a, b) => b.prefix.length - a.prefix.length)
-      if (staticCandidates.length > 0) {
-        // DEF-01 + C-10：/api 与协议/集成保留前缀（/rq、/dsh-bridge、/auth/entry、/oauth…）永不回落到
-        // 静态资源/SPA 页面——无对应路由且无同名静态挂载时一律 404 JSON，集成方拿到可诊断的失败信号；
-        // 有真实挂载（如 /docs、/panel 静态目录命中）则照常伺服，控制台自有页面路由不受影响
-        const handledByStatic = staticCandidates.some(({ prefix }) => prefix !== '' && (url.pathname === prefix || url.pathname.startsWith(`${prefix}/`)))
-        if (isReservedPath(url.pathname) && !handledByStatic) {
-          exchange.fail(404, 'NOT_FOUND', `路由不存在：${method} ${url.pathname}`)
-          return
-        }
-        const best = staticCandidates[0]!
-        await this.serveFromDir(exchange, best.entry, url.pathname.slice(best.prefix.length))
-        return
-      }
-      if (this.staticDirs.length > 0) {
-        // SPA 兜底：非协议/集成路径回落到第一个静态目录的 fallback 页（同上 C-10 口径）
-        if (!isReservedPath(url.pathname)) {
-          const entry = this.staticDirs[0]!
-          await this.serveFromDir(exchange, entry, entry.fallback ?? '/index.html')
-          return
-        }
-      }
-      exchange.fail(404, 'NOT_FOUND', `路由不存在：${method} ${url.pathname}`)
+      // 请求级 locale 上下文包裹全链（中间件 → 路由处理器 → 静态/SPA 兜底）
+      await runWithLocale(requestLocale, () => this.dispatchInner(exchange, method, pathSegments, url))
     } catch (error) {
       if (!res.writableEnded) {
         // 生产安全：500 兜底不回传内部异常文本，详情仅入服务日志
-        exchange.fail(500, 'INTERNAL', '服务器内部错误，请稍后重试或联系管理员')
+        exchange.fail(500, 'INTERNAL', t('服务器内部错误，请稍后重试或联系管理员'))
       }
       console.error(`[http] ${method} ${url.pathname} 处理异常`, error)
     }
+  }
+
+  /** dispatch 的内层（请求级 locale 上下文内执行）：中间件链 → 路由匹配 → 静态目录/SPA 兜底。 */
+  private async dispatchInner(
+    exchange: HttpExchange,
+    method: string,
+    pathSegments: string[],
+    url: URL,
+  ): Promise<void> {
+    const res = exchange.res
+    for (const middleware of this.middlewares) {
+      const blocked = await middleware(exchange)
+      if (blocked === true) return
+      if (res.writableEnded) return
+    }
+
+    const matched = this.match(method, pathSegments)
+    if (matched) {
+      exchange.params = matched.params
+      await matched.route.handler(exchange)
+      return
+    }
+
+    // 静态目录最长前缀优先（/docs 等子路径挂载先于 / 兜底；同长保持注册顺序）
+    const staticCandidates = this.staticDirs
+      .map((entry) => ({ entry, prefix: entry.prefix.replace(/\/$/, '') }))
+      .filter(({ prefix }) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
+      .sort((a, b) => b.prefix.length - a.prefix.length)
+    if (staticCandidates.length > 0) {
+      // DEF-01 + C-10：/api 与协议/集成保留前缀（/rq、/dsh-bridge、/auth/entry、/oauth…）永不回落到
+      // 静态资源/SPA 页面——无对应路由且无同名静态挂载时一律 404 JSON，集成方拿到可诊断的失败信号；
+      // 有真实挂载（如 /docs、/panel 静态目录命中）则照常伺服，控制台自有页面路由不受影响
+      const handledByStatic = staticCandidates.some(({ prefix }) => prefix !== '' && (url.pathname === prefix || url.pathname.startsWith(`${prefix}/`)))
+      if (isReservedPath(url.pathname) && !handledByStatic) {
+        exchange.fail(404, 'NOT_FOUND', t('路由不存在：{method} {path}', { method, path: url.pathname }))
+        return
+      }
+      const best = staticCandidates[0]!
+      await this.serveFromDir(exchange, best.entry, url.pathname.slice(best.prefix.length))
+      return
+    }
+    if (this.staticDirs.length > 0) {
+      // SPA 兜底：非协议/集成路径回落到第一个静态目录的 fallback 页（同上 C-10 口径）
+      if (!isReservedPath(url.pathname)) {
+        const entry = this.staticDirs[0]!
+        await this.serveFromDir(exchange, entry, entry.fallback ?? '/index.html')
+        return
+      }
+    }
+    exchange.fail(404, 'NOT_FOUND', t('路由不存在：{method} {path}', { method, path: url.pathname }))
   }
 
   private async serveFromDir(exchange: HttpExchange, entry: { dir: string; fallback?: string }, relative: string): Promise<void> {

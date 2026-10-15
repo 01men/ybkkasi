@@ -17,6 +17,7 @@ import { Service } from '@deepseek-ai/cordis'
 import { newId } from '../../platform-core/src/ids.ts'
 import { WORK_DATA_CLASS_ORDER, type WorkDataClass } from '../../platform-core/src/workforce-port.ts'
 import { WorkforceError } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type {
   AdapterRegistry,
   AppointmentRecord,
@@ -125,30 +126,30 @@ export class AppointmentService extends Service implements WorkforceAppointments
   }): AppointmentRecord {
     const employeeId = String(input.employeeId ?? '').trim()
     const orgId = String(input.orgId ?? '').trim()
-    if (employeeId === '') throw new Error('创建任用必须指定数字员工（employeeId）')
-    if (orgId === '') throw new Error('创建任用必须登记工作组织（orgId）——任务归属组织不可空')
+    if (employeeId === '') throw new Error(t('创建任用必须指定数字员工（employeeId）'))
+    if (orgId === '') throw new Error(t('创建任用必须登记工作组织（orgId）——任务归属组织不可空'))
 
     const employee = this.store.employees.get(employeeId)
-    if (!employee) throw new Error(`数字员工不存在：${employeeId}`)
-    if (employee.status === 'offboarded') throw new Error('已离岗员工不接受新任用（如需重新任用请新建数字员工）')
+    if (!employee) throw new Error(t('数字员工不存在：{id}', { id: employeeId }))
+    if (employee.status === 'offboarded') throw new Error(t('已离岗员工不接受新任用（如需重新任用请新建数字员工）'))
 
     // 密级在登记口即校验：绝密任用会在每次模型/资源调用前被拒，与其发放一份「必然失败」的任用，
     // 不如在此显式拒绝（D14：禁止 Agent 处理的密级必须在调用前拒绝）
     const dataClass = validateWorkDataClass(input.dataClass)
     if (dataClass === 'topsecret') {
-      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '任用密级不得为绝密（绝密数据禁止数字员工处理）')
+      throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('任用密级不得为绝密（绝密数据禁止数字员工处理）'))
     }
 
     // 授权期望逐项校验并归一（kind/registryId/actions/risk；写动作必须显式列出）
     const grants = (Array.isArray(input.grants) ? input.grants : []).map((spec) => validateGrantSpec(spec))
-    if (grants.length === 0) throw new Error('任用必须至少登记一项资源授权期望（grants）——空授权的任用不具备工作边界')
+    if (grants.length === 0) throw new Error(t('任用必须至少登记一项资源授权期望（grants）——空授权的任用不具备工作边界'))
 
     const effectiveFrom = String(input.effectiveFrom ?? '').trim() || nowIso()
-    if (Number.isNaN(Date.parse(effectiveFrom))) throw new Error(`任用生效时间不合法：${input.effectiveFrom}（须为 ISO 时间）`)
+    if (Number.isNaN(Date.parse(effectiveFrom))) throw new Error(t('任用生效时间不合法：{value}（须为 ISO 时间）', { value: String(input.effectiveFrom ?? '') }))
     const effectiveUntil = String(input.effectiveUntil ?? '').trim()
     if (effectiveUntil !== '') {
-      if (Number.isNaN(Date.parse(effectiveUntil))) throw new Error(`任用失效时间不合法：${effectiveUntil}（须为 ISO 时间，空串＝长期）`)
-      if (Date.parse(effectiveUntil) <= Date.parse(effectiveFrom)) throw new Error('任用失效时间必须晚于生效时间')
+      if (Number.isNaN(Date.parse(effectiveUntil))) throw new Error(t('任用失效时间不合法：{value}（须为 ISO 时间，空串＝长期）', { value: effectiveUntil }))
+      if (Date.parse(effectiveUntil) <= Date.parse(effectiveFrom)) throw new Error(t('任用失效时间必须晚于生效时间'))
     }
 
     const createdAt = nowIso()
@@ -178,7 +179,7 @@ export class AppointmentService extends Service implements WorkforceAppointments
       const maxVersion = existing.reduce((max, row) => Math.max(max, row.version), 0)
       appointment.version = maxVersion + 1
       const duplicated = existing.some((row) => row.version === appointment.version)
-      if (duplicated) throw new Error(`该员工任用版本 ${appointment.version} 已存在，请重试（版本号由服务端分配）`)
+      if (duplicated) throw new Error(t('该员工任用版本 {version} 已存在，请重试（版本号由服务端分配）', { version: appointment.version }))
       this.store.appointments.insert(appointment)
       for (const spec of grants) {
         this.store.grants.insert({
@@ -207,7 +208,7 @@ export class AppointmentService extends Service implements WorkforceAppointments
 
   get(id: string): AppointmentRecord {
     const appointment = this.store.appointments.get(id)
-    if (!appointment) throw new Error(`任用不存在：${id}`)
+    if (!appointment) throw new Error(t('任用不存在：{id}', { id }))
     return appointment
   }
 
@@ -236,21 +237,21 @@ export class AppointmentService extends Service implements WorkforceAppointments
    */
   async activate(caller: WorkCallerRef, id: string): Promise<AppointmentRecord> {
     const appt = this.get(id)
-    if (appt.status === 'effective') throw new Error('任用已生效，不得重复激活')
-    if (appt.status === 'revoking' || appt.status === 'revoked') throw new Error('任用已进入撤销流程，不得激活（请开新版本）')
-    if (appt.status === 'failed') throw new Error('任用已判配置失败（终态），请修正授权范围后开新版本')
-    if (appt.status !== 'preparing') throw new Error(`任用状态不允许激活：${appt.status}`)
+    if (appt.status === 'effective') throw new Error(t('任用已生效，不得重复激活'))
+    if (appt.status === 'revoking' || appt.status === 'revoked') throw new Error(t('任用已进入撤销流程，不得激活（请开新版本）'))
+    if (appt.status === 'failed') throw new Error(t('任用已判配置失败（终态），请修正授权范围后开新版本'))
+    if (appt.status !== 'preparing') throw new Error(t('任用状态不允许激活：{status}', { status: appt.status }))
 
     const employee = this.store.employees.get(appt.employeeId)
     if (!employee || employee.status !== 'active') {
-      throw new WorkforceError('EMPLOYEE_NOT_ACTIVE', '员工不在岗（停职或已离岗），任用不得激活')
+      throw new WorkforceError('EMPLOYEE_NOT_ACTIVE', t('员工不在岗（停职或已离岗），任用不得激活'))
     }
     if (!appointmentInEffect({ ...appt, status: 'effective' })) {
-      throw new Error('任用有效期窗口未覆盖当前时间，请核对 effectiveFrom/effectiveUntil')
+      throw new Error(t('任用有效期窗口未覆盖当前时间，请核对 effectiveFrom/effectiveUntil'))
     }
 
     const grants = this.store.grants.findWhere({ appointmentId: id })
-    if (grants.length === 0) throw new Error('任用未登记任何资源授权，禁止激活（create 已强制，此处为防御校验）')
+    if (grants.length === 0) throw new Error(t('任用未登记任何资源授权，禁止激活（create 已强制，此处为防御校验）'))
 
     // 组装身份核验上下文（探针用它定位员工/绑定/任用版本）：任用激活由真人主管发起，
     // resolution 必须取员工域记录而非调用者身份——调用者是审批人，不是被执行的员工
@@ -284,7 +285,7 @@ export class AppointmentService extends Service implements WorkforceAppointments
         .filter((outcome) => outcome.status === 'failed')
         .map((outcome) => outcome.lastError)
         .join('；')
-      const statusReason = `资源授权核验未全部通过（${failedSummary}）；任用整体不生效，不得签发工作授权`
+      const statusReason = t('资源授权核验未全部通过（{failed}）；任用整体不生效，不得签发工作授权', { failed: failedSummary })
       this.store.txn(() => {
         this.store.appointments.update(id, { status: 'preparing', statusReason, updatedAt: nowIso() })
       })
@@ -300,7 +301,7 @@ export class AppointmentService extends Service implements WorkforceAppointments
     let manifestError = ''
     try {
       const capabilities = this.capabilities()
-      if (!capabilities) manifestError = '能力清单服务未就绪'
+      if (!capabilities) manifestError = t('能力清单服务未就绪')
       else capabilities.buildForAppointment(id)
     } catch (error) {
       manifestError = error instanceof Error ? error.message : String(error)
@@ -308,8 +309,8 @@ export class AppointmentService extends Service implements WorkforceAppointments
 
     // 4. 任用生效（清单装配失败则保持 preparing——不允许「任用生效但清单缺失」的假就绪）
     const statusReason = manifestError === ''
-      ? '资源授权探针全部通过，任用生效（能力清单已装配）'
-      : `能力清单装配失败：${manifestError}；任用保持准备中，请重试激活`
+      ? t('资源授权探针全部通过，任用生效（能力清单已装配）')
+      : t('能力清单装配失败：{message}；任用保持准备中，请重试激活', { message: manifestError })
     const finalStatus: AppointmentStatus = manifestError === '' ? 'effective' : 'preparing'
     this.store.txn(() => {
       this.store.appointments.update(id, { status: finalStatus, statusReason, updatedAt: nowIso() })
@@ -330,16 +331,16 @@ export class AppointmentService extends Service implements WorkforceAppointments
     resolution: IdentityResolution,
   ): Promise<GrantProbeOutcome> {
     const base: GrantProbeOutcome = { grantId: grant.id, status: 'failed', ref: '', lastError: '' }
-    if (!registry) return { ...base, lastError: '未登记适配器' }
+    if (!registry) return { ...base, lastError: t('未登记适配器') }
     const adapter = registry.get(grant.kind)
-    if (!adapter) return { ...base, lastError: '未登记适配器' }
-    if (!resolution.binding) return { ...base, lastError: '员工未绑定技术 Agent，无法核验资源授权' }
+    if (!adapter) return { ...base, lastError: t('未登记适配器') }
+    if (!resolution.binding) return { ...base, lastError: t('员工未绑定技术 Agent，无法核验资源授权') }
     try {
       const probe: AdapterProbeResult = await adapter.probeGrant(grantSpecOf(grant), resolution)
       if (probe.ok) return { ...base, status: 'effective', ref: String(probe.ref ?? '') }
-      return { ...base, lastError: String(probe.message ?? '授权探针未通过') }
+      return { ...base, lastError: String(probe.message ?? t('授权探针未通过')) }
     } catch (error) {
-      return { ...base, lastError: `授权探针执行异常：${error instanceof Error ? error.message : String(error)}` }
+      return { ...base, lastError: t('授权探针执行异常：{message}', { message: error instanceof Error ? error.message : String(error) }) }
     }
   }
 
@@ -358,13 +359,13 @@ export class AppointmentService extends Service implements WorkforceAppointments
    */
   async revoke(caller: WorkCallerRef, id: string, reason: string): Promise<AppointmentRecord> {
     const trimmedReason = String(reason ?? '').trim()
-    if (trimmedReason === '') throw new Error('撤销任用必须登记原因')
+    if (trimmedReason === '') throw new Error(t('撤销任用必须登记原因'))
     const appt = this.get(id)
 
-    if (appt.status === 'revoked') throw new Error('任用已撤销，请勿重复操作')
-    if (appt.status === 'failed') throw new Error('任用配置失败为终态，无须撤销（请开新版本）')
+    if (appt.status === 'revoked') throw new Error(t('任用已撤销，请勿重复操作'))
+    if (appt.status === 'failed') throw new Error(t('任用配置失败为终态，无须撤销（请开新版本）'))
     if (appt.status !== 'effective' && appt.status !== 'preparing' && appt.status !== 'revoking') {
-      throw new Error(`任用状态不允许撤销：${appt.status}`)
+      throw new Error(t('任用状态不允许撤销：{status}', { status: appt.status }))
     }
 
     // 未生效任用：无 permit 可撤，直接 preparing→revoked（状态机 preparing 分支已登记）
@@ -378,7 +379,7 @@ export class AppointmentService extends Service implements WorkforceAppointments
             status: 'revoked', lastError: '', checkedAt: at, updatedAt: at,
           })
         }
-        this.store.appointments.update(id, { status: 'revoked', statusReason: `已撤销（未生效任用）：${trimmedReason}`, updatedAt: at })
+        this.store.appointments.update(id, { status: 'revoked', statusReason: t('已撤销（未生效任用）：{reason}', { reason: trimmedReason }), updatedAt: at })
       })
       const updated = this.get(id)
       this.emitEvent('workforce.appointment.changed', {
@@ -392,7 +393,7 @@ export class AppointmentService extends Service implements WorkforceAppointments
     if (appt.status === 'effective') {
       appointmentStatusTransition(appt.status, 'revoking')
       this.store.txn(() => {
-        this.store.appointments.update(id, { status: 'revoking', statusReason: `撤销中：${trimmedReason}`, updatedAt: nowIso() })
+        this.store.appointments.update(id, { status: 'revoking', statusReason: t('撤销中：{reason}', { reason: trimmedReason }), updatedAt: nowIso() })
       })
     }
 
@@ -403,11 +404,11 @@ export class AppointmentService extends Service implements WorkforceAppointments
       : []
     const revokeFailures: Array<{ permitId: string; error: string }> = []
     if (!permits) {
-      revokeFailures.push({ permitId: '*', error: '工作授权服务未就绪，无法撤销 permit' })
+      revokeFailures.push({ permitId: '*', error: t('工作授权服务未就绪，无法撤销 permit') })
     }
     for (const permit of activePermits) {
       try {
-        permits!.revoke(permit.id, `任用 v${appt.version} 撤销：${trimmedReason}`)
+        permits!.revoke(permit.id, t('任用 v{version} 撤销：{reason}', { version: appt.version, reason: trimmedReason }))
       } catch (error) {
         revokeFailures.push({ permitId: permit.id, error: error instanceof Error ? error.message : String(error) })
       }
@@ -420,7 +421,9 @@ export class AppointmentService extends Service implements WorkforceAppointments
 
     // 2. permit 有未撤干净 → 停在 revoking 等待重试（不恢复已撤销工作资格，也不假装已收敛）
     if (revokeFailures.length > 0) {
-      const statusReason = `撤销中：部分工作授权撤销失败待重试（${revokeFailures.map((f) => `${f.permitId}: ${f.error}`).join('；')}）`
+      const statusReason = t('撤销中：部分工作授权撤销失败待重试（{failures}）', {
+        failures: revokeFailures.map((f) => `${f.permitId}: ${f.error}`).join('；'),
+      })
       this.store.txn(() => {
         this.store.appointments.update(id, { status: 'revoking', statusReason, updatedAt: nowIso() })
       })
@@ -434,7 +437,7 @@ export class AppointmentService extends Service implements WorkforceAppointments
         if (grant.status === 'revoked') continue
         this.store.grants.update(grant.id, { status: 'revoked', lastError: '', checkedAt: at, updatedAt: at })
       }
-      this.store.appointments.update(id, { status: 'revoked', statusReason: `已撤销：${trimmedReason}`, updatedAt: at })
+      this.store.appointments.update(id, { status: 'revoked', statusReason: t('已撤销：{reason}', { reason: trimmedReason }), updatedAt: at })
     })
 
     const updated = this.get(id)

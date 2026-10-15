@@ -29,6 +29,7 @@ import {
   type Collection, type RecordBase,
   type WorkCallerRef, type WorkDataClass, type WorkExecutionContext, type WorkforcePolicyRegistry,
 } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import * as modelgwTools from './tools.ts'
 
 // ---------------------------------------------------------------------------
@@ -257,7 +258,9 @@ export class ModelGatewayService extends Service {
     })
     if (gate.mode === 'legacy') return null
     if (gate.mode === 'denied') {
-      const error = new Error(`数字员工调用被拒绝：${WORK_DENY_CODE_LABELS[gate.code]}${gate.message ? `（${gate.message}）` : ''}`) as Error & { code?: string }
+      const label = t(WORK_DENY_CODE_LABELS[gate.code])
+      const detail = gate.message ? t('（{message}）', { message: gate.message }) : ''
+      const error = new Error(t('数字员工调用被拒绝：{message}', { message: label + detail })) as Error & { code?: string }
       error.code = gate.code
       throw error
     }
@@ -273,7 +276,7 @@ export class ModelGatewayService extends Service {
     const base: WorkDataClass = requested ?? 'internal'
     const effective = WORK_DATA_CLASS_ORDER[base] >= WORK_DATA_CLASS_ORDER[workCeiling] ? base : workCeiling
     if (effective === 'topsecret') {
-      throw new Error('绝密数据禁止数字员工处理')
+      throw new Error(t('绝密数据禁止数字员工处理'))
     }
     return WORK_DATA_CLASS_TO_GATEWAY[effective]
   }
@@ -300,7 +303,7 @@ export class ModelGatewayService extends Service {
       }
       excluded.push({
         slug: model.slug, displayName: model.displayName, limit,
-        reason: `渠道分级上限为「${DATA_CLASS_LABELS[limit]}」，低于本次数据「${DATA_CLASS_LABELS[dataClass]}」——涉密/内部数据不得路由到低分级渠道（PRD §7.2）`,
+        reason: t('渠道分级上限为「{limit}」，低于本次数据「{dataClass}」——涉密/内部数据不得路由到低分级渠道（PRD §7.2）', { limit: t(DATA_CLASS_LABELS[limit]), dataClass: t(DATA_CLASS_LABELS[dataClass]) }),
       })
     }
     return { dataClass, available, excluded }
@@ -312,7 +315,7 @@ export class ModelGatewayService extends Service {
     const limit = model.dataClassLimit ?? 'internal'
     if (DATA_CLASS_RANK[limit] < DATA_CLASS_RANK[requestClass]) {
       throw new Error(
-        `数据分级越界：本次会话数据为「${DATA_CLASS_LABELS[requestClass]}」，渠道 ${model.slug} 分级上限仅「${DATA_CLASS_LABELS[limit]}」——已按 PRD §7.2 锁死该路由`,
+        t('数据分级越界：本次会话数据为「{dataClass}」，渠道 {slug} 分级上限仅「{limit}」——已按 PRD §7.2 锁死该路由', { dataClass: t(DATA_CLASS_LABELS[requestClass]), slug: model.slug, limit: t(DATA_CLASS_LABELS[limit]) }),
       )
     }
   }
@@ -328,7 +331,7 @@ export class ModelGatewayService extends Service {
   upsertChannelGroup(input: Omit<ChannelGroupRecord, 'id' | 'createdAt' | 'updatedAt'>): ChannelGroupRecord {
     for (const slug of [input.primary, input.backup1, input.backup2]) {
       if (slug !== undefined && !this.models().findOne((item) => item.slug === slug)) {
-        throw new Error(`渠道组引用了未登记的模型：${slug}（请先在模型目录登记）`)
+        throw new Error(t('渠道组引用了未登记的模型：{slug}（请先在模型目录登记）', { slug }))
       }
     }
     const existing = this.channelGroups().findOne((item) => item.slug === input.slug)
@@ -352,8 +355,8 @@ export class ModelGatewayService extends Service {
       ? { ...input, dataClass: this.effectiveManagedDataClass(input.dataClass, work.dataClass) }
       : input
     const group = this.channelGroups().findOne((item) => item.slug === effectiveInput.group)
-    if (!group) throw new Error(`渠道组不存在：${effectiveInput.group}（请先登记主/备渠道组）`)
-    if (!group.enabled) throw new Error(`渠道组已停用：${group.slug}`)
+    if (!group) throw new Error(t('渠道组不存在：{slug}（请先登记主/备渠道组）', { slug: effectiveInput.group }))
+    if (!group.enabled) throw new Error(t('渠道组已停用：{slug}', { slug: group.slug }))
     const chain = [group.primary, group.backup1, group.backup2].filter((slug): slug is string => Boolean(slug))
     const stepTimeoutMs = group.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS
     const degradations: Array<{ from: string; reason: string; at: string }> = []
@@ -366,16 +369,16 @@ export class ModelGatewayService extends Service {
         degradations.push({ from: slug, reason, at: new Date().toISOString() })
         this.recordTelemetry({ model: slug, ok: false, latencyMs: 0, outputTokens: 0, degraded: true, error: reason })
         this.ctx.platformBus.emit('modelgw.degraded', {
-          group: group.slug, from: slug, to: chain[index + 1] ?? (group.manual ? 'manual:人工' : '（链尾）'),
+          group: group.slug, from: slug, to: chain[index + 1] ?? (group.manual ? t('manual:人工') : t('（链尾）')),
           reason, step: index + 1, subject: effectiveInput.subject, orgId: effectiveInput.orgId,
         })
       }
       if (!model) {
-        reject(`渠道组引用的模型未登记：${slug}`)
+        reject(t('渠道组引用的模型未登记：{slug}', { slug }))
         continue
       }
       if (model.status !== 'online' || model.endpoint.trim() === '') {
-        reject(`备用渠道不可调用（${model.status === 'online' ? '未配置 endpoint' : '已下线'}）：${slug}`)
+        reject(t('备用渠道不可调用（{reason}）：{slug}', { reason: model.status === 'online' ? t('未配置 endpoint') : t('已下线'), slug }))
         continue
       }
       try {
@@ -393,7 +396,7 @@ export class ModelGatewayService extends Service {
         this.enforceBudget({ ...effectiveInput, model: slug })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        this.recordTelemetry({ model: slug, ok: false, latencyMs: 0, outputTokens: 0, degraded: index > 0, error: `预算熔断：${message}` })
+        this.recordTelemetry({ model: slug, ok: false, latencyMs: 0, outputTokens: 0, degraded: index > 0, error: t('预算熔断：{message}', { message }) })
         throw error
       }
       try {
@@ -404,8 +407,8 @@ export class ModelGatewayService extends Service {
         reject(error instanceof Error ? error.message : String(error))
       }
     }
-    if (group.manual) return { ok: false, escalated: true, reason: `渠道组 ${group.slug} 全链失败，已按配置转人工：${lastError}`, degradations }
-    throw new Error(`渠道组 ${group.slug} 全链失败（无转人工配置）：${lastError}`)
+    if (group.manual) return { ok: false, escalated: true, reason: t('渠道组 {slug} 全链失败，已按配置转人工：{message}', { slug: group.slug, message: lastError }), degradations }
+    throw new Error(t('渠道组 {slug} 全链失败（无转人工配置）：{message}', { slug: group.slug, message: lastError }))
   }
 
   // -- 遥测（1-3） ------------------------------------------------------------
@@ -462,7 +465,7 @@ export class ModelGatewayService extends Service {
       adoptionRate: adoption?.adoptionRate ?? null,
       degradedInvocations: rows.filter((row) => row.degraded === true).length,
       ttftMs: null,
-      note: 'TTFT 需流式通道（当前网关为非流式单轮）诚实缺列；TPS 为 output_tokens/总时延 的代理口径；采纳率取 model:<slug> 资源的 👍/👎 聚合',
+      note: t('TTFT 需流式通道（当前网关为非流式单轮）诚实缺列；TPS 为 output_tokens/总时延 的代理口径；采纳率取 model:<slug> 资源的 👍/👎 聚合'),
     }
   }
 
@@ -474,12 +477,12 @@ export class ModelGatewayService extends Service {
 
   upsertBudget(input: Omit<BudgetRecord, 'id' | 'createdAt' | 'updatedAt'>): BudgetRecord {
     if (input.dailyLimitCents === undefined && input.monthlyLimitCents === undefined) {
-      throw new Error('预算至少配置 dailyLimitCents / monthlyLimitCents 之一')
+      throw new Error(t('预算至少配置 dailyLimitCents / monthlyLimitCents 之一'))
     }
     // 主体格式校验（R10 前置）：subject 必须是 'agent:'/'app:' 前缀的计量主体，
     // 防止随手填自由文本造成「配了预算但永远匹配不到 usage」的静默失效
     if (input.subject !== undefined && !/^(agent|app):.+/.test(input.subject)) {
-      throw new Error(`预算主体格式非法：${input.subject}（须形如 agent:<id> 或 app:<id>，与 invoke 计量主体同口径）`)
+      throw new Error(t('预算主体格式非法：{subject}（须形如 agent:<id> 或 app:<id>，与 invoke 计量主体同口径）', { subject: input.subject }))
     }
     // 复合键（org × 模型 × 主体）：三者共同唯一——同一组织可同时挂组织级、按模型、按主体预算
     const existing = this.budgets().findOne((item) =>
@@ -533,7 +536,7 @@ export class ModelGatewayService extends Service {
       .filter((item) => item.enabled && !item.subject && (!item.modelSlug || item.modelSlug === '*') && (item.orgId ?? '') === (orgId || ''))
       .sort((a, b) => (a.orgId ? 0 : 1) - (b.orgId ? 0 : 1))[0] // org 专属优先于平台级
     if (!budget) return null
-    return { orgId: budget.orgId ?? '（平台级）', ...this.budgetStatus(budget) }
+    return { orgId: budget.orgId ?? t('（平台级）'), ...this.budgetStatus(budget) }
   }
 
   /**
@@ -552,7 +555,7 @@ export class ModelGatewayService extends Service {
   /** 删除预算（2026-10-14 删除面 R4）：预算治理此前只增不删，配错的预算只能停用滞留。 */
   removeBudget(id: string): void {
     const budget = this.budgets().get(id)
-    if (!budget) throw new Error(`预算不存在：${id}`)
+    if (!budget) throw new Error(t('预算不存在：{id}', { id }))
     this.budgets().remove(id)
     // 进程内告警去重状态一并清理，防止同 id 复用后当日告警被旧状态吞掉
     this.budgetWarnDay.delete(id)
@@ -576,7 +579,12 @@ export class ModelGatewayService extends Service {
         if (!window) continue
         const scope = `${budget.orgId ?? 'platform'}${budget.modelSlug ? `/${budget.modelSlug}` : ''}`
         if (window.breached && budget.action === 'block') {
-          throw new Error(`预算熔断（${scope}）：${window === status.daily ? '今日' : '本月'}成本 ${window.usedCents} 分已达上限 ${window.limitCents} 分（action=block）。请调整预算或等待窗口重置`)
+          throw new Error(t('预算熔断（{scope}）：{window}成本 {used} 分已达上限 {limit} 分（action=block）。请调整预算或等待窗口重置', {
+            scope,
+            window: window === status.daily ? t('今日') : t('本月'),
+            used: window.usedCents,
+            limit: window.limitCents,
+          }))
         }
         if (window.warn && this.budgetWarnDay.get(budget.id) !== day) {
           this.budgetWarnDay.set(budget.id, day)
@@ -602,16 +610,16 @@ export class ModelGatewayService extends Service {
       ? { ...input, dataClass: this.effectiveManagedDataClass(input.dataClass, work.dataClass) }
       : input
     const model = this.models().findOne((item) => item.slug === effectiveInput.model)
-    if (!model) throw new Error(`模型不存在：${effectiveInput.model}（请先在模型目录登记）`)
-    if (model.status !== 'online') throw new Error(`模型已下线：${model.slug}`)
-    if (!model.endpoint) throw new Error(`模型 ${model.slug} 未配置 endpoint，拒绝调用（不生成假 completion）`)
+    if (!model) throw new Error(t('模型不存在：{slug}（请先在模型目录登记）', { slug: effectiveInput.model }))
+    if (model.status !== 'online') throw new Error(t('模型已下线：{slug}', { slug: model.slug }))
+    if (!model.endpoint) throw new Error(t('模型 {slug} 未配置 endpoint，拒绝调用（不生成假 completion）', { slug: model.slug }))
     // 分级路由（1-1）：越级直接拒绝（选择器锁死+原因）
     this.assertDataClassAllowed(model, effectiveInput.dataClass)
     // 预算熔断（1-4）：block 动作在调用前生效（受管调用预算不足自然失败 → workforce 侧落 BUDGET_EXCEEDED）
     try {
       this.enforceBudget(effectiveInput)
     } catch (error) {
-      this.recordTelemetry({ model: model.slug, ok: false, latencyMs: 0, outputTokens: 0, error: `预算熔断：${error instanceof Error ? error.message : String(error)}` })
+      this.recordTelemetry({ model: model.slug, ok: false, latencyMs: 0, outputTokens: 0, error: t('预算熔断：{message}', { message: error instanceof Error ? error.message : String(error) }) })
       throw error
     }
     return this.invokeTracked(model, effectiveInput, INVOKE_TIMEOUT_MS, false)
@@ -657,7 +665,7 @@ export class ModelGatewayService extends Service {
       })
       if (!response.ok) {
         const text = (await response.text()).slice(0, 300)
-        const error = new Error(`模型上游 HTTP ${response.status}：${text}`) as ModelInvokeError
+        const error = new Error(t('模型上游 HTTP {status}：{text}', { status: response.status, text })) as ModelInvokeError
         error.status = response.status
         error.kind = 'http'
         throw error
@@ -665,7 +673,7 @@ export class ModelGatewayService extends Service {
       payload = (await response.json()) as typeof payload
     } catch (error) {
       if (error instanceof Error && (error as ModelInvokeError).kind === 'http') throw error
-      const message = error instanceof Error ? (error.name === 'AbortError' ? `模型调用超时（${timeoutMs}ms）` : error.message) : String(error)
+      const message = error instanceof Error ? (error.name === 'AbortError' ? t('模型调用超时（{ms}ms）', { ms: timeoutMs }) : error.message) : String(error)
       const wrapped = new Error(message) as ModelInvokeError
       wrapped.kind = error instanceof Error && error.name === 'AbortError' ? 'timeout' : 'network'
       throw wrapped

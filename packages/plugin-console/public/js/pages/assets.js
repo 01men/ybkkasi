@@ -6,11 +6,12 @@
  */
 import { api } from '../api.js'
 import { icon } from '../icons.js'
-import { $, esc, toast, fmtCost } from '../ui.js'
+import { $, esc, toast, fmtCost, fmtNum } from '../ui.js'
 import {
   openAssetDrawer, sectionHead, typeBadge, lifecycleBadge, healthDot, progressBar,
   chipRow, tabRow, emptyHint, TYPE_LABEL,
 } from '../components/asset-drawer.js'
+import rqI18n from '../i18n.js'
 
 const TYPE_ORDER = ['mcp', 'agent', 'app', 'skill', 'model', 'nas']
 const TYPE_ICON = { mcp: 'plug', agent: 'bot', app: 'app', skill: 'sparkles', model: 'zap', nas: 'server' }
@@ -41,15 +42,15 @@ export async function renderAssets(content, params, ctx) {
   $('#ledger-healthcheck').onclick = async (e) => {
     const btn = e.currentTarget
     btn.disabled = true
-    btn.textContent = '巡检中…'
+    btn.textContent = rqI18n.t('巡检中…')
     try {
       const result = await api.post('/api/assets/healthcheck')
-      toast(`巡检完成：${result.checked} 项资产，异常 ${result.abnormal} 项`, result.abnormal > 0 ? 'error' : 'success')
+      toast(rqI18n.t('巡检完成：{a} 项资产，异常 {b} 项', { a: result.checked, b: result.abnormal }), result.abnormal > 0 ? 'error' : 'success')
       ctx.rerender()
     } catch (error) {
-      toast(`巡检失败：${error.message}`, 'error')
+      toast(rqI18n.t('巡检失败：{msg}', { msg: error.message }), 'error')
       btn.disabled = false
-      btn.textContent = '一键巡检'
+      btn.textContent = rqI18n.t('一键巡检')
     }
   }
   $('#ledger-register').onclick = () => { location.hash = '#/register' }
@@ -126,7 +127,7 @@ function renderLedgerTab(content, params) {
     const holder = $('#ledger-body')
     const rows = state.items.filter((it) => !state.type || it.type === state.type)
     if (!rows.length) {
-      holder.innerHTML = `<tr><td colspan="8">${emptyHint(`${icon('search', 16)} 无匹配资产 — 试试调整筛选或搜索词`)}</td></tr>`
+      holder.innerHTML = `<tr><td colspan="8">${emptyHint(`${icon('search', 16)} ${esc(rqI18n.t('无匹配资产 — 试试调整筛选或搜索词'))}`)}</td></tr>`
       return
     }
     holder.innerHTML = rows.map((it) => `
@@ -146,10 +147,10 @@ function renderLedgerTab(content, params) {
         </td>
         <td>
           ${healthDot(it.health, { pulse: it.health === 'critical' })}
-          ${it.grayPercent !== undefined && it.grayPercent !== null ? `<div style="margin-top:5px">${progressBar(it.grayPercent, { label: `灰度 ${Math.round(it.grayPercent)}%` })}</div>` : ''}
+          ${it.grayPercent !== undefined && it.grayPercent !== null ? `<div style="margin-top:5px">${progressBar(it.grayPercent, { label: rqI18n.t('灰度 {p}%', { p: Math.round(it.grayPercent) }) })}</div>` : ''}
         </td>
         <td class="col-num tnum mono fs-12" style="text-align:right">${num(it.calls30d)}</td>
-        <td class="col-num tnum mono fs-12" style="text-align:right">${num(it.tokens30d >= 10000 ? Math.round(it.tokens30d / 1000) / 10 : it.tokens30d)}${it.tokens30d >= 10000 ? ' 万' : ''}</td>
+        <td class="col-num tnum mono fs-12" style="text-align:right">${fmtNum(it.tokens30d)}</td>
         <td class="col-num tnum mono fs-12" style="text-align:right">${fmtCents(it.cost30d)}</td>
         <td>${lifecycleBadge(it.lifecycle)}</td>
         <td style="text-align:right">${Array.isArray(it.trend) && it.trend.length ? trendSmall(it.trend) : '<span class="fs-11 text-4">暂无</span>'}</td>
@@ -172,7 +173,7 @@ function renderLedgerTab(content, params) {
       renderChips()
       renderRows()
     } catch (error) {
-      holder.innerHTML = `<tr><td colspan="8">${emptyHint(`${icon('alert', 16)} 台账数据加载失败（${esc(error.message)}）<br><button class="btn btn-default btn-sm" id="ledger-retry" style="margin-top:10px">重试</button>`)}</td></tr>`
+      holder.innerHTML = `<tr><td colspan="8">${emptyHint(`${icon('alert', 16)} ${esc(rqI18n.t('台账数据加载失败（{msg}）', { msg: error.message }))}<br><button class="btn btn-default btn-sm" id="ledger-retry" style="margin-top:10px">${esc(rqI18n.t('重试'))}</button>`)}</td></tr>`
       const retry = $('#ledger-retry')
       if (retry) retry.onclick = () => void load()
     }
@@ -224,7 +225,7 @@ async function renderReportTab(content, params) {
     <div class="flex mb-14" style="gap:10px;align-items:center">
       <span class="fs-12 text-3">统计窗口</span>
       <select id="asset-days" class="select" style="width:auto">
-        ${[7, 14, 30, 90].map((d) => `<option value="${d}" ${String(d) === String(days) ? 'selected' : ''}>近 ${d} 天</option>`).join('')}
+        ${[7, 14, 30, 90].map((d) => `<option value="${d}" ${String(d) === String(days) ? 'selected' : ''}>${esc(rqI18n.t('近 {n} 天', { n: d }))}</option>`).join('')}
       </select>
       <span class="fs-11 text-4">口径：内部成本为零价快照，不对外结算</span>
     </div>
@@ -234,7 +235,7 @@ async function renderReportTab(content, params) {
         <div class="stat-icon" style="background:var(--brand-50);color:var(--brand-500)">${icon('layers', 18)}</div>
         <div class="stat-value">${inv.items.length}</div>
         <div class="stat-sub">纳管资产</div>
-        <div class="stat-foot">${Object.entries(inv.summary.byType).map(([t, v]) => `${TYPE_LABEL[t] ?? t} ${v.total}`).join(' · ')}</div>
+        <div class="stat-foot">${Object.entries(inv.summary.byType).map(([t, v]) => rqI18n.t('{label} {n}', { label: rqI18n.t(TYPE_LABEL[t] ?? String(t)), n: v.total })).join(' · ')}</div>
       </div>
       <div class="stat-card">
         <div class="stat-icon" style="background:var(--ok-bg);color:#047857">${icon('activity', 18)}</div>
@@ -251,14 +252,14 @@ async function renderReportTab(content, params) {
       <div class="stat-card">
         <div class="stat-icon" style="background:var(--purple-bg);color:#6d28d9">${icon('coins', 18)}</div>
         <div class="stat-value">${fmtCents(inv.summary.costCents30d)}</div>
-        <div class="stat-sub">${esc(days)} 天内部成本参考</div>
+        <div class="stat-sub">${esc(rqI18n.t('{n} 天内部成本参考', { n: days }))}</div>
         <div class="stat-foot">零价快照 · 成本仅内部口径</div>
       </div>
     </div>
 
     <div class="grid-2 mb-20" style="grid-template-columns:1.1fr 1fr;align-items:start">
       <div class="card">
-        <div class="card-head"><span class="card-title">${icon('zap', 15)} 消耗 Top 资产</span><span class="card-sub">近 ${esc(days)} 天 · 计量口径</span></div>
+        <div class="card-head"><span class="card-title">${icon('zap', 15)} 消耗 Top 资产</span><span class="card-sub">${esc(rqI18n.t('近 {n} 天 · 计量口径', { n: days }))}</span></div>
         <div class="card-body" style="padding-top:8px">
           ${report.topResources.slice(0, 8).map((row, i) => `
             <div class="flex" style="padding:9px 0;border-bottom:1px solid var(--border);gap:10px;align-items:center">
@@ -266,7 +267,7 @@ async function renderReportTab(content, params) {
               <span class="fs-13 ellipsis" style="max-width:40%">${esc(row.label)}</span>
               <span class="fs-11 text-4 mono grow ellipsis">${esc(row.resource)}</span>
               <span class="fs-12 col-num" style="font-weight:600">${fmtCents(row.cost_cents)}</span>
-              <span class="fs-11 text-4 col-num" style="min-width:56px;text-align:right">${row.count} 次</span>
+              <span class="fs-11 text-4 col-num" style="min-width:56px;text-align:right">${esc(rqI18n.t('{n} 次', { n: row.count }))}</span>
             </div>`).join('') || '<span class="text-4 fs-12">暂无计量数据</span>'}
         </div>
       </div>
@@ -280,7 +281,7 @@ async function renderReportTab(content, params) {
       <div class="card">
         <div class="card-head">
           <span class="card-title">${icon('coins', 15)} 成本穿透</span>
-          <span class="card-sub">内部采购成本参考（零价快照，不对外结算）· 近 ${esc(days)} 天</span>
+          <span class="card-sub">${esc(rqI18n.t('内部采购成本参考（零价快照，不对外结算）· 近 {n} 天', { n: days }))}</span>
         </div>
         <div class="card-body" style="padding:10px 8px 14px">
           <div class="flex mb-10" style="gap:18px;padding:0 6px">
@@ -307,7 +308,7 @@ async function renderReportTab(content, params) {
       </div>
       <div style="display:flex;flex-direction:column;gap:16px">
         <div class="card">
-          <div class="card-head"><span class="card-title">${icon('users', 15)} 主体分摊（谁在用）</span><span class="card-sub">近 ${esc(days)} 天</span></div>
+          <div class="card-head"><span class="card-title">${icon('users', 15)} 主体分摊（谁在用）</span><span class="card-sub">${esc(rqI18n.t('近 {n} 天', { n: days }))}</span></div>
           <div class="card-body" style="padding-top:8px">
             ${report.byPrincipal.slice(0, 6).map((row) => {
               const max = Math.max(...report.byPrincipal.map((r) => r.cost_cents), 1)
@@ -326,10 +327,10 @@ async function renderReportTab(content, params) {
           <div class="card-body" style="padding-top:8px">
             ${retire.reasons?.length ? retire.reasons.slice(0, 5).map((row) => `
               <div class="flex" style="padding:7px 0;border-bottom:1px solid var(--border);gap:8px;align-items:flex-start">
-                <span class="badge badge-muted no-dot" style="flex-shrink:0">${row.count} 次</span>
+                <span class="badge badge-muted no-dot" style="flex-shrink:0">${esc(rqI18n.t('{n} 次', { n: row.count }))}</span>
                 <span class="grow">
                   <span class="fs-12" style="display:block">${esc(row.reason)}</span>
-                  <span class="fs-11 text-4">${Object.entries(row.byType).map(([t, n]) => `${TYPE_LABEL[t] ?? t} ${n}`).join(' · ')}${row.samples?.[0] ? ` · 最近 ${esc(row.samples[0].name)}` : ''}</span>
+                  <span class="fs-11 text-4">${Object.entries(row.byType).map(([t, n]) => rqI18n.t('{label} {n}', { label: rqI18n.t(TYPE_LABEL[t] ?? String(t)), n })).join(' · ')}${row.samples?.[0] ? rqI18n.t(' · 最近 {name}', { name: row.samples[0].name }) : ''}</span>
                 </span>
               </div>`).join('') : '<span class="text-4 fs-12">窗口内无下架/弃用记录</span>'}
           </div>
@@ -357,6 +358,6 @@ function reportTrendSvg(byDay) {
       <polyline points="0,30 ${points.join(' ')} 100,30" fill="var(--brand-500)" opacity="0.08" stroke="none"/>
     </svg>
     <div class="flex fs-11 text-4" style="justify-content:space-between;margin-top:2px">
-      <span>${esc(byDay[0]?.day ?? '')}</span><span>峰值成本 ${(max / 100).toFixed(2)} 元/日</span><span>${esc(byDay[byDay.length - 1]?.day ?? '')}</span>
+      <span>${esc(byDay[0]?.day ?? '')}</span><span>${esc(rqI18n.t('峰值成本 {v} 元/日', { v: (max / 100).toFixed(2) }))}</span><span>${esc(byDay[byDay.length - 1]?.day ?? '')}</span>
     </div>`
 }

@@ -14,6 +14,7 @@ import {
   providerName, nameStatusMismatch, strategyName, fieldName, syncStatCard,
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
 } from './helpers.js'
+import rqI18n from '../../i18n.js'
 
 export async function renderRoles(ctx) {
   $('#iam-actions').innerHTML = `<button class="btn btn-primary" id="role-add">${icon('plus', 14)}新建角色</button>`
@@ -49,7 +50,7 @@ export async function renderRoles(ctx) {
     const isEdit = !!role
     const has = (point) => role && (role.permissions.includes('*') || role.permissions.includes(point) || role.permissions.some((p) => p.endsWith('.*') && point.startsWith(p.slice(0, -1))))
     const modal = openModal({
-      title: isEdit ? `编辑角色：${esc(role.name)}` : '新建角色', wide: true,
+      title: isEdit ? esc(rqI18n.t('编辑角色：{name}', { name: role.name })) : '新建角色', wide: true,
       body: `
         <div class="form-grid">
           ${field('角色名称', inputField('name', { value: role?.name ?? '' }), { required: true })}
@@ -77,10 +78,10 @@ export async function renderRoles(ctx) {
       try {
         if (isEdit) {
           await api.patch(`/api/iam/roles/${role.id}`, { name: data2.name, description: data2.description, permissions })
-          toast('角色已更新（权限实时生效）')
+          toast(rqI18n.t('角色已更新（权限实时生效）'))
         } else {
           await api.post('/api/iam/roles', { name: data2.name, code: data2.code, description: data2.description, permissions })
-          toast('角色已创建')
+          toast(rqI18n.t('角色已创建'))
         }
         modal.close(); ctx.rerender()
       } catch (error) { toast(error.message, 'error') }

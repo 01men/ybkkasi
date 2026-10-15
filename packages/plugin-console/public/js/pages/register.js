@@ -2,6 +2,7 @@
 import { api, session } from '../api.js'
 import { icon } from '../icons.js'
 import { h, $, esc, toast } from '../ui.js'
+import rqI18n from '../i18n.js'
 
 /**
  * 磁贴时序（R3 缓解）：即期三类直通真实入口；文档/知识包=NAS 已授权目录登记（kb.ingest 深化期置灰）；
@@ -117,8 +118,8 @@ export function renderRegister(content) {
     hintEl.style.color = descState.ok ? 'var(--ok)' : 'var(--text-4)'
     const ready = descState.ok && compliance.checked
     continueBtn.disabled = !ready
-    statusEl.textContent = ready ? `自检通过（${descState.segments} 个关键词段）→ 选择下方磁贴继续`
-      : compliance.checked ? '描述未达 embedding 规范' : '先勾选合规声明并完成描述自检'
+    statusEl.textContent = ready ? rqI18n.t('自检通过（{n} 个关键词段）→ 选择下方磁贴继续', { n: descState.segments })
+      : compliance.checked ? rqI18n.t('描述未达 embedding 规范') : rqI18n.t('先勾选合规声明并完成描述自检')
   }
   descEl.addEventListener('input', refresh)
   compliance.addEventListener('change', refresh)
@@ -137,7 +138,7 @@ export function renderRegister(content) {
   }
   continueBtn.onclick = () => {
     preflight()
-    toast('登记自检已通过，选择对应磁贴继续', 'ok')
+    toast(rqI18n.t('登记自检已通过，选择对应磁贴继续'), 'ok')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
   content.querySelectorAll('.reg-tile').forEach((tile) => {

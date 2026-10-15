@@ -15,6 +15,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { newId } from '../../platform-core/src/ids.ts'
 import { WorkforceError } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type {
   BindingRecord,
   EmployeeRecord,
@@ -91,7 +92,7 @@ export class EmployeeService extends Service implements WorkforceEmployees {
         this.emitEvent('workforce.permit.revoked', { agentId: p.agentId, revoked: 0, note: '工作授权服务未就绪，联动未执行' })
         return
       }
-      const reason = `技术 Agent 已冻结：${p.reason ?? '原因未登记'}`
+      const reason = t('技术 Agent 已冻结：{reason}', { reason: p.reason ?? t('原因未登记') })
       for (const binding of this.store.bindings.findWhere({ agentId: p.agentId, status: 'active' })) {
         const revoked = permits.revokeForEmployee(binding.employeeId, reason)
         this.emitEvent('workforce.permit.revoked', { agentId: p.agentId, employeeId: binding.employeeId, revoked, reason })
@@ -117,10 +118,10 @@ export class EmployeeService extends Service implements WorkforceEmployees {
     const orgId = String(input.orgId ?? '').trim()
     const supervisorUserId = String(input.supervisorUserId ?? '').trim()
     const agentId = String(input.agentId ?? '').trim()
-    if (name === '') throw new Error('创建数字员工必须登记员工名称')
-    if (orgId === '') throw new Error('创建数字员工必须登记主组织（orgId）')
-    if (supervisorUserId === '') throw new Error('创建数字员工必须登记真人主管（supervisorUserId）——主管是责任人，不自动成为代理用户')
-    if (agentId === '') throw new Error('创建数字员工必须绑定技术 Agent（agentId）')
+    if (name === '') throw new Error(t('创建数字员工必须登记员工名称'))
+    if (orgId === '') throw new Error(t('创建数字员工必须登记主组织（orgId）'))
+    if (supervisorUserId === '') throw new Error(t('创建数字员工必须登记真人主管（supervisorUserId）——主管是责任人，不自动成为代理用户'))
+    if (agentId === '') throw new Error(t('创建数字员工必须绑定技术 Agent（agentId）'))
 
     const createdAt = nowIso()
     const employee: EmployeeRecord = {
@@ -150,7 +151,7 @@ export class EmployeeService extends Service implements WorkforceEmployees {
     this.store.txn(() => {
       const conflict = this.store.bindings.findWhere({ agentId, status: 'active' })
       if (conflict.length > 0) {
-        throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', '该技术 Agent 已绑定其他数字员工')
+        throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', t('该技术 Agent 已绑定其他数字员工'))
       }
       this.store.employees.insert(employee)
       this.store.bindings.insert(binding)
@@ -162,7 +163,7 @@ export class EmployeeService extends Service implements WorkforceEmployees {
 
   get(id: string): EmployeeRecord {
     const employee = this.store.employees.get(id)
-    if (!employee) throw new Error(`数字员工不存在：${id}`)
+    if (!employee) throw new Error(t('数字员工不存在：{id}', { id }))
     return employee
   }
 
@@ -184,9 +185,9 @@ export class EmployeeService extends Service implements WorkforceEmployees {
     employeeStatusTransition(employee.status, status) // 非法流转在此抛中文错误
     const trimmedReason = String(reason ?? '').trim()
     if ((status === 'suspended' || status === 'offboarded') && trimmedReason === '') {
-      throw new Error('停职/离岗必须登记原因（审计与解冻依据）')
+      throw new Error(t('停职/离岗必须登记原因（审计与解冻依据）'))
     }
-    const actionLabel = status === 'suspended' ? '停职' : status === 'offboarded' ? '离岗' : '复岗'
+    const actionLabel = status === 'suspended' ? t('停职') : status === 'offboarded' ? t('离岗') : t('复岗')
 
     // 1. 收集该员工当前持有 active permit 的 run（去重），并在撤销前经 activeForRun 复核归属
     //    （复核必须在撤销 permit 之前完成——撤销后 activeForRun 即为空）
@@ -203,13 +204,13 @@ export class EmployeeService extends Service implements WorkforceEmployees {
 
     // 2. 撤销全部工作授权（工作策略层先失效：新动作立即被拒，V07）
     if (permits && activePermits.length > 0) {
-      permits.revokeForEmployee(id, `员工${actionLabel}：${trimmedReason}`)
+      permits.revokeForEmployee(id, t('员工{action}：{reason}', { action: actionLabel, reason: trimmedReason }))
     }
 
     // 3. 释放执行租约（exec-hub 集成端口，结构化探测——不产生反向 import）
     if (status === 'suspended' || status === 'offboarded') {
       const execHub = this.execHub()
-      const releaseReason = `员工${actionLabel}：${trimmedReason}`
+      const releaseReason = t('员工{action}：{reason}', { action: actionLabel, reason: trimmedReason })
       for (const runId of runIds) {
         if (typeof execHub?.releaseForRun !== 'function') {
           this.emitEvent('workforce.employee.changed', {
@@ -257,15 +258,15 @@ export class EmployeeService extends Service implements WorkforceEmployees {
    */
   bindAgent(caller: WorkCallerRef, employeeId: string, agentId: string, principalId?: string, runtime?: string): BindingRecord {
     const employee = this.get(employeeId)
-    if (employee.status === 'offboarded') throw new Error('已离岗员工不接受换绑技术 Agent（如需重新任用请新建数字员工）')
+    if (employee.status === 'offboarded') throw new Error(t('已离岗员工不接受换绑技术 Agent（如需重新任用请新建数字员工）'))
     const nextAgentId = String(agentId ?? '').trim()
-    if (nextAgentId === '') throw new Error('换绑必须指定目标技术 Agent（agentId）')
+    if (nextAgentId === '') throw new Error(t('换绑必须指定目标技术 Agent（agentId）'))
 
     const createdAt = nowIso()
     const updated = this.store.txn(() => {
       const occupied = this.store.bindings.findWhere({ agentId: nextAgentId, status: 'active' })
       const foreign = occupied.find((binding) => binding.employeeId !== employeeId)
-      if (foreign) throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', '该技术 Agent 已绑定其他数字员工')
+      if (foreign) throw new WorkforceError('PRINCIPAL_BINDING_MISMATCH', t('该技术 Agent 已绑定其他数字员工'))
 
       const sameAgent = occupied.find((binding) => binding.employeeId === employeeId)
       if (sameAgent) {

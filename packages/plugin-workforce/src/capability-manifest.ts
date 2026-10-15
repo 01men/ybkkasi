@@ -21,6 +21,7 @@ import {
   type WorkforceCapabilities,
   type WorkforceStore,
 } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 
 /** NAS 动作级风险映射（§4.5：知识读取与向外分享必须是不同权限）。 */
 const NAS_WRITE_ACTIONS = new Set(['write', 'share'])
@@ -44,7 +45,7 @@ export class CapabilityManifestService extends Service implements WorkforceCapab
   private get store(): WorkforceStore {
     const store = (this.ctx as unknown as { workforceStore?: WorkforceStore }).workforceStore
     if (!store || typeof store.txn !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceStore 未就绪（迁移未完成）', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceStore 未就绪（迁移未完成）'), 503)
     }
     return store
   }
@@ -56,7 +57,7 @@ export class CapabilityManifestService extends Service implements WorkforceCapab
     }).skillHub
     if (!skillHub || typeof skillHub.resolveSkillPin !== 'function') {
       // fail-closed：无版本锁定能力不得激活任用（§4.4/D09——安装不等于可核验的加载）
-      throw new Error('skillHub 未提供版本锁定能力，任用无法激活')
+      throw new Error(t('skillHub 未提供版本锁定能力，任用无法激活'))
     }
     return skillHub.resolveSkillPin(skillId, version)
   }
@@ -66,7 +67,7 @@ export class CapabilityManifestService extends Service implements WorkforceCapab
   buildForAppointment(appointmentId: string): ManifestRecord {
     const store = this.store
     const appointment = store.appointments.get(appointmentId)
-    if (!appointment) throw new WorkforceError('APPOINTMENT_NOT_EFFECTIVE', `任用不存在：${appointmentId}`)
+    if (!appointment) throw new WorkforceError('APPOINTMENT_NOT_EFFECTIVE', t('任用不存在：{id}', { id: appointmentId }))
     // 只消费已生效授权（探针通过回填 ref）；preparing/failed 授权不产生句柄
     const grants = store.grants.findWhere({ appointmentId }).filter((grant) => grant.status === 'effective')
 
@@ -88,7 +89,7 @@ export class CapabilityManifestService extends Service implements WorkforceCapab
           action: 'load',
           risk: 'read',
           constraints: { version: pin.version, contentHash: pin.contentHash },
-          description: `加载技能 ${grant.registryId} 固定版本 ${pin.version} 的指令文本（不执行程序）`,
+          description: t('加载技能 {skillId} 固定版本 {version} 的指令文本（不执行程序）', { skillId: grant.registryId, version: pin.version }),
         })
         continue
       }
@@ -102,7 +103,7 @@ export class CapabilityManifestService extends Service implements WorkforceCapab
           action: 'invoke',
           risk: grant.risk,
           constraints,
-          description: `调用模型 ${grant.registryId}（密级与预算经模型网关原有链路）`,
+          description: t('调用模型 {modelId}（密级与预算经模型网关原有链路）', { modelId: grant.registryId }),
         })
         continue
       }
@@ -118,7 +119,7 @@ export class CapabilityManifestService extends Service implements WorkforceCapab
             action,
             risk,
             constraints,
-            description: `NAS 文件动作 ${action}（目录范围约束服务端执行）`,
+            description: t('NAS 文件动作 {action}（目录范围约束服务端执行）', { action }),
           })
         }
         continue
@@ -160,7 +161,7 @@ export class CapabilityManifestService extends Service implements WorkforceCapab
 
   get(manifestId: string): ManifestRecord {
     const manifest = this.store.manifests.get(manifestId)
-    if (!manifest) throw new WorkforceError('TOOL_UNKNOWN', `能力清单不存在：${manifestId}`, 404)
+    if (!manifest) throw new WorkforceError('TOOL_UNKNOWN', t('能力清单不存在：{id}', { id: manifestId }), 404)
     return manifest
   }
 

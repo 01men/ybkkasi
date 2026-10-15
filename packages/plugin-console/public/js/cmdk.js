@@ -2,6 +2,7 @@
 import { api, session } from './api.js'
 import { icon } from './icons.js'
 import { h, esc, toast, $ } from './ui.js'
+import rqI18n from './i18n.js'
 
 export function openCmdk() {
   closeCmdk()
@@ -157,7 +158,7 @@ async function buildDynamicItems(q) {
       session.can('mcp.service.read') ? api.get('/api/mcp/services') : Promise.resolve({ services: [] }),
     ])
     for (const skill of (skills.skills ?? []).slice(0, 3)) {
-      items.push({ group: 'Skill', icon: 'sparkles', title: skill.name, sub: `市场 · ${skill.status}`, run: () => go(`#/skills?focus=${skill.id}`) })
+      items.push({ group: 'Skill', icon: 'sparkles', title: skill.name, sub: rqI18n.t('市场 · {status}', { status: skill.status }), run: () => go(`#/skills?focus=${skill.id}`) })
     }
     for (const agent of (agents.agents ?? []).filter((a) => `${a.name}${a.slug}`.toLowerCase().includes(q.toLowerCase())).slice(0, 3)) {
       items.push({ group: 'Agent', icon: 'bot', title: agent.name, sub: `${agent.slug} · ${agent.status}`, run: () => go(`#/agents?focus=${agent.id}`) })

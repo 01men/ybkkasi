@@ -7,6 +7,7 @@
  * 空白态均提供上手指引（三步接入 / 三形态连接 / 权限组模型），并修复与 ui.js 组件库的 API 对齐。
  */
 import { api } from '../api.js'
+import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import {
   $, $$, esc, toast, openDrawer, openModal, confirmDialog,
@@ -94,7 +95,7 @@ export async function renderConnectors(content, params, ctx) {
       const available = gatewayStatus.available === true
       host.innerHTML = `
         <span class="badge ${available ? 'badge-ok' : 'badge-danger'}" title="${esc(gatewayStatus.reason ?? '')}">
-          ${icon(available ? 'check' : 'alert', 12)} 网关${available ? `在线 ${gatewayStatus.latencyMs ?? 0}ms` : '不可用'}
+          ${icon(available ? 'check' : 'alert', 12)} ${available ? esc(rqI18n.t('网关在线 {ms}ms', { ms: gatewayStatus.latencyMs ?? 0 })) : esc(rqI18n.t('网关不可用'))}
         </span>`
     }
     host.insertAdjacentHTML('beforeend', `
@@ -121,7 +122,7 @@ export async function renderConnectors(content, params, ctx) {
         body: `
           <div class="kv-list">
             <div class="kv"><span class="k">状态</span><span class="v" id="gw-status-val">
-              <span class="badge ${available ? 'badge-ok' : 'badge-danger'} no-dot">${available ? `可用 · 探活 ${status.latencyMs ?? 0}ms` : esc(status.reason ?? '不可用')}</span>
+              <span class="badge ${available ? 'badge-ok' : 'badge-danger'} no-dot">${available ? esc(rqI18n.t('可用 · 探活 {ms}ms', { ms: status.latencyMs ?? 0 })) : esc(status.reason ?? '不可用')}</span>
             </span></div>
             <div class="kv"><span class="k">网关地址（baseUrl）</span><span class="v mono">${esc(status.baseUrl ?? '未配置')}</span></div>
             <div class="kv"><span class="k">上次探活</span><span class="v">${status.lastProbeAt ? `${fmtTime(status.lastProbeAt)}${status.latencyMs !== undefined ? `（${status.latencyMs}ms）` : ''}` : '—'}</span></div>
@@ -138,9 +139,9 @@ export async function renderConnectors(content, params, ctx) {
       drawer.el.querySelector('#gw-probe').addEventListener('click', async () => {
         try {
           const result = await api.post('/api/connector/gateway/health')
-          toast(`在线 ${result.latencyMs ?? 0}ms`)
+          toast(rqI18n.t('在线 {ms}ms', { ms: result.latencyMs ?? 0 }))
           const statusEl = drawer.body.querySelector('#gw-status-val')
-          if (statusEl) statusEl.innerHTML = `<span class="badge badge-ok no-dot">可用 · 探活 ${result.latencyMs ?? 0}ms</span>`
+          if (statusEl) statusEl.innerHTML = `<span class="badge badge-ok no-dot">${esc(rqI18n.t('可用 · 探活 {ms}ms', { ms: result.latencyMs ?? 0 }))}</span>`
         } catch (error) {
           toast(errText(error), 'error')
         }
@@ -148,13 +149,13 @@ export async function renderConnectors(content, params, ctx) {
       })
       drawer.el.querySelector('#gw-save').addEventListener('click', async () => {
         const base = drawer.body.querySelector('[name=baseUrl]').value.trim()
-        if (!base) return toast('baseUrl 必填', 'error')
+        if (!base) return toast(rqI18n.t('baseUrl 必填'), 'error')
         const payload = { baseUrl: base }
         const token = drawer.body.querySelector('[name=adminToken]').value.trim()
         if (token) payload.adminToken = token
         try {
           await api.put('/api/connector/gateway', payload)
-          toast('已保存并完成探活')
+          toast(rqI18n.t('已保存并完成探活'))
           drawer.close()
         } catch (error) {
           return toast(errText(error), 'error')
@@ -176,8 +177,7 @@ export async function renderConnectors(content, params, ctx) {
           <div class="cn-guide-sec-title">${icon('settings', 15)}① 配置网关（一次性）</div>
           <p>
             连接器能力由 open-connector 数据面网关提供。在 open-connector 侧设置 <code>OOMOL_CONNECT_ENCRYPTION_KEY</code>（凭证加密密钥，缺失时网关 fail-closed）与
-            <code>OOMOL_CONNECT_ADMIN_TOKEN</code>（管理口令），然后打开「网关设置」填写 sidecar 地址（如 <code>http://open-connector:3000</code>）保存并探活。
-            当前状态：<b>${available ? '✅ 网关在线' : '⛔ 网关未配置/不可用'}</b>${available ? `，延迟 ${gatewayStatus.latencyMs ?? 0}ms` : ''}。
+            <code>OOMOL_CONNECT_ADMIN_TOKEN</code>（管理口令），然后打开「网关设置」填写 sidecar 地址（如 <code>http://open-connector:3000</code>）保存并探活。当前状态：<b>${available ? '✅ 网关在线' : '⛔ 网关未配置/不可用'}</b>${available ? esc(rqI18n.t('，延迟 {ms}ms', { ms: gatewayStatus.latencyMs ?? 0 })) : ''}。
           </p>
         </div>
         <div class="cn-guide-sec">
@@ -262,7 +262,7 @@ export async function renderConnectors(content, params, ctx) {
       try {
         catalog = await api.get('/api/connector/catalog' + api.qs(q ? { q } : {}))
       } catch (error) {
-        toast(`目录加载失败：${errText(error)}`, 'error')
+        toast(rqI18n.t('目录加载失败：{msg}', { msg: errText(error) }), 'error')
         return
       }
       renderCatalogBody(catalog)
@@ -306,7 +306,7 @@ export async function renderConnectors(content, params, ctx) {
         return
       }
       const sectionTitle = (text) => h('div', { class: 'section-title', style: 'margin:14px 0 8px;font-weight:600' }, text)
-      holder.appendChild(sectionTitle(`服务商（${catalog.providers.length}）`))
+      holder.appendChild(sectionTitle(rqI18n.t('服务商（{n}）', { n: catalog.providers.length })))
       const grid = h('div', { class: 'grid grid-4', style: 'gap:10px' })
       for (const provider of catalog.providers.slice(0, 60)) {
         const card = h('div', { class: 'card card-hover', style: 'padding:12px;cursor:pointer' },
@@ -316,7 +316,7 @@ export async function renderConnectors(content, params, ctx) {
         grid.appendChild(card)
       }
       holder.appendChild(grid)
-      holder.appendChild(sectionTitle(`动作（${catalog.actions.length}${catalog.actions.length >= 60 ? '+，输入关键词过滤' : ''}）`))
+      holder.appendChild(sectionTitle(rqI18n.t('动作（{n}{suffix}）', { n: catalog.actions.length, suffix: catalog.actions.length >= 60 ? rqI18n.t('+，输入关键词过滤') : '' })))
       const rows = catalog.actions.slice(0, 60).map((action) => ({
         id: action.id,
         service: action.service,
@@ -336,7 +336,7 @@ export async function renderConnectors(content, params, ctx) {
       }))
       if ((catalog.skippedServices ?? []).length > 0) {
         holder.appendChild(h('div', { class: 'muted', style: 'font-size:12px;margin-top:8px' },
-          `被拒纳管 service：${catalog.skippedServices.map((item) => item.service).join('、')}（计量资源正则约束）`))
+          rqI18n.t('被拒纳管 service：{list}（计量资源正则约束）', { list: catalog.skippedServices.map((item) => item.service).join('、') })))
       }
     }
   }
@@ -347,7 +347,7 @@ export async function renderConnectors(content, params, ctx) {
       title: `${provider.name ?? provider.service}`,
       body: `
         <div class="muted-box" style="margin-bottom:12px">${esc(String(provider.description ?? ''))}</div>
-        <div class="section-title" style="margin-bottom:6px">动作（${actions.length}）</div>
+        <div class="section-title" style="margin-bottom:6px">${esc(rqI18n.t('动作（{n}）', { n: actions.length }))}</div>
         ${actions.slice(0, 50).map((action) => `
           <div class="list-row" data-action="${esc(action.id)}" style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
             <span class="mono" style="font-size:12px">${esc(action.id)}</span>
@@ -385,9 +385,9 @@ export async function renderConnectors(content, params, ctx) {
   async function syncCatalog() {
     try {
       const result = await api.post('/api/connector/catalog/sync')
-      toast(`目录已同步：providers=${result.providers} actions=${result.actions}`)
+      toast(rqI18n.t('目录已同步：providers={p} actions={a}', { p: result.providers, a: result.actions }))
     } catch (error) {
-      return toast(`同步失败：${errText(error)}`, 'error')
+      return toast(rqI18n.t('同步失败：{msg}', { msg: errText(error) }), 'error')
     }
     await renderTab()
   }
@@ -433,11 +433,11 @@ export async function renderConnectors(content, params, ctx) {
         ${ref.maskedProfile ? `<div class="mono muted" style="font-size:11px">${esc(Object.entries(ref.maskedProfile).map(([k, v]) => `${k}=${v}`).join(' · ').slice(0, 80))}</div>` : ''}`
       const delBtn = h('button', { class: 'btn btn-danger btn-sm', style: 'margin-top:auto' }, '删除')
       delBtn.addEventListener('click', async () => {
-        const ok = await confirmDialog({ title: '删除连接', message: `确认删除 <b>${esc(ref.alias)}</b>？若仍被权限组引用将拒绝（可先解绑）。`, danger: true })
+        const ok = await confirmDialog({ title: '删除连接', message: rqI18n.t('确认删除 <b>{alias}</b>？若仍被权限组引用将拒绝（可先解绑）。', { alias: esc(ref.alias) }), danger: true })
         if (!ok) return
         try {
           await api.delete(`/api/connector/connections/${ref.id}`, {})
-          toast('已删除')
+          toast(rqI18n.t('已删除'))
         } catch (error) {
           return toast(errText(error), 'error')
         }
@@ -480,7 +480,7 @@ export async function renderConnectors(content, params, ctx) {
       body: `
         ${field('Provider', searchableSelectField('provider', [
           { value: '', label: providerHint ?? '（目录未同步时手动输入）' },
-          ...providers.slice(0, 200).map((item) => ({ value: item.service, label: `${item.name ?? item.service}（${item.service}）` })),
+          ...providers.slice(0, 200).map((item) => ({ value: item.service, label: rqI18n.t('{name}（{service}）', { name: item.name ?? item.service, service: item.service }) })),
         ], { value: providerHint ?? '', placeholder: '点击选择 Provider，支持搜索' }), { hint: '目录同步后可搜索下拉选择；也可在下一栏直接填 service 标识' })}
         ${field('或直接填 service 标识', inputField('serviceInput', { placeholder: 'hackernews / github …' }))}
         ${field('认证形态', selectField('authType', [
@@ -513,12 +513,12 @@ export async function renderConnectors(content, params, ctx) {
     modal.el.querySelector('#cw-submit').addEventListener('click', async () => {
       const val = (name) => modal.body.querySelector(`[name=${name}]`).value.trim()
       const providerName = val('provider') || val('serviceInput')
-      if (!providerName || !val('aliasSuffix') || !val('orgId')) return toast('provider / 别名后缀 / 组织 ID 必填', 'error')
+      if (!providerName || !val('aliasSuffix') || !val('orgId')) return toast(rqI18n.t('provider / 别名后缀 / 组织 ID 必填'), 'error')
       const type = val('authType')
       const endpoint = type === 'oauth' ? '/api/connector/connections/oauth' : type === 'no_auth' ? '/api/connector/connections/no-auth' : '/api/connector/connections/api-key'
       const payload = { provider: providerName, aliasSuffix: val('aliasSuffix'), orgId: val('orgId'), authType: type }
       if (type === 'api_key') {
-        try { payload.values = JSON.parse(dynamic.querySelector('[name=valuesJson]').value || '{}') } catch { return toast('凭证字段必须是合法 JSON', 'error') }
+        try { payload.values = JSON.parse(dynamic.querySelector('[name=valuesJson]').value || '{}') } catch { return toast(rqI18n.t('凭证字段必须是合法 JSON'), 'error') }
         payload.authType = 'api_key'
       }
       if (type === 'oauth') {
@@ -529,20 +529,20 @@ export async function renderConnectors(content, params, ctx) {
       try {
         created = await api.post(endpoint, payload)
       } catch (error) {
-        return toast(`创建失败：${errText(error)}`, 'error')
+        return toast(rqI18n.t('创建失败：{msg}', { msg: errText(error) }), 'error')
       }
       modal.close()
       if (created.approvalRequired) {
-        toast(`已进入审批门禁：审批单 ${created.approvalId} 通过后再携 approvalId 提交`)
+        toast(rqI18n.t('已进入审批门禁：审批单 {id} 通过后再携 approvalId 提交', { id: created.approvalId }))
         return
       }
       if (type === 'oauth' && created.authorizationUrl) {
         // dsh 完整页面体验（§6）：OAuth 同窗口整页跳转，服务商回跳由 callback 承接
-        toast('即将跳转授权页；完成授权后回跳本平台查看状态')
+        toast(rqI18n.t('即将跳转授权页；完成授权后回跳本平台查看状态'))
         location.assign(created.authorizationUrl)
         return
       }
-      toast('连接已创建（凭证只存于连接器网关）')
+      toast(rqI18n.t('连接已创建（凭证只存于连接器网关）'))
       await renderTab()
     })
   }
@@ -562,16 +562,16 @@ export async function renderConnectors(content, params, ctx) {
       try {
         const rootOrgs = (await api.get('/api/iam/orgs')).data ?? []
         const rootOrg = Array.isArray(rootOrgs) ? rootOrgs.find((org) => !org.parentId) : undefined
-        if (!rootOrg) return toast('组织数据未初始化', 'error')
+        if (!rootOrg) return toast(rqI18n.t('组织数据未初始化'), 'error')
         await api.post('/api/connector/perm-groups', {
           name: `只读模板-${Date.now().toString(36)}`,
           orgId: rootOrg.id,
           policies: { hackernews: { allowedActions: ['hackernews.*'], riskCap: 'read', constraints: { readOnly: true } } },
           subjects: [],
         })
-        toast('模板已安装（可在列表编辑 subjects）')
+        toast(rqI18n.t('模板已安装（可在列表编辑 subjects）'))
       } catch (error) {
-        return toast(`安装失败：${errText(error)}`, 'error')
+        return toast(rqI18n.t('安装失败：{msg}', { msg: errText(error) }), 'error')
       }
       await renderTab()
     })
@@ -630,13 +630,13 @@ export async function renderConnectors(content, params, ctx) {
       api.get('/api/iam/orgs').catch(() => []),
     ])
     const subjectOptions = [
-      ...(agentsData.agents ?? []).map((a) => ({ value: `agent:${a.id}`, label: `${a.name}（${a.slug ?? a.id}）`, group: 'Agent' })),
+      ...(agentsData.agents ?? []).map((a) => ({ value: `agent:${a.id}`, label: rqI18n.t('{name}（{slug}）', { name: a.name, slug: a.slug ?? a.id }), group: 'Agent' })),
       ...(groupsData.groups ?? []).map((g) => ({ value: `user_group:${g.id}`, label: g.name, group: '用户组' })),
       ...(appsData.apps ?? []).map((a) => ({ value: `app:${a.id}`, label: a.name, group: '应用' })),
     ]
     const orgOpts = buildOrgOptions(Array.isArray(orgsData) ? orgsData : orgsData.orgs ?? [])
     const modal = openModal({
-      title: isEdit ? `编辑权限组：${existing.name}` : '新建权限组',
+      title: isEdit ? rqI18n.t('编辑权限组：{name}', { name: existing.name }) : '新建权限组',
       wide: true,
       body: `
         <div style="display:flex;gap:12px">
@@ -665,7 +665,7 @@ export async function renderConnectors(content, params, ctx) {
       try {
         policies = JSON.parse(val('policiesJson'))
       } catch (error) {
-        return toast(`policies JSON 解析失败：${error.message}`, 'error')
+        return toast(rqI18n.t('policies JSON 解析失败：{msg}', { msg: error.message }), 'error')
       }
       // 主体值格式 type:id（id 不含冒号），还原为后端 subjects 数组
       const subjects = val('subjects').split(',').filter(Boolean).map((v) => {
@@ -678,16 +678,16 @@ export async function renderConnectors(content, params, ctx) {
         subjects,
         rateLimitPerMin: Number(val('rateLimitPerMin')) || 60,
       }
-      if (!basePayload.name) return toast('请填写名称', 'error')
-      if (!isEdit && !val('orgId')) return toast('请选择归属组织', 'error')
+      if (!basePayload.name) return toast(rqI18n.t('请填写名称'), 'error')
+      if (!isEdit && !val('orgId')) return toast(rqI18n.t('请选择归属组织'), 'error')
       const target = isEdit ? `/api/connector/perm-groups/${existing.id}` : '/api/connector/perm-groups'
       try {
         if (isEdit) await api.patch(target, basePayload)
         else await api.post(target, { ...basePayload, orgId: val('orgId') })
       } catch (error) {
-        return toast(`保存失败：${errText(error)}`, 'error')
+        return toast(rqI18n.t('保存失败：{msg}', { msg: errText(error) }), 'error')
       }
-      toast(isEdit ? '已保存：令牌策略将在一个巡检周期内收敛' : '已创建并铸发独立 oct_ 令牌')
+      toast(isEdit ? rqI18n.t('已保存：令牌策略将在一个巡检周期内收敛') : rqI18n.t('已创建并铸发独立 oct_ 令牌'))
       modal.close()
       await renderTab()
     })
@@ -695,7 +695,7 @@ export async function renderConnectors(content, params, ctx) {
     if (isEdit) {
       void api.post(`/api/connector/perm-groups/${existing.id}/impact`).then((impact) => {
         const line = modal.body.querySelector('#pg-impact')
-        if (line) line.textContent = `变更影响面：${impact.tokens} 个令牌 / ${impact.connections} 个连接 / ${impact.subjects} 个主体；在途调用会短暂失败后自动恢复`
+        if (line) line.textContent = rqI18n.t('变更影响面：{t} 个令牌 / {c} 个连接 / {s} 个主体；在途调用会短暂失败后自动恢复', { t: impact.tokens, c: impact.connections, s: impact.subjects })
       }).catch(() => {})
     }
   }
@@ -716,7 +716,7 @@ export async function renderConnectors(content, params, ctx) {
         return toast(errText(error), 'error')
       }
       openDrawer({
-        title: `oct_ 运行时令牌台账（${ledgers.length}）`,
+        title: rqI18n.t('oct_ 运行时令牌台账（{n}）', { n: ledgers.length }),
         body: `
           <div class="muted-box" style="margin-bottom:10px;font-size:12px">平台只存 ocTokenId 与策略快照哈希；token 值仅铸造时一次性返回且仅驻进程内存，永不落盘。</div>
           ${renderTable({
@@ -735,9 +735,9 @@ export async function renderConnectors(content, params, ctx) {
       try {
         outcome = await api.post('/api/connector/reconcile')
       } catch (error) {
-        return toast(`对账失败：${errText(error)}`, 'error')
+        return toast(rqI18n.t('对账失败：{msg}', { msg: errText(error) }), 'error')
       }
-      toast(`已核对 ${outcome.checkedRuns} 条 · 匹配 ${outcome.matchedMeters} 条 · 旁路 ${outcome.bypassRuns.length} 条`, outcome.bypassRuns.length === 0 ? 'success' : 'error')
+      toast(rqI18n.t('已核对 {a} 条 · 匹配 {b} 条 · 旁路 {c} 条', { a: outcome.checkedRuns, b: outcome.matchedMeters, c: outcome.bypassRuns.length }), outcome.bypassRuns.length === 0 ? 'success' : 'error')
       await renderTab()
     })
     bar.append(ledgerBtn, reconcileBtn)

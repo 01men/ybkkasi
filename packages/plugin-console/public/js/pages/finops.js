@@ -1,5 +1,6 @@
 /** FinOps 财务视图（M2 CFO 视图 v1）：成本穿透 + 环比 + 空转检测，内部成本参考口径。 */
 import { api, session } from '../api.js'
+import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import { $, esc, toast, fmtNum, fmtCost, openDrawer, collectForm, field, inputField, selectField, confirmDialog } from '../ui.js'
 
@@ -23,7 +24,7 @@ export async function renderFinops(content, params, { rerender }) {
   } catch (error) {
     content.innerHTML = `
       <div class="page-head"><div><div class="page-title">FinOps 财务视图</div></div></div>
-      <div class="card"><div class="card-body"><div class="tbl-empty">${icon('alert', 28)}<span>报表加载失败：${esc(error.message)}</span></div>
+      <div class="card"><div class="card-body"><div class="tbl-empty">${icon('alert', 28)}<span>${esc(rqI18n.t('报表加载失败：{msg}', { msg: error.message }))}</span></div>
       <div style="text-align:center"><button class="btn" id="finops-retry">${icon('refresh', 14)} 重试</button></div></div></div>`
     $('#finops-retry').onclick = () => rerender()
     return
@@ -52,31 +53,31 @@ export async function renderFinops(content, params, { rerender }) {
         <div class="stat-icon" style="background:var(--purple-bg);color:#6d28d9">${icon('coins', 18)}</div>
         <div class="stat-value">${fmtCost(dimTotal.cost_cents / 100)}</div>
         <div class="stat-label">本月内部成本</div>
-        <div class="stat-foot">上月同期 ${fmtCost(dimTotal.prev_cost_cents / 100)} · ${deltaBadge(dimTotal.delta_pct)}</div>
+        <div class="stat-foot">${esc(rqI18n.t('上月同期 {cost}', { cost: fmtCost(dimTotal.prev_cost_cents / 100) }))} · ${deltaBadge(dimTotal.delta_pct)}</div>
       </div>
       <div class="stat-card">
         <div class="stat-icon" style="background:var(--brand-50);color:var(--brand-500)">${icon('zap', 18)}</div>
         <div class="stat-value">${fmtNum(dimTotal.events)}</div>
         <div class="stat-label">计量事件</div>
-        <div class="stat-foot">tokens 合计 ${fmtNum(dimTotal.tokens)}</div>
+        <div class="stat-foot">${esc(rqI18n.t('tokens 合计 {n}', { n: fmtNum(dimTotal.tokens) }))}</div>
       </div>
       <div class="stat-card">
         <div class="stat-icon" style="background:${idle.idle.cost_cents > 0 ? 'var(--danger-bg)' : 'var(--ok-bg)'};color:${idle.idle.cost_cents > 0 ? '#b91c1c' : '#047857'}">${icon('wifi', 18)}</div>
         <div class="stat-value">${fmtCost(idle.idle.cost_cents / 100)}</div>
         <div class="stat-label">疑似空转成本</div>
-        <div class="stat-foot">占模型调用成本 ${idle.idle.share_pct}% · ${idle.idle.events} 次调用</div>
+        <div class="stat-foot">${esc(rqI18n.t('占模型调用成本 {p}% · {n} 次调用', { p: idle.idle.share_pct, n: idle.idle.events }))}</div>
       </div>
       <div class="stat-card">
         <div class="stat-icon" style="background:var(--ok-bg);color:#047857">${icon('building', 18)}</div>
         <div class="stat-value">${orgCount} <span class="fs-14 text-4">部门</span> / ${modelCount} <span class="fs-14 text-4">模型</span></div>
         <div class="stat-label">参与消耗的维度</div>
-        <div class="stat-foot">${modelCount > 0 ? `成本最高模型：${esc(penetration.byModel[0].dimension)}` : '本月暂无模型消耗'}</div>
+        <div class="stat-foot">${modelCount > 0 ? esc(rqI18n.t('成本最高模型：{model}', { model: penetration.byModel[0].dimension })) : '本月暂无模型消耗'}</div>
       </div>
     </div>
 
     <div class="grid-2 mb-20" style="grid-template-columns:1.4fr 1fr;align-items:start">
       <div class="card">
-        <div class="card-head"><span class="card-title">${icon('building', 15)} 部门成本穿透</span><span class="card-sub">${esc(penetration.month)} · 按成本降序</span></div>
+        <div class="card-head"><span class="card-title">${icon('building', 15)} 部门成本穿透</span><span class="card-sub">${esc(penetration.month)}${esc(rqI18n.t(' · 按成本降序'))}</span></div>
         <div class="card-body" style="padding-top:6px">
           <div class="table-wrap">
             <table class="tbl">
@@ -90,7 +91,7 @@ export async function renderFinops(content, params, { rerender }) {
                     <td class="col-num fs-12" style="text-align:right;font-weight:600">${fmtCost(row.cost_cents / 100)}</td>
                     <td class="col-num" style="text-align:right">${deltaBadge(row.delta_pct)}</td>
                     <td class="fs-11 text-4">${(row.topModels ?? []).map((m) => `<div class="mono" style="white-space:nowrap">${esc(m.model)} <span class="text-4">${m.share}%</span></div>`).join('') || '—'}</td>
-                  </tr>`).join('') : emptyRow(6, `${penetration.month} 暂无计量数据——资产开始调用后成本自动累积`)}
+                  </tr>`).join('') : emptyRow(6, rqI18n.t('{month} 暂无计量数据——资产开始调用后成本自动累积', { month: penetration.month }))}
               </tbody>
             </table>
           </div>
@@ -112,7 +113,7 @@ export async function renderFinops(content, params, { rerender }) {
                   <div style="height:100%;width:${Math.max((row.cost_cents / max) * 100, 2)}%;border-radius:3px;background:linear-gradient(90deg,#0052D9,#00A3FF)"></div>
                 </div>
               </div>`
-          }).join('') : `<div class="tbl-empty">${icon('bot', 28)}<span>${penetration.month} 暂无模型调用计量</span></div>`}
+          }).join('') : `<div class="tbl-empty">${icon('bot', 28)}<span>${esc(rqI18n.t('{month} 暂无模型调用计量', { month: penetration.month }))}</span></div>`}
         </div>
       </div>
     </div>
@@ -122,7 +123,7 @@ export async function renderFinops(content, params, { rerender }) {
       <div class="card-body" style="padding-top:6px">
         ${(() => {
           const { orgs, models, cells } = penetration.matrix
-          if (!orgs.length || !models.length) return `<div class="tbl-empty">${icon('chart', 28)}<span>${penetration.month} 暂无数据</span></div>`
+          if (!orgs.length || !models.length) return `<div class="tbl-empty">${icon('chart', 28)}<span>${esc(rqI18n.t('{month} 暂无数据', { month: penetration.month }))}</span></div>`
           const flat = cells.flat().filter((v) => Number.isFinite(v))
           const max = Math.max(...flat, 1)
           const heat = (v) => v <= 0 ? '' : `background:rgba(79,110,247,${Math.max(0.06, (v / max) * 0.55).toFixed(2)})`
@@ -152,12 +153,11 @@ export async function renderFinops(content, params, { rerender }) {
     <div class="card mb-20">
       <div class="card-head">
         <span class="card-title">${icon('wifi', 15)} 空转检测（近似口径）</span>
-        <span class="card-sub">判定：模型调用后 ${idle.idleWindowMinutes} 分钟内同一主体无任何后续动作（技能/工具/存储等）且无同 trace 关联动作</span>
+        <span class="card-sub">${esc(rqI18n.t('判定：模型调用后 {n} 分钟内同一主体无任何后续动作（技能/工具/存储等）且无同 trace 关联动作', { n: idle.idleWindowMinutes }))}</span>
       </div>
       <div class="card-body" style="padding-top:8px">
         <div class="badge no-dot" style="background:var(--warn-bg,#fef3c7);color:#92400e;margin-bottom:10px">${icon('info', 13)}
-          近似口径说明：纯对话（模型回复后用户直接离开）也会计入，本表用于发现「值得关注」的空转线索，<b>需人工复核</b>，不作为考核依据。
-          精确口径将在「任务结果回传」上线后自动替换。
+          近似口径说明：纯对话（模型回复后用户直接离开）也会计入，本表用于发现「值得关注」的空转线索，<b>需人工复核</b>，不作为考核依据。 精确口径将在「任务结果回传」上线后自动替换。
         </div>
         <div class="table-wrap">
           <table class="tbl">
@@ -183,7 +183,7 @@ export async function renderFinops(content, params, { rerender }) {
         </div>
         ${idle.samples.length ? `
           <details style="margin-top:10px">
-            <summary class="fs-12 text-4" style="cursor:pointer">疑似空转样本（最近 ${idle.samples.length} 条，点击展开人工复核）</summary>
+            <summary class="fs-12 text-4" style="cursor:pointer">${esc(rqI18n.t('疑似空转样本（最近 {n} 条，点击展开人工复核）', { n: idle.samples.length }))}</summary>
             <div class="table-wrap" style="margin-top:6px">
               <table class="tbl" style="font-size:11px">
                 <thead><tr><th>时间</th><th>主体</th><th>部门</th><th>模型</th><th style="text-align:right">tokens</th><th style="text-align:right">成本（分）</th></tr></thead>
@@ -205,7 +205,7 @@ export async function renderFinops(content, params, { rerender }) {
     </div>
 
     <div class="card">
-      <div class="card-head"><span class="card-title">${icon('users', 15)} 消耗主体 Top 10</span><span class="card-sub">${esc(penetration.month)} · 用户与 Agent 合计</span></div>
+      <div class="card-head"><span class="card-title">${icon('users', 15)} 消耗主体 Top 10</span><span class="card-sub">${esc(penetration.month)}${esc(rqI18n.t(' · 用户与 Agent 合计'))}</span></div>
       <div class="card-body" style="padding-top:6px">
         <div class="table-wrap">
           <table class="tbl">
@@ -217,7 +217,7 @@ export async function renderFinops(content, params, { rerender }) {
                   <td class="fs-12">${esc(row.org || '—')}</td>
                   <td class="col-num fs-12" style="text-align:right">${fmtNum(row.events)}</td>
                   <td class="col-num fs-12" style="text-align:right;font-weight:600">${fmtCost(row.cost_cents / 100)}</td>
-                </tr>`).join('') : emptyRow(4, `${penetration.month} 暂无计量数据`)}
+                </tr>`).join('') : emptyRow(4, rqI18n.t('{month} 暂无计量数据', { month: penetration.month }))}
             </tbody>
           </table>
         </div>
@@ -261,7 +261,7 @@ async function mountModelCatalog(rerender) {
     </div>
     <div class="card-body" style="padding-top:6px">
       ${loadError ? `
-      <div class="tbl-empty">${icon('alert', 28)}<span>模型目录加载失败：${esc(loadError)}（当前宿主可能未部署 modelgw 管理接口）</span></div>
+      <div class="tbl-empty">${icon('alert', 28)}<span>${esc(rqI18n.t('模型目录加载失败：{msg}（当前宿主可能未部署 modelgw 管理接口）', { msg: loadError }))}</span></div>
       <div style="text-align:center;margin-top:8px"><button class="btn btn-default btn-sm" id="mg-retry">重试</button></div>` : `
       <div class="table-wrap">
         <table class="tbl">
@@ -319,7 +319,7 @@ async function mountModelCatalog(rerender) {
         }
         try {
           await api.post('/api/modelgw/models', payload)
-          toast(btn.dataset.next === 'online' ? `模型 ${slug} 已上线` : `模型 ${slug} 已下线`)
+          toast(btn.dataset.next === 'online' ? rqI18n.t('模型 {slug} 已上线', { slug }) : rqI18n.t('模型 {slug} 已下线', { slug }))
           void mountModelCatalog(rerender)
         } catch (error) { toast(error.message, 'error') }
       }
@@ -327,13 +327,13 @@ async function mountModelCatalog(rerender) {
     host.querySelectorAll('[data-mg-del]').forEach((btn) => {
       btn.onclick = async () => {
         const confirmed = await confirmDialog({
-          title: `删除模型 · ${btn.dataset.slug}`, danger: true, confirmText: '确认删除',
-          message: `将从模型目录删除「<b>${esc(btn.dataset.slug)}</b>」，引用它的调用与渠道组会失去主/备路由，操作不可恢复。`,
+          title: rqI18n.t('删除模型 · {slug}', { slug: btn.dataset.slug }), danger: true, confirmText: '确认删除',
+          message: rqI18n.t('将从模型目录删除「<b>{slug}</b>」，引用它的调用与渠道组会失去主/备路由，操作不可恢复。', { slug: esc(btn.dataset.slug) }),
         })
         if (!confirmed) return
         try {
           await api.delete(`/api/modelgw/models/${btn.dataset.mgDel}`)
-          toast('模型已删除')
+          toast(rqI18n.t('模型已删除'))
           void mountModelCatalog(rerender)
         } catch (error) { toast(error.message, 'error') }
       }
@@ -371,7 +371,7 @@ function openModelForm(rerender) {
   drawer.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const data = collectForm(drawer.body)
-    if (!data.slug) return toast('请填写模型 slug', 'error')
+    if (!data.slug) return toast(rqI18n.t('请填写模型 slug'), 'error')
     const payload = {
       slug: data.slug,
       displayName: data.displayName || undefined,
@@ -385,7 +385,7 @@ function openModelForm(rerender) {
     btn.classList.add('btn-loading')
     try {
       await api.post('/api/modelgw/models', payload)
-      toast('模型目录已保存')
+      toast(rqI18n.t('模型目录已保存'))
       drawer.close(); rerender()
     } catch (error) {
       toast(error.message, 'error')
@@ -404,7 +404,7 @@ async function mountChannelGroups(models) {
     const data = await api.get('/api/modelgw/channel-groups')
     groups = data?.groups ?? []
   } catch (error) {
-    host.innerHTML = `<div class="fs-12 text-4" style="padding:10px 0">渠道组加载失败：${esc(error.message)}</div>`
+    host.innerHTML = `<div class="fs-12 text-4" style="padding:10px 0">${esc(rqI18n.t('渠道组加载失败：{msg}', { msg: error.message }))}</div>`
     return
   }
   const slugOptions = (value) => [
@@ -445,7 +445,7 @@ async function mountChannelGroups(models) {
     btn.classList.add('btn-loading')
     try {
       await api.put('/api/modelgw/channel-groups', { groups: next })
-      toast('渠道组已保存')
+      toast(rqI18n.t('渠道组已保存'))
     } catch (error) { toast(error.message, 'error') } finally { btn.classList.remove('btn-loading') }
   })
 }
@@ -459,7 +459,7 @@ async function mountBudgets() {
     const data = await api.get('/api/modelgw/budgets')
     budgets = data?.budgets ?? []
   } catch (error) {
-    host.innerHTML = `<div class="fs-12 text-4" style="padding:10px 0">预算加载失败：${esc(error.message)}</div>`
+    host.innerHTML = `<div class="fs-12 text-4" style="padding:10px 0">${esc(rqI18n.t('预算加载失败：{msg}', { msg: error.message }))}</div>`
     return
   }
   const yuan = (cents) => fmtCost((Number(cents ?? 0) || 0) / 100)
@@ -507,7 +507,7 @@ async function mountBudgets() {
       if (!confirmed) return
       try {
         await api.delete(`/api/modelgw/budgets/${btn.dataset.bdel}`)
-        toast('预算规则已删除')
+        toast(rqI18n.t('预算规则已删除'))
         void mountBudgets()
       } catch (error) { toast(error.message, 'error') }
     }
@@ -551,7 +551,7 @@ async function openBudgetForm(budget, onSaved) {
   drawer.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const data = collectForm(drawer.body)
-    if (data.dailyLimitCents === '' && data.monthlyLimitCents === '') return toast('日/月限额至少填一项', 'error')
+    if (data.dailyLimitCents === '' && data.monthlyLimitCents === '') return toast(rqI18n.t('日/月限额至少填一项'), 'error')
     const payload = {
       ...(budget?.id ? { id: budget.id } : {}),
       orgId: data.orgId || undefined,
@@ -567,7 +567,7 @@ async function openBudgetForm(budget, onSaved) {
     btn.classList.add('btn-loading')
     try {
       await api.put('/api/modelgw/budgets', payload)
-      toast('预算已保存')
+      toast(rqI18n.t('预算已保存'))
       drawer.close(); onSaved()
     } catch (error) {
       toast(error.message, 'error')

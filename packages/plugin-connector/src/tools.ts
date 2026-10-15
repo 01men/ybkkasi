@@ -5,6 +5,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '../../platform-core/src/index.ts'
+import { t as translate } from '../../platform-i18n/src/index.ts'
 
 export const name = 'connector-tools'
 export const inject = ['tools', 'connectorHub']
@@ -25,7 +26,7 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args) {
       const catalog = await ctx.connectorHub.catalog()
-      if (!catalog) return { error: '目录尚未同步：请先执行 connector gateway health + 目录同步' }
+      if (!catalog) return { error: translate('目录尚未同步：请先执行 connector gateway health + 目录同步') }
       const keyword = (args.keyword ?? '').toLowerCase()
       const limit = Math.min(Number(args.limit ?? 50), 200)
       const matchAction = (action: { id: string; service: string; description?: string }): boolean =>
@@ -52,7 +53,7 @@ export function apply(ctx: Context) {
     async execute(args, exec) {
       // org 范围由服务端从执行上下文收敛（与 REST restrictOrgScope 同一逻辑），不接受入参
       const orgScope = ctx.connectorHub.orgScopeFor(exec.principal)
-      if (orgScope === null) return { total: 0, connections: [], note: '当前身份无组织归属，连接可见范围为空（fail-closed）' }
+      if (orgScope === null) return { total: 0, connections: [], note: translate('当前身份无组织归属，连接可见范围为空（fail-closed）') }
       const refs = ctx.connectorHub.connections().find((item) =>
         (orgScope === undefined || item.ownerOrgId === orgScope) && (!args.provider || item.provider === args.provider))
       return {
@@ -114,7 +115,7 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args, exec) {
       const orgScope = ctx.connectorHub.orgScopeFor(exec.principal)
-      if (orgScope === null) return { total: 0, groups: [], note: '当前身份无组织归属，权限组可见范围为空（fail-closed）' }
+      if (orgScope === null) return { total: 0, groups: [], note: translate('当前身份无组织归属，权限组可见范围为空（fail-closed）') }
       const groups = ctx.connectorHub.permGroups().find((group) => (orgScope === undefined || group.orgId === orgScope))
       return {
         total: groups.length,

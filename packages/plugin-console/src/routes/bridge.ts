@@ -3,6 +3,7 @@
  * 自 plugin-console/index.ts 拆出，处理器逐字搬运（行为与迁出前一致）。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 import { platformVersionInfo } from '../../../platform-core/src/index.ts'
 import { noteForwardedPrincipal } from '../../../plugin-connect/src/host.ts'
@@ -32,7 +33,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
         authenticated: authenticated.length,
         undeclaredApi: apiDeclared.filter((route) => route.auth.access === 'outside-api').length,
       },
-      note: 'guarded=权限点保护端点；public=免鉴权（selfValidated=自带凭证校验）；authenticated=仅 Bearer；变动须经评审',
+      note: t('guarded=权限点保护端点；public=免鉴权（selfValidated=自带凭证校验）；authenticated=仅 Bearer；变动须经评审'),
     }
   })
 
@@ -99,7 +100,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
 
   guarded('POST', '/api/tools/execute', 'console.login', async (exchange) => {
     const input = body<{ name: string; args?: Record<string, unknown> }>(exchange)
-    if (!input.name) throw new Error('工具名必填')
+    if (!input.name) throw new Error(t('工具名必填'))
     const info = caller(exchange)
     // 工具级权限校验：以工具声明的最小权限点为准，缺省仅要求登录
     const definition = ctx.tools.schemas().find((tool) => tool.name === input.name)
@@ -111,7 +112,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
         point: required,
         path: exchange.path,
       })
-      exchange.fail(403, 'FORBIDDEN', `缺少权限点 ${required}，请联系管理员调整角色`, { permission: required })
+      exchange.fail(403, 'FORBIDDEN', t('缺少权限点 {permission}，请联系管理员调整角色', { permission: required }), { permission: required })
       return
     }
     const args = injectToolIdentity(input.name, input.args ?? {}, info)
@@ -141,7 +142,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
         'content-type': 'application/json',
         'www-authenticate': 'Bearer realm="dsh-ops-mcp"',
       })
-      exchange.res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32001, message: '缺少 Bearer 令牌：/mcp 与 REST 共用同一套平台令牌' } }))
+      exchange.res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32001, message: t('缺少 Bearer 令牌：/mcp 与 REST 共用同一套平台令牌') } }))
       return undefined
     }
     try {
@@ -163,7 +164,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       exchange.res.writeHead(401, { 'content-type': 'application/json' })
-      exchange.res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32001, message: `令牌无效：${message}` } }))
+      exchange.res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32001, message: t('令牌无效：{message}', { message }) } }))
       return undefined
     }
   }
@@ -179,7 +180,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
     const message = exchange.body
     if (!message || typeof message !== 'object' || Array.isArray(message)) {
       exchange.res.writeHead(400, { 'content-type': 'application/json' })
-      exchange.res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: '请求体必须是单个 JSON-RPC 2.0 消息（暂不支持批量）' } }))
+      exchange.res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: t('请求体必须是单个 JSON-RPC 2.0 消息（暂不支持批量）') } }))
       return
     }
     const id = (message as Record<string, unknown>).id
@@ -220,7 +221,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
         const args = (params.arguments && typeof params.arguments === 'object' ? params.arguments : {}) as Record<string, unknown>
         const definition = ctx.tools.schemas().find((tool) => tool.name === name)
         if (!definition) {
-          return reply({ content: [{ type: 'text', text: `未知工具：${name}` }], isError: true })
+          return reply({ content: [{ type: 'text', text: t('未知工具：{name}', { name }) }], isError: true })
         }
         // 权限基线与 REST 工具桥对齐（QA-20261014 生命周期测试新发现）：REST 面 /api/tools/execute
         // 有路由级 console.login 兜底，而 /mcp 此前对「未声明 permission 的工具」不做任何权限点校验，
@@ -235,7 +236,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
             point: required,
             path: '/mcp',
           })
-          return reply({ content: [{ type: 'text', text: `缺少权限点 ${required}（调用方 ${info.name}），调用被拒绝` }], isError: true })
+          return reply({ content: [{ type: 'text', text: t('缺少权限点 {permission}（调用方 {caller}），调用被拒绝', { permission: required, caller: info.name }) }], isError: true })
         }
         const result = await ctx.tools.execute({ name, arguments: injectToolIdentity(name, args, info), principal: info })
         return reply({
@@ -244,14 +245,14 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
         })
       }
       default:
-        return replyError(-32601, `方法不存在：${method}`)
+        return replyError(-32601, t('方法不存在：{method}', { method }))
     }
   })
 
   // Streamable HTTP：本端点为无会话纯 JSON 形态，GET（SSE 长流）不支持，DELETE（会话终止）恒成功
   http.register('GET', '/mcp', (exchange) => {
     exchange.res.writeHead(405, { 'content-type': 'application/json', allow: 'POST' })
-    exchange.res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: '本 MCP 端点为无会话纯 JSON 形态，不支持 GET SSE 长流' } }))
+    exchange.res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: t('本 MCP 端点为无会话纯 JSON 形态，不支持 GET SSE 长流') } }))
   })
   http.register('DELETE', '/mcp', (exchange) => {
     exchange.ok({})

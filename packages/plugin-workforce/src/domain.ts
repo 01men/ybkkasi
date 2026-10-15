@@ -13,6 +13,7 @@
 import { sha256Hex } from '../../platform-core/src/ids.ts'
 import { WORK_DATA_CLASS_ORDER, type WorkDataClass } from '../../platform-core/src/workforce-port.ts'
 import { STEP_KEY_PATTERN, WorkforceError } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type {
   AppointmentRecord,
   AppointmentStatus,
@@ -34,7 +35,7 @@ export const WORK_DATA_CLASS_VALUES = Object.keys(WORK_DATA_CLASS_ORDER) as Work
 /** 校验并归一业务密级（任用登记 / 请求参数口用）。非法值抛中文错误。 */
 export function validateWorkDataClass(value: unknown): WorkDataClass {
   if (typeof value === 'string' && Object.hasOwn(WORK_DATA_CLASS_ORDER, value)) return value as WorkDataClass
-  throw new Error(`数据密级不合法：${String(value)}（允许：${WORK_DATA_CLASS_VALUES.join('/')}）`)
+  throw new Error(t('数据密级不合法：{value}（允许：{allowed}）', { value: String(value), allowed: WORK_DATA_CLASS_VALUES.join('/') }))
 }
 
 /**
@@ -50,7 +51,7 @@ export function effectiveDataClass(requested: WorkDataClass | undefined, appoint
 /** 绝密禁止数字员工处理：模型/资源调用前直接拒绝（禁止映射成可用高等级渠道，D14）。 */
 export function assertAgentAllowedDataClass(dataClass: WorkDataClass): void {
   if (dataClass === 'topsecret') {
-    throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '绝密数据禁止数字员工处理')
+    throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('绝密数据禁止数字员工处理'))
   }
 }
 
@@ -150,42 +151,46 @@ export const DELIVERABLE_TRANSITIONS: Record<DeliverableStatus, DeliverableStatu
 }
 
 function assertTransition(labels: Record<string, string>, table: Record<string, string[]>, from: string, to: string, subject: string): void {
-  if (from === to) throw new Error(`${subject}状态未变化（当前已是「${labels[from] ?? from}」），无需重复操作`)
+  const fromLabel = t(labels[from] ?? from)
+  const toLabel = t(labels[to] ?? to)
+  if (from === to) throw new Error(t('{subject}状态未变化（当前已是「{current}」），无需重复操作', { subject, current: fromLabel }))
   const allowed = table[from] ?? []
   if (!allowed.includes(to)) {
-    const hint = allowed.length > 0 ? `（允许：${allowed.map((s) => labels[s] ?? s).join('/')}）` : '（终态，不可再流转）'
-    throw new Error(`${subject}状态不允许从「${labels[from] ?? from}」变更为「${labels[to] ?? to}」${hint}`)
+    const hint = allowed.length > 0
+      ? t('（允许：{allowed}）', { allowed: allowed.map((s) => t(labels[s] ?? s)).join('/') })
+      : t('（终态，不可再流转）')
+    throw new Error(t('{subject}状态不允许从「{from}」变更为「{to}」{hint}', { subject, from: fromLabel, to: toLabel, hint }))
   }
 }
 
 /** 员工状态流转断言：非法流转抛中文错误（由路由层 400）。 */
 export function employeeStatusTransition(from: EmployeeStatus, to: EmployeeStatus): void {
-  assertTransition(EMPLOYEE_STATUS_LABELS, EMPLOYEE_TRANSITIONS, from, to, '员工')
+  assertTransition(EMPLOYEE_STATUS_LABELS, EMPLOYEE_TRANSITIONS, from, to, t('员工'))
 }
 
 /** 任用状态流转断言。 */
 export function appointmentStatusTransition(from: AppointmentStatus, to: AppointmentStatus): void {
-  assertTransition(APPOINTMENT_STATUS_LABELS, APPOINTMENT_TRANSITIONS, from, to, '任用')
+  assertTransition(APPOINTMENT_STATUS_LABELS, APPOINTMENT_TRANSITIONS, from, to, t('任用'))
 }
 
 /** 资源授权状态流转断言。 */
 export function grantStatusTransition(from: GrantStatus, to: GrantStatus): void {
-  assertTransition(GRANT_STATUS_LABELS, GRANT_TRANSITIONS, from, to, '资源授权')
+  assertTransition(GRANT_STATUS_LABELS, GRANT_TRANSITIONS, from, to, t('资源授权'))
 }
 
 /** 工作授权（permit）状态流转断言。 */
 export function permitStatusTransition(from: PermitStatus, to: PermitStatus): void {
-  assertTransition(PERMIT_STATUS_LABELS, PERMIT_TRANSITIONS, from, to, '工作授权')
+  assertTransition(PERMIT_STATUS_LABELS, PERMIT_TRANSITIONS, from, to, t('工作授权'))
 }
 
 /** 调用账本状态流转断言。 */
 export function invocationStatusTransition(from: InvocationStatus, to: InvocationStatus): void {
-  assertTransition(INVOCATION_STATUS_LABELS, INVOCATION_TRANSITIONS, from, to, '工作调用')
+  assertTransition(INVOCATION_STATUS_LABELS, INVOCATION_TRANSITIONS, from, to, t('工作调用'))
 }
 
 /** 交付物状态流转断言。 */
 export function deliverableStatusTransition(from: DeliverableStatus, to: DeliverableStatus): void {
-  assertTransition(DELIVERABLE_STATUS_LABELS, DELIVERABLE_TRANSITIONS, from, to, '交付物')
+  assertTransition(DELIVERABLE_STATUS_LABELS, DELIVERABLE_TRANSITIONS, from, to, t('交付物'))
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +246,7 @@ export function canonicalJson(value: unknown): string {
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     return `{${entries.map(([key, v]) => `${JSON.stringify(key)}:${canonicalJson(v)}`).join(',')}}`
   }
-  throw new Error(`参数含不可规范化数据（${typeof value}），无法计算稳定摘要`)
+  throw new Error(t('参数含不可规范化数据（{type}），无法计算稳定摘要', { type: typeof value }))
 }
 
 /** 参数摘要：sha256(canonicalJson)。相同 stepKey 不同参数 → 摘要不同 → STEP_ARGUMENT_CONFLICT。 */
@@ -259,7 +264,7 @@ export function argsHashOf(value: unknown): string {
  */
 export function assertValidStepKey(stepKey: string): void {
   if (typeof stepKey !== 'string' || !STEP_KEY_PATTERN.test(stepKey)) {
-    throw new WorkforceError('ARGUMENT_SCOPE_DENIED', '步骤键 stepKey 不合法：须为 1-96 位、字母开头，仅含字母/数字/点/下划线/连字符')
+    throw new WorkforceError('ARGUMENT_SCOPE_DENIED', t('步骤键 stepKey 不合法：须为 1-96 位、字母开头，仅含字母/数字/点/下划线/连字符'))
   }
 }
 
@@ -272,27 +277,27 @@ export const GRANT_RISKS = ['read', 'write', 'admin'] as const
 
 /** 校验并归一授权期望：kind/registryId/actions/risk 必备；写动作必须显式列入 actions（附录 A 决策 5）。 */
 export function validateGrantSpec(input: unknown): ResourceGrantSpec {
-  if (!input || typeof input !== 'object') throw new Error('资源授权项不合法：须为对象（kind/registryId/actions/risk）')
+  if (!input || typeof input !== 'object') throw new Error(t('资源授权项不合法：须为对象（kind/registryId/actions/risk）'))
   const spec = input as Record<string, unknown>
   const kind = spec['kind']
   if (typeof kind !== 'string' || !(GRANT_KINDS as readonly string[]).includes(kind)) {
-    throw new Error(`资源授权项 kind 不合法：${String(kind)}（允许：${GRANT_KINDS.join('/')}）`)
+    throw new Error(t('资源授权项 kind 不合法：{kind}（允许：{allowed}）', { kind: String(kind), allowed: GRANT_KINDS.join('/') }))
   }
   const registryId = spec['registryId']
   if (typeof registryId !== 'string' || registryId.trim() === '') {
-    throw new Error('资源授权项 registryId 不合法：须为非空资源登记 ID（mcp 服务/connector provider/模型 slug 等）')
+    throw new Error(t('资源授权项 registryId 不合法：须为非空资源登记 ID（mcp 服务/connector provider/模型 slug 等）'))
   }
   const rawActions = spec['actions']
   if (!Array.isArray(rawActions) || rawActions.length === 0 || rawActions.some((a) => typeof a !== 'string' || a.trim() === '')) {
-    throw new Error('资源授权项 actions 不合法：须为非空动作数组（写动作必须显式列出，未知风险工具不得默认开放）')
+    throw new Error(t('资源授权项 actions 不合法：须为非空动作数组（写动作必须显式列出，未知风险工具不得默认开放）'))
   }
   const risk = spec['risk']
   if (typeof risk !== 'string' || !(GRANT_RISKS as readonly string[]).includes(risk)) {
-    throw new Error(`资源授权项 risk 不合法：${String(risk)}（允许：${GRANT_RISKS.join('/')}）`)
+    throw new Error(t('资源授权项 risk 不合法：{risk}（允许：{allowed}）', { risk: String(risk), allowed: GRANT_RISKS.join('/') }))
   }
   const constraints = spec['constraints']
   if (constraints !== undefined && (typeof constraints !== 'object' || constraints === null || Array.isArray(constraints))) {
-    throw new Error('资源授权项 constraints 不合法：须为对象（factoryIds/pathPrefixes/maxRows 等）')
+    throw new Error(t('资源授权项 constraints 不合法：须为对象（factoryIds/pathPrefixes/maxRows 等）'))
   }
   return {
     kind: kind as ResourceGrantSpec['kind'],
@@ -344,7 +349,7 @@ export function validateAgainstSchema(
   if (type !== undefined) {
     const types = Array.isArray(type) ? type : [type]
     if (!types.some((t) => matchesType(value, String(t)))) {
-      return `${path} 类型应为 ${types.join(' 或 ')}（实际为 ${jsonTypeOf(value)}）`
+      return t('{path} 类型应为 {types}（实际为 {actual}）', { path, types: types.map(String).join(t(' 或 ')), actual: jsonTypeOf(value) })
     }
   }
 
@@ -357,7 +362,7 @@ export function validateAgainstSchema(
     } catch {
       matched = false
     }
-    if (!matched) return `${path} 取值不在允许范围内（${allowedValues.map((v) => JSON.stringify(v)).join('/')}）`
+    if (!matched) return t('{path} 取值不在允许范围内（{allowed}）', { path, allowed: allowedValues.map((v) => JSON.stringify(v)).join('/') })
   }
 
   if (jsonTypeOf(value) === 'object') {
@@ -365,7 +370,7 @@ export function validateAgainstSchema(
     const required = schema['required']
     if (Array.isArray(required)) {
       for (const key of required) {
-        if (typeof key === 'string' && !(key in obj)) return `${path} 缺少必填参数「${key}」`
+        if (typeof key === 'string' && !(key in obj)) return t('{path} 缺少必填参数「{key}」', { path, key })
       }
     }
     const properties = schema['properties']
@@ -373,7 +378,7 @@ export function validateAgainstSchema(
       const propSchemas = properties as Record<string, Record<string, unknown>>
       if (schema['additionalProperties'] === false) {
         const unknownKey = Object.keys(obj).find((key) => !(key in propSchemas))
-        if (unknownKey !== undefined) return `${path} 不允许传入未声明的参数「${unknownKey}」`
+        if (unknownKey !== undefined) return t('{path} 不允许传入未声明的参数「{key}」', { path, key: unknownKey })
       }
       for (const [key, propSchema] of Object.entries(propSchemas)) {
         if (!(key in obj)) continue
@@ -393,22 +398,22 @@ export function validateAgainstSchema(
     }
     const maxRows = schema['maxRows']
     if (typeof maxRows === 'number' && value.length > maxRows) {
-      return `${path} 行数 ${value.length} 超出上限 ${maxRows}`
+      return t('{path} 行数 {count} 超出上限 {max}', { path, count: value.length, max: maxRows })
     }
   }
 
   if (typeof value === 'string') {
     const minLength = schema['minLength']
-    if (typeof minLength === 'number' && value.length < minLength) return `${path} 长度不得少于 ${minLength}`
+    if (typeof minLength === 'number' && value.length < minLength) return t('{path} 长度不得少于 {min}', { path, min: minLength })
     const maxLength = schema['maxLength']
-    if (typeof maxLength === 'number' && value.length > maxLength) return `${path} 长度不得超过 ${maxLength}`
+    if (typeof maxLength === 'number' && value.length > maxLength) return t('{path} 长度不得超过 {max}', { path, max: maxLength })
   }
 
   if (typeof value === 'number' && Number.isFinite(value)) {
     const minimum = schema['minimum']
-    if (typeof minimum === 'number' && value < minimum) return `${path} 不得小于 ${minimum}`
+    if (typeof minimum === 'number' && value < minimum) return t('{path} 不得小于 {min}', { path, min: minimum })
     const maximum = schema['maximum']
-    if (typeof maximum === 'number' && value > maximum) return `${path} 不得大于 ${maximum}`
+    if (typeof maximum === 'number' && value > maximum) return t('{path} 不得大于 {max}', { path, max: maximum })
   }
 
   return null

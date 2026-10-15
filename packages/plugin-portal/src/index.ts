@@ -17,6 +17,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { PlatformEvents, type HttpExchange } from '../../platform-core/src/index.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import {
   emptySolutions, emptyTools, mapApps, mapEmployees, mapSkills, mapStats,
   type PortalMappingContext, type PortalSolution, type PortalTool,
@@ -220,7 +221,7 @@ export function apply(ctx: Context) {
         return true
       }
       if (exchange.method !== 'GET' && exchange.method !== 'HEAD') {
-        respond(exchange, 405, { code: 40500, message: '门户契约为只读 GET，不支持该方式', data: null }, headers)
+        respond(exchange, 405, { code: 40500, message: t('门户契约为只读 GET，不支持该方式'), data: null }, headers)
         return true
       }
       // 技能包下载（downloadUrl 的应答端）：api.md v1.1 §4.7 —— 必须登录（Bearer 门户令牌），
@@ -229,13 +230,13 @@ export function apply(ctx: Context) {
       if (downloadMatch) {
         const downloader = service.resolveDownloader(exchange.headers.authorization)
         if (!downloader) {
-          respond(exchange, 401, { code: 40100, message: '下载需要登录：请携带门户登录令牌（Authorization: Bearer <token>）', data: null }, headers)
+          respond(exchange, 401, { code: 40100, message: t('下载需要登录：请携带门户登录令牌（Authorization: Bearer <token>）'), data: null }, headers)
           return true
         }
         const ip = String(exchange.raw.socket?.remoteAddress ?? 'unknown')
         const pkg = service.skillPackage(decodeURIComponent(downloadMatch[1]!), { ...downloader, ip })
         if (!pkg) {
-          respond(exchange, 404, { code: 40400, message: '技能不存在或未上架，无可下载包', data: null }, headers)
+          respond(exchange, 404, { code: 40400, message: t('技能不存在或未上架，无可下载包'), data: null }, headers)
           return true
         }
         try {
@@ -253,7 +254,7 @@ export function apply(ctx: Context) {
           }
         } catch (error) {
           console.error('[portal] 技能包下载应答失败', error)
-          respond(exchange, 500, { code: 50000, message: '技能包读取失败，请稍后重试', data: null }, headers)
+          respond(exchange, 500, { code: 50000, message: t('技能包读取失败，请稍后重试'), data: null }, headers)
         }
         return true
       }
@@ -267,14 +268,14 @@ export function apply(ctx: Context) {
             service: 'portal-feed',
             contract: 'api.md v1.1',
             endpoints: ENDPOINTS,
-            subResources: ['skills/:id/download（技能包下载，须 Bearer 登录令牌：未登录 401，审计谁在下载）'],
+            subResources: [t('skills/:id/download（技能包下载，须 Bearer 登录令牌：未登录 401，审计谁在下载）')],
             generatedAt: new Date().toISOString(),
           },
         }, headers)
         return true
       }
       if (!(ENDPOINTS as readonly string[]).includes(tail)) {
-        respond(exchange, 404, { code: 40400, message: `门户端点不存在：${tail}`, data: null }, headers)
+        respond(exchange, 404, { code: 40400, message: t('门户端点不存在：{endpoint}', { endpoint: tail }), data: null }, headers)
         return true
       }
       respond(exchange, 200, { code: 0, message: 'ok', data: service.feed(tail) }, headers)

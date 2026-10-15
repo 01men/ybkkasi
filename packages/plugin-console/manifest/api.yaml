@@ -3,7 +3,7 @@ plugin: dsh-plugin-console
 base: /api
 endpoints:
   - POST /api/tools/execute（工具桥：与 dsh ToolRuntime 同一契约）
-  - GET/POST/DELETE /mcp（平台即 MCP Server：Streamable HTTP，initialize/tools/list/tools/call，Bearer 鉴权 + 工具级权限点；GET=SSE 流、DELETE=会话终结） · GET /docs（控制台文档页）
+  - GET/POST/DELETE /mcp（平台即 MCP Server：Streamable HTTP，initialize/tools/list/tools/call，Bearer 鉴权 + 工具级权限点；GET=SSE 流、DELETE=会话终结） · GET /docs（控制台文档页） · GET /locales/:locale（UI 全球化词典合并端点，2026-10-16：platform-i18n 服务端文案 + 控制台/面板 SPA 词典三层合并，公开静态文案无鉴权面）
   - GET /api/health（存活探针） · GET /api/tools/schemas（工具 schema 目录） · GET /api/platform/route-matrix（路由矩阵自检）
   - GET /api/platform/bootstrap（公开；首启状态：仅回 initialPasswordPending 布尔，登录页部署提示用） · GET /api/platform/bootstrap/detail（authenticated；首启状态全量：mode/orgName/seededAt/口令文件路径）
   - GET /api/finops/overview?month=YYYY-MM&window=分钟（usage.read；M2 CFO 视图：成本穿透 org×model+环比 + 空转检测一次取全）

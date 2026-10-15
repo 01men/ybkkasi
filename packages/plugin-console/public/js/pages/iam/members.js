@@ -15,6 +15,7 @@ import {
   flattenTree, flattenTreePaths, findOrgNode, flattenOrgList, buildOrgPaths, debounce,
   showUserCredentials,
 } from './helpers.js'
+import rqI18n from '../../i18n.js'
 
 export async function renderMembers(ctx) {
   let [treeData, usersData] = await Promise.all([
@@ -40,7 +41,7 @@ export async function renderMembers(ctx) {
         <div class="card" style="padding:10px 8px">
           <div class="flex" style="padding:4px 8px 8px;justify-content:space-between">
             <span class="fs-12 text-3" style="font-weight:600">组织架构</span>
-            <span class="fs-11 text-4" id="org-user-total">${usersData.total} 人</span>
+            <span class="fs-11 text-4" id="org-user-total">${rqI18n.t('{n} 人', { n: usersData.total })}</span>
           </div>
           <div class="tree" id="org-tree"></div>
           <div class="fs-11 text-4" style="padding:8px 8px 2px;margin-top:6px;border-top:1px dashed var(--border);display:flex;gap:5px;align-items:center">${icon('gitBranch', 11)}<span>把右侧成员拖到部门上可直接调岗</span></div>
@@ -171,9 +172,9 @@ export async function renderMembers(ctx) {
         modal.el.querySelector('[data-cancel]').onclick = () => modal.close()
         modal.el.querySelector('[data-ok]').onclick = async () => {
           const data = collectForm(modal.body)
-          if (!data.name) return toast('名称不能为空', 'error')
+          if (!data.name) return toast(rqI18n.t('名称不能为空'), 'error')
           await api.patch(`/api/iam/orgs/${node.id}`, { name: data.name })
-          toast('已重命名'); modal.close(); location.hash = '#/iam'; ctx.rerender()
+          toast(rqI18n.t('已重命名')); modal.close(); location.hash = '#/iam'; ctx.rerender()
         }
       }
       menu.querySelector('[data-act="move"]').onclick = () => {
@@ -184,7 +185,7 @@ export async function renderMembers(ctx) {
         collectSubtree(node)
         const candidates = flattenTreePaths(treeData).filter((o) => !excluded.has(o.value))
         const modal = openModal({
-          title: `调整上级组织（${esc(node.name)}）`,
+          title: esc(rqI18n.t('调整上级组织（{name}）', { name: node.name })),
           body: field('上级组织', searchableSelectField('parentId', candidates, { value: node.parentId ?? '', emptyLabel: '（作为顶级组织）', placeholder: '点击选择上级组织' })),
           foot: '<button class="btn btn-default" data-cancel>取消</button><button class="btn btn-primary" data-ok>保存</button>',
         })
@@ -194,7 +195,7 @@ export async function renderMembers(ctx) {
           const data = collectForm(modal.body)
           try {
             await api.patch(`/api/iam/orgs/${node.id}`, { parentId: data.parentId || null })
-            toast('已调整上级组织'); modal.close(); location.hash = '#/iam'; ctx.rerender()
+            toast(rqI18n.t('已调整上级组织')); modal.close(); location.hash = '#/iam'; ctx.rerender()
           } catch (error) { toast(error.message, 'error') }
         }
       }
@@ -207,18 +208,18 @@ export async function renderMembers(ctx) {
         const directUsers = usersData.users.filter((u) => u.orgId === node.id).length
         const cascade = subOrgCount > 0 || directUsers > 0
         const rangeDesc = cascade
-          ? `其下还有 <b>${subOrgCount}</b> 个子组织、<b>${directUsers}</b> 个直属账号。将<b>一键删除整棵子树</b>，直属账号自动上移到上级组织${node.parentId ? '' : '（首个存活组织）'}。`
-          : '该组织为空（无子组织、无直属账号）。'
+          ? rqI18n.t('其下还有 <b>{orgs}</b> 个子组织、<b>{users}</b> 个直属账号。将<b>一键删除整棵子树</b>，直属账号自动上移到上级组织{suffix}。', { orgs: subOrgCount, users: directUsers, suffix: node.parentId ? '' : rqI18n.t('（首个存活组织）') })
+          : rqI18n.t('该组织为空（无子组织、无直属账号）。')
         const result = await confirmDialog({
           title: '删除组织',
-          message: `确定删除「${esc(node.name)}」？${rangeDesc}`,
+          message: rqI18n.t('确定删除「{name}」？{desc}', { name: esc(node.name), desc: rangeDesc }),
           danger: true,
           confirmText: cascade ? '一键删除整棵子树' : '确认删除',
         })
         if (!result) return
         try {
           const res = await api.delete(`/api/iam/orgs/${node.id}`, { cascade })
-          toast(cascade && res.removedOrgs > 1 ? `已删除 ${res.removedOrgs} 个组织，${res.movedUsers} 个账号上移` : '组织已删除')
+          toast(cascade && res.removedOrgs > 1 ? rqI18n.t('已删除 {orgs} 个组织，{users} 个账号上移', { orgs: res.removedOrgs, users: res.movedUsers }) : rqI18n.t('组织已删除'))
           location.hash = '#/iam'; ctx.rerender()
         } catch (error) { toast(error.message, 'error') }
       }
@@ -242,7 +243,7 @@ export async function renderMembers(ctx) {
     const status = $('#member-status').value
     const search = api.qs({ orgId: selectedOrgId || undefined, q: q || undefined, status: status || undefined })
     const data = await api.get('/api/iam/users' + search)
-    $('#member-count').textContent = `共 ${data.total} 人`
+    $('#member-count').textContent = rqI18n.t('共 {n} 人', { n: data.total })
     renderLeaderBar()
     // MFA 列仅在数据源真实提供该字段时出现（设计 §5.8「MFA 若有」——无数据不造假列）
     const mfaKey = ['mfaEnabled', 'mfa'].find((key) => data.users.some((u) => u && u[key] !== undefined))
@@ -330,7 +331,7 @@ export async function renderMembers(ctx) {
     bar.innerHTML = `
       <div class="flex muted-box" style="margin-bottom:10px;gap:8px;flex-wrap:wrap;align-items:center">
         ${icon('check', 14)}
-        <span class="fs-12" style="font-weight:600">已选 ${selectedUserIds.size} 人</span>
+        <span class="fs-12" style="font-weight:600">${esc(rqI18n.t('已选 {n} 人', { n: selectedUserIds.size }))}</span>
         <span class="fs-11 text-4">勾选后拖到左侧组织可批量调岗</span>
         <span style="flex:1"></span>
         <button class="btn btn-default btn-sm" data-batch="org">${icon('building', 12)}调整组织</button>
@@ -365,8 +366,8 @@ export async function renderMembers(ctx) {
         ok++
       } catch (error) { failed.push(`${user?.displayName ?? id}：${error.message}`) }
     }
-    if (failed.length) toast(`${label}：成功 ${ok} 人，失败 ${failed.length} 人（${failed[0]}）`, 'error')
-    else toast(`${label}完成：共 ${ok} 人`)
+    if (failed.length) toast(rqI18n.t('{label}：成功 {ok} 人，失败 {f} 人（{msg}）', { label, ok, f: failed.length, msg: failed[0] }), 'error')
+    else toast(rqI18n.t('{label}完成：共 {n} 人', { label, n: ok }))
     selectedUserIds.clear()
     await reloadBaseData()
   }
@@ -374,7 +375,7 @@ export async function renderMembers(ctx) {
   /** 批量调整组织：目标组织按「法人 / 部门」全路径搜索选择（与创建/编辑账号同组件）。 */
   function openBatchOrgModal() {
     const modal = openModal({
-      title: `批量调整组织（已选 ${selectedUserIds.size} 人）`,
+      title: rqI18n.t('批量调整组织（已选 {n} 人）', { n: selectedUserIds.size }),
       body: `
         <div class="form-hint" style="margin-bottom:10px">所选成员将统一移动到目标组织下，立即生效并写入变更留痕。</div>
         ${field('目标组织', searchableSelectField('orgId', flattenTreePaths(treeData), { placeholder: '点击选择：输入部门名搜索，显示「法人 / 部门」全路径' }), { required: true, full: true, hint: '同名部门跨法人重复，请认准完整路径再选' })}`,
@@ -384,17 +385,17 @@ export async function renderMembers(ctx) {
     modal.el.querySelector('[data-cancel]').onclick = () => modal.close()
     modal.el.querySelector('[data-ok]').onclick = async () => {
       const data = collectForm(modal.body)
-      if (!data.orgId) return toast('请选择目标组织', 'error')
+      if (!data.orgId) return toast(rqI18n.t('请选择目标组织'), 'error')
       const orgName = flattenTreePaths(treeData).find((opt) => opt.value === data.orgId)?.label ?? data.orgId
       modal.close()
-      await applyBatchUpdates(`批量调岗到「${orgName}」`, () => ({ orgId: data.orgId }))
+      await applyBatchUpdates(rqI18n.t('批量调岗到「{name}」', { name: orgName }), () => ({ orgId: data.orgId }))
     }
   }
 
   /** 批量设置职位：留空提交即批量清空职位。 */
   function openBatchTitleModal() {
     const modal = openModal({
-      title: `批量设置职位（已选 ${selectedUserIds.size} 人）`,
+      title: rqI18n.t('批量设置职位（已选 {n} 人）', { n: selectedUserIds.size }),
       body: field('职位', inputField('title', { placeholder: '如：算法工程师；留空则清空这些成员的职位' }), { full: true }),
       foot: '<button class="btn btn-default" data-cancel>取消</button><button class="btn btn-primary" data-ok>确认设置</button>',
     })
@@ -402,7 +403,7 @@ export async function renderMembers(ctx) {
     modal.el.querySelector('[data-ok]').onclick = async () => {
       const title = (collectForm(modal.body).title ?? '').trim()
       modal.close()
-      await applyBatchUpdates(title ? `批量设置职位「${title}」` : '批量清空职位', () => ({ title }))
+      await applyBatchUpdates(title ? rqI18n.t('批量设置职位「{title}」', { title }) : rqI18n.t('批量清空职位'), () => ({ title }))
     }
   }
 
@@ -411,7 +412,7 @@ export async function renderMembers(ctx) {
     let rolesData
     try { rolesData = await api.get('/api/iam/roles') } catch (error) { return toast(error.message, 'error') }
     const modal = openModal({
-      title: `批量分配角色（已选 ${selectedUserIds.size} 人）`,
+      title: rqI18n.t('批量分配角色（已选 {n} 人）', { n: selectedUserIds.size }),
       body: `
         <div class="form-hint" style="margin-bottom:10px">将以勾选的角色<b>替换</b>所选成员的角色清单；不勾选任何角色 = 批量清空角色。权限点实时生效。</div>
         ${rolesData.roles.map((role) => `
@@ -428,7 +429,7 @@ export async function renderMembers(ctx) {
     modal.el.querySelector('[data-ok]').onclick = async () => {
       const roleIds = [...modal.body.querySelectorAll('input[name=batch-role]:checked')].map((el) => el.value)
       modal.close()
-      await applyBatchUpdates('批量分配角色', () => ({ roleIds }))
+      await applyBatchUpdates(rqI18n.t('批量分配角色'), () => ({ roleIds }))
     }
   }
 
@@ -436,7 +437,7 @@ export async function renderMembers(ctx) {
   async function moveUsersToOrg(userIds, orgNode) {
     const users = usersData.users.filter((u) => userIds.includes(u.id))
     const targets = users.filter((u) => u.orgId !== orgNode.id)
-    if (!targets.length) { toast('所选成员已在该组织下，无需调岗'); return }
+    if (!targets.length) { toast(rqI18n.t('所选成员已在该组织下，无需调岗')); return }
     let ok = 0
     const failed = []
     for (const user of targets) {
@@ -445,8 +446,8 @@ export async function renderMembers(ctx) {
         ok++
       } catch (error) { failed.push(`${user.displayName}：${error.message}`) }
     }
-    if (failed.length) toast(`调岗到「${orgNode.name}」：成功 ${ok} 人，失败 ${failed.length} 人（${failed[0]}）`, 'error')
-    else toast(`已将 ${ok} 名成员移动到「${orgNode.name}」`)
+    if (failed.length) toast(rqI18n.t('调岗到「{name}」：成功 {ok} 人，失败 {f} 人（{msg}）', { name: orgNode.name, ok, f: failed.length, msg: failed[0] }), 'error')
+    else toast(rqI18n.t('已将 {n} 名成员移动到「{name}」', { n: ok, name: orgNode.name }))
     selectedUserIds.clear()
     await reloadBaseData()
   }
@@ -458,7 +459,7 @@ export async function renderMembers(ctx) {
       api.get('/api/iam/users'),
     ])
     const totalEl = $('#org-user-total')
-    if (totalEl) totalEl.textContent = `${usersData.total} 人`
+    if (totalEl) totalEl.textContent = rqI18n.t('{n} 人', { n: usersData.total })
     renderTree()
     await refreshMembers()
   }
@@ -493,7 +494,7 @@ export async function renderMembers(ctx) {
     const leaderIds = node.leaderUserIds ?? []
     const manual = node.leaderSource === 'manual'
     const modal = openModal({
-      title: `设置负责人（${esc(node.name)}）`,
+      title: esc(rqI18n.t('设置负责人（{name}）', { name: node.name })),
       body: `
         <div class="muted-box mb-14" style="display:flex;gap:8px">
           ${icon('info', 15)}
@@ -529,7 +530,7 @@ export async function renderMembers(ctx) {
       const picked = [...modal.body.querySelectorAll('input[name=leader]:checked')].map((el) => el.value)
       try {
         await api.patch(`/api/iam/orgs/${node.id}`, { leaderUserIds: picked })
-        toast(picked.length ? '负责人已保存（手动绑定，连接器同步不覆盖）' : '已清空负责人（恢复跟随钉钉同步）', 'success')
+        toast(picked.length ? rqI18n.t('负责人已保存（手动绑定，连接器同步不覆盖）') : rqI18n.t('已清空负责人（恢复跟随钉钉同步）'), 'success')
         modal.close(); location.hash = '#/iam'; ctx.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
@@ -560,7 +561,7 @@ export async function renderMembers(ctx) {
     modal.el.querySelector('[data-cancel]').onclick = () => modal.close()
     modal.el.querySelector('[data-ok]').onclick = async () => {
       const data = collectForm(modal.body)
-      if (!data.orgId) return toast('请选择所属组织（支持搜索）', 'error')
+      if (!data.orgId) return toast(rqI18n.t('请选择所属组织（支持搜索）'), 'error')
       try {
         const result = await api.post('/api/iam/users', data)
         modal.close()
@@ -573,7 +574,7 @@ export async function renderMembers(ctx) {
             onDone: () => ctx.rerender(),
           })
         } else {
-          toast('账号已创建'); ctx.rerender()
+          toast(rqI18n.t('账号已创建')); ctx.rerender()
         }
       } catch (error) { toast(error.message, 'error') }
     }
@@ -593,7 +594,7 @@ export async function renderMembers(ctx) {
       const data = collectForm(modal.body)
       try {
         await api.post('/api/iam/orgs', { name: data.name, parentId: data.parentId || null })
-        toast('组织已创建'); modal.close(); ctx.rerender()
+        toast(rqI18n.t('组织已创建')); modal.close(); ctx.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
   }
@@ -642,20 +643,20 @@ export async function renderMembers(ctx) {
         return
       }
       previewEl.innerHTML = rows.map((row) => {
-        if (!row.username || !row.displayName || !row.orgInput) return `<div style="padding:2px 0;font-size:12px;color:var(--danger)">⚠ ${esc(row.rawLine)}（字段不足：需要 用户名,姓名,组织,职位）</div>`
-        if (row.org.id === null) return `<div style="padding:2px 0;font-size:12px;color:var(--danger)">⚠ ${esc(row.username)} → 组织未命中：${esc(row.orgInput)}</div>`
-        return `<div style="padding:2px 0;font-size:12px">· ${esc(row.username)} / ${esc(row.displayName)} → 组织：${esc(row.org.label)}${row.title ? ` / ${esc(row.title)}` : ''}</div>`
+        if (!row.username || !row.displayName || !row.orgInput) return `<div style="padding:2px 0;font-size:12px;color:var(--danger)">⚠ ${esc(rqI18n.t('{line}（字段不足：需要 用户名,姓名,组织,职位）', { line: row.rawLine }))}</div>`
+        if (row.org.id === null) return `<div style="padding:2px 0;font-size:12px;color:var(--danger)">⚠ ${esc(rqI18n.t('{user} → 组织未命中：{org}', { user: row.username, org: row.orgInput }))}</div>`
+        return `<div style="padding:2px 0;font-size:12px">· ${esc(rqI18n.t('{user} / {name} → 组织：{org}{title}', { user: row.username, name: row.displayName, org: row.org.label, title: row.title ? ` / ${row.title}` : '' }))}</div>`
       }).join('')
     })
     modal.el.querySelector('[data-cancel]').onclick = () => modal.close()
     modal.el.querySelector('[data-ok]').onclick = async () => {
       const rows = parseRows().filter((row) => row.username && row.displayName && row.orgInput)
-      if (!rows.length) return toast('没有可导入的数据（检查格式）', 'error')
+      if (!rows.length) return toast(rqI18n.t('没有可导入的数据（检查格式）'), 'error')
       const bad = rows.filter((row) => row.org.id === null)
-      if (bad.length) return toast(`组织未命中：${bad.map((row) => row.orgInput).join('、')}，请修正后重试`, 'error')
+      if (bad.length) return toast(rqI18n.t('组织未命中：{orgs}，请修正后重试', { orgs: bad.map((row) => row.orgInput).join('、') }), 'error')
       try {
         const result = await api.post('/api/iam/users/import', { items: rows.map(({ username, displayName, org, title }) => ({ username, displayName, orgId: org.id, title })) })
-        toast(`导入完成：新建 ${result.created.length}，跳过 ${result.skipped.length}`)
+        toast(rqI18n.t('导入完成：新建 {c}，跳过 {s}', { c: result.created.length, s: result.skipped.length }))
         modal.close(); ctx.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
@@ -722,7 +723,7 @@ export async function renderMembers(ctx) {
       modal.el.querySelector('[data-ok]').onclick = async () => {
         try {
           await api.patch(`/api/iam/users/${user.id}`, collectForm(modal.body))
-          toast('已保存'); modal.close(); drawer.close(); ctx.rerender()
+          toast(rqI18n.t('已保存')); modal.close(); drawer.close(); ctx.rerender()
         } catch (error) { toast(error.message, 'error') }
       }
     }
@@ -744,7 +745,7 @@ export async function renderMembers(ctx) {
         const roleIds = [...modal.body.querySelectorAll('input[name=role]:checked')].map((el) => el.value)
         try {
           await api.patch(`/api/iam/users/${user.id}`, { roleIds })
-          toast('角色已更新（权限点实时生效）'); modal.close(); drawer.close(); ctx.rerender()
+          toast(rqI18n.t('角色已更新（权限点实时生效）')); modal.close(); drawer.close(); ctx.rerender()
         } catch (error) { toast(error.message, 'error') }
       }
     }
@@ -783,10 +784,10 @@ export async function renderMembers(ctx) {
         const btn = e.currentTarget
         btn.classList.add('btn-loading')
         try {
-          if (providerValue() !== 'dingtalk') throw new Error('扫码授权绑定当前仅支持钉钉')
+          if (providerValue() !== 'dingtalk') throw new Error(rqI18n.t('扫码授权绑定当前仅支持钉钉'))
           const configId = modal.body.querySelector('#bind-config-id')?.value
           const auth = await api.post('/api/auth/sso/bind/authorize', { provider: 'dingtalk', targetUserId: user.id, ...(configId ? { configId } : {}) })
-          if (!auth.authorizeUrl) throw new Error('身份源未返回授权地址（可能为 mock 模式），请改用手动绑定')
+          if (!auth.authorizeUrl) throw new Error(rqI18n.t('身份源未返回授权地址（可能为 mock 模式），请改用手动绑定'))
           // 必须整页跳转：弹窗/iframe 会被第三方 Cookie 策略拦截导致授权失败
           window.location.href = auth.authorizeUrl
         } catch (error) {
@@ -797,14 +798,14 @@ export async function renderMembers(ctx) {
       modal.el.querySelector('#bind-manual-go')?.addEventListener('click', async () => {
         try {
           await api.post(`/api/iam/users/${user.id}/bindings`, { ...collectForm(modal.body), verifyCode: collectForm(modal.body).verifyCode || '123456' })
-          toast('绑定成功'); modal.close(); drawer.close(); ctx.rerender()
+          toast(rqI18n.t('绑定成功')); modal.close(); drawer.close(); ctx.rerender()
         } catch (error) { toast(error.message, 'error') }
       })
     }
     drawer.el.querySelector('#ud-resetpw').onclick = async () => {
       const confirmed = await confirmDialog({
         title: '重置口令', danger: true, confirmText: '确认重置',
-        message: `将为 <b>${esc(user.displayName)}</b> 生成新的随机口令，原口令立即失效。新口令仅展示一次，请准备传达给本人。`,
+        message: rqI18n.t('将为 <b>{name}</b> 生成新的随机口令，原口令立即失效。新口令仅展示一次，请准备传达给本人。', { name: esc(user.displayName) }),
       })
       if (!confirmed) return
       try {
@@ -821,23 +822,23 @@ export async function renderMembers(ctx) {
     if (freezeBtn) freezeBtn.onclick = async () => {
       const result = await confirmDialog({
         title: '冻结账号', danger: true, requireReason: true, confirmText: '确认冻结',
-        message: `冻结 <b>${esc(user.displayName)}</b> 后：其名下全部访问令牌将被立即吊销，无法登录任何入口。`,
+        message: rqI18n.t('冻结 <b>{name}</b> 后：其名下全部访问令牌将被立即吊销，无法登录任何入口。', { name: esc(user.displayName) }),
       })
       if (!result) return
       try {
         await api.post(`/api/iam/users/${user.id}/freeze`, { reason: result.reason })
-        toast('已冻结并吊销全部令牌'); drawer.close(); ctx.rerender()
+        toast(rqI18n.t('已冻结并吊销全部令牌')); drawer.close(); ctx.rerender()
       } catch (error) { toast(error.message, 'error') }
     }
     const unfreezeBtn = drawer.el.querySelector('#ud-unfreeze')
     if (unfreezeBtn) unfreezeBtn.onclick = async () => {
       await api.post(`/api/iam/users/${user.id}/unfreeze`, {})
-      toast('已解除冻结'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('已解除冻结')); drawer.close(); ctx.rerender()
     }
     const activateBtn = drawer.el.querySelector('#ud-activate')
     if (activateBtn) activateBtn.onclick = async () => {
       await api.post(`/api/iam/users/${user.id}/activate`, {})
-      toast('账号已激活'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('账号已激活')); drawer.close(); ctx.rerender()
     }
   }
 }
@@ -903,7 +904,7 @@ async function mountAgentOrgView(treeData) {
   host.innerHTML = `
     <div class="card-head">
       <span class="card-title">${icon('bot', 15)} Agent 组织视图</span>
-      <span class="card-sub">${agents.length} 个 Agent 按组织归队 · 人与 Agent 同一张组织架构（R7 双层视图）</span>
+      <span class="card-sub">${esc(rqI18n.t('{n} 个 Agent 按组织归队 · 人与 Agent 同一张组织架构（R7 双层视图）', { n: agents.length }))}</span>
     </div>
     <div class="card-body" style="padding-top:0;padding-bottom:14px">
       ${agents.length ? orgBlocks : `<div class="tbl-empty">${icon('bot', 28)}<span>暂无 Agent——注册 Agent 并挂到组织后在此显示名册</span></div>`}
@@ -929,7 +930,7 @@ async function mountConnectorSummary() {
   try {
     conflictCount = (await api.get('/api/iam/conflicts')).conflicts.length
   } catch { /* 冲突数读不到时省略该行，不造假 */ }
-  const conflictText = conflictCount === null ? '' : ` · ${conflictCount} 冲突`
+  const conflictText = conflictCount === null ? '' : rqI18n.t(' · {n} 冲突', { n: conflictCount })
   const jumpTab = (tab) => { location.hash = `#/iam?tab=${tab}` }
   host.innerHTML = `
     <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -946,12 +947,12 @@ async function mountConnectorSummary() {
         </div>
         <div class="fs-12 text-3" style="margin-top:6px;line-height:1.8">
           <div class="flex" style="justify-content:space-between"><span>模式</span><span class="mono">${config.mode === 'real' ? 'real' : 'mock'}</span></div>
-          <div class="flex" style="justify-content:space-between"><span>同步频率</span><span class="mono">${(config.intervalMinutes ?? 60) > 0 ? `每 ${config.intervalMinutes ?? 60} 分钟` : '仅手动'}</span></div>
+          <div class="flex" style="justify-content:space-between"><span>同步频率</span><span class="mono">${(config.intervalMinutes ?? 60) > 0 ? esc(rqI18n.t('每 {n} 分钟', { n: config.intervalMinutes ?? 60 })) : '仅手动'}</span></div>
           <div class="flex" style="justify-content:space-between"><span>最近同步</span><span class="mono">${config.lastSyncAt ? timeAgo(config.lastSyncAt) : '从未同步'}${conflictText}</span></div>
         </div>
       </div>`).join('') : `
       <div class="fs-12 text-4" style="line-height:1.8">尚未接入三方身份源——到「三方集成」tab 配置钉钉等连接器后，通讯录将按频率自动同步。</div>`}
-    ${conflictCount ? `<button class="btn btn-default btn-sm" id="iam-conn-conflicts" style="width:100%">${icon('alert', 12)}处理 ${conflictCount} 条同步冲突</button>` : ''}`
+    ${conflictCount ? `<button class="btn btn-default btn-sm" id="iam-conn-conflicts" style="width:100%">${icon('alert', 12)}${esc(rqI18n.t('处理 {n} 条同步冲突', { n: conflictCount }))}</button>` : ''}`
   const moreBtn = host.querySelector('#iam-conn-more')
   if (moreBtn) moreBtn.onclick = () => { jumpTab('connectors') }
   const conflictBtn = host.querySelector('#iam-conn-conflicts')

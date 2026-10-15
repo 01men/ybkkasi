@@ -20,6 +20,7 @@ import {
   type WorkforceStore,
   type WorkforceGrayConfig,
 } from './contract.ts'
+import { t } from '../../platform-i18n/src/index.ts'
 import type {
   ManagedEmployeeRef,
   ResourceActionFacts,
@@ -36,7 +37,7 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
   const store = (): WorkforceStore => {
     const target = (ctx as unknown as { workforceStore?: WorkforceStore }).workforceStore
     if (!target || typeof target.txn !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceStore 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceStore 未就绪'), 503)
     }
     return target
   }
@@ -44,7 +45,7 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
   const identity = (): WorkforceIdentityResolver => {
     const target = (ctx as unknown as { workforceIdentity?: WorkforceIdentityResolver }).workforceIdentity
     if (!target || typeof target.resolveByCaller !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceIdentity 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceIdentity 未就绪'), 503)
     }
     return target
   }
@@ -52,7 +53,7 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
   const admission = (): WorkforceAdmission => {
     const target = (ctx as unknown as { workforceAdmission?: WorkforceAdmission }).workforceAdmission
     if (!target || typeof target.verifyPermit !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceAdmission 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceAdmission 未就绪'), 503)
     }
     return target
   }
@@ -60,7 +61,7 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
   const capabilities = (): WorkforceCapabilities => {
     const target = (ctx as unknown as { workforceCapabilities?: WorkforceCapabilities }).workforceCapabilities
     if (!target || typeof target.toolsFor !== 'function') {
-      throw new WorkforceError('WORKFORCE_NOT_READY', 'workforceCapabilities 未就绪', 503)
+      throw new WorkforceError('WORKFORCE_NOT_READY', t('workforceCapabilities 未就绪'), 503)
     }
     return target
   }
@@ -90,7 +91,7 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
       && resolution.appointment.effectiveUntil <= new Date().toISOString()
     throw new WorkforceError(
       expired ? 'APPOINTMENT_EXPIRED' : 'APPOINTMENT_NOT_EFFECTIVE',
-      expired ? '任用已过期' : '任用未生效（资源授权准备未完成）',
+      expired ? t('任用已过期') : t('任用未生效（资源授权准备未完成）'),
     )
   }
 
@@ -116,7 +117,7 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
     // 1. 受管身份（非员工不应进入本分支——gateManagedWork 已按 resolveManagedEmployee 分流）
     const resolution = await identity().resolveByCaller(caller)
     if (!resolution) {
-      return { allow: false, code: 'EMPLOYEE_NOT_ACTIVE', message: '非受管数字员工或绑定缺失' }
+      return { allow: false, code: 'EMPLOYEE_NOT_ACTIVE', message: t('非受管数字员工或绑定缺失') }
     }
     // 1.5 灰度开关（W 批次 W7 契约，D-② 组织级）：关闭组织显式拒绝（WORKFORCE_DISABLED），
     //     绝不静默回落 legacy——gateManagedWork 会把 denied 交回网关落账（V29 同口径：拒绝并可观测）
@@ -135,11 +136,11 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
       return {
         allow: false,
         code: 'WORKFORCE_DISABLED',
-        message: `数字员工域对组织 ${resolution.appointment.orgId} 处于灰度关闭（仅白名单组织开放）`,
+        message: t('数字员工域对组织 {orgId} 处于灰度关闭（仅白名单组织开放）', { orgId: resolution.appointment.orgId }),
       }
     }
     if (resolution.employee.status !== 'active') {
-      return { allow: false, code: 'EMPLOYEE_NOT_ACTIVE', message: '数字员工不在岗（停职或已离岗）' }
+      return { allow: false, code: 'EMPLOYEE_NOT_ACTIVE', message: t('数字员工不在岗（停职或已离岗）') }
     }
     // 2. 任用生效（版本即策略版本）
     try {
@@ -151,7 +152,7 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
     // 3. permit：受控入口凭据（V28：即使猜到工具名，无 permit 也拒绝）
     const ref = query.ref ?? {}
     if (!ref.permitId) {
-      return { allow: false, code: 'TOOL_NOT_GRANTED', message: '数字员工必须携带工作授权 permit 经受控入口调用' }
+      return { allow: false, code: 'TOOL_NOT_GRANTED', message: t('数字员工必须携带工作授权 permit 经受控入口调用') }
     }
     let permit
     try {
@@ -164,12 +165,12 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
     }
     // permit 绑定的 run 与引用 run 一致（引用仅作索引，事实以服务端回查为准，§10.4）
     if (ref.runId && ref.runId !== permit.runId) {
-      return { allow: false, code: 'RUN_NOT_OWNED', message: '工作引用的 run 与 permit 绑定不一致' }
+      return { allow: false, code: 'RUN_NOT_OWNED', message: t('工作引用的 run 与 permit 绑定不一致') }
     }
     // 4. 工具在能力清单（服务端清单唯一事实，§9.2）
     const tool = matchTool(capabilities().toolsFor(permit.manifestId), query.facts)
     if (!tool) {
-      return { allow: false, code: 'TOOL_NOT_GRANTED', message: '工具未列入本任用能力清单' }
+      return { allow: false, code: 'TOOL_NOT_GRANTED', message: t('工具未列入本任用能力清单') }
     }
     // 5. 风险交集：facts 为写/admin 而清单只授 read → 拒绝（附录 D.5：不信任自报风险）
     //    W 批次 V11 根治（契约冻结 2026-10-15）：facts.risk='unknown'（网关侧无生效风险登记）时——
@@ -180,17 +181,17 @@ export function createWorkforcePolicyPort(ctx: Context, grayConfig: WorkforceGra
         return {
           allow: false,
           code: 'RISK_UNREGISTERED',
-          message: '工具风险未登记生效，写能力须先经 MCP 风险登记审批（V11）',
+          message: t('工具风险未登记生效，写能力须先经 MCP 风险登记审批（V11）'),
         }
       }
     } else if ((query.facts.risk === 'write' || query.facts.risk === 'admin') && tool.risk === 'read') {
-      return { allow: false, code: 'ARGUMENT_SCOPE_DENIED', message: '该动作为写/管理风险，超出本句柄的只读授权' }
+      return { allow: false, code: 'ARGUMENT_SCOPE_DENIED', message: t('该动作为写/管理风险，超出本句柄的只读授权') }
     }
     // 6. 步骤冲突防御（纵深防御：主校验在 invocation-service 的唯一约束）
     if (query.argsHash && ref.stepKey) {
       const prior = store().invocations.findWhere({ runId: permit.runId, stepKey: ref.stepKey })[0]
       if (prior && prior.argsHash !== query.argsHash) {
-        return { allow: false, code: 'STEP_ARGUMENT_CONFLICT', message: '同一业务步骤键已绑定不同参数，冲突拒绝' }
+        return { allow: false, code: 'STEP_ARGUMENT_CONFLICT', message: t('同一业务步骤键已绑定不同参数，冲突拒绝') }
       }
     }
     // 7. 组装核验后可信执行上下文（§8.3：身份/组织/版本服务端解析）

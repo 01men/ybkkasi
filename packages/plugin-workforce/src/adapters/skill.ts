@@ -8,6 +8,7 @@
  * 缺失能力诚实报未支持，不以空实现冒充成功。
  */
 import { createHash } from 'node:crypto'
+import { t } from '../../../platform-i18n/src/index.ts'
 import type {
   AdapterInvokeInput,
   AdapterInvokeResult,
@@ -33,33 +34,33 @@ export function createSkillAdapter(ctx: {
     async probeGrant(spec: ResourceGrantSpec, _resolution: IdentityResolution): Promise<AdapterProbeResult> {
       const probe = hub()
       if (typeof probe.resolveSkillPin !== 'function') {
-        return { ok: false, message: 'skillHub 未提供版本锁定能力（resolveSkillPin 缺席）' }
+        return { ok: false, message: t('skillHub 未提供版本锁定能力（resolveSkillPin 缺席）') }
       }
       try {
         const version = typeof spec.constraints?.['version'] === 'string' ? spec.constraints['version'] as string : undefined
         const pin = probe.resolveSkillPin(spec.registryId, version)
-        if (!pin || !pin.version) return { ok: false, message: `技能 ${spec.registryId} 无法锁定发布版本` }
+        if (!pin || !pin.version) return { ok: false, message: t('技能 {skillId} 无法锁定发布版本', { skillId: spec.registryId }) }
         // ref＝版本 + 摘要证据（D.3：固定版本与摘要、加载证明）
         return { ok: true, ref: `skill:${spec.registryId}@${pin.version} sha256:${String(pin.contentHash).slice(0, 16)}` }
       } catch (error) {
-        return { ok: false, message: `技能版本锁定失败：${error instanceof Error ? error.message : String(error)}` }
+        return { ok: false, message: t('技能版本锁定失败：{message}', { message: error instanceof Error ? error.message : String(error) }) }
       }
     },
 
     async invoke(input: AdapterInvokeInput): Promise<AdapterInvokeResult> {
       const probe = hub()
       if (typeof probe.download !== 'function') {
-        return { ok: false, message: 'skillHub 未提供固定版本文本读取能力（download 缺席），未支持', gatewayRef: { outcome: 'denied' } }
+        return { ok: false, message: t('skillHub 未提供固定版本文本读取能力（download 缺席），未支持'), gatewayRef: { outcome: 'denied' } }
       }
       const constraints = input.tool.constraints ?? {}
       const version = typeof constraints['version'] === 'string' ? constraints['version'] : ''
       if (!version) {
-        return { ok: false, message: '能力清单未锁定技能版本，拒绝加载', gatewayRef: { outcome: 'denied' } }
+        return { ok: false, message: t('能力清单未锁定技能版本，拒绝加载'), gatewayRef: { outcome: 'denied' } }
       }
       try {
         const { content } = probe.download(input.tool.registryId, version, {
           id: input.work.agentId || input.work.principalId,
-          name: `数字员工:${input.work.employeeId}`,
+          name: t('数字员工:{id}', { id: input.work.employeeId }),
         })
         const contentHash = createHash('sha256').update(content).digest('hex')
         // 摘要核验（§4.4：加载证据——实际加载内容必须与版本锁定一致）
@@ -67,7 +68,7 @@ export function createSkillAdapter(ctx: {
         if (pinnedHash && pinnedHash !== contentHash) {
           return {
             ok: false,
-            message: `技能内容摘要与版本锁定不一致（pin=${pinnedHash.slice(0, 16)}… 实际=${contentHash.slice(0, 16)}…），拒绝加载`,
+            message: t('技能内容摘要与版本锁定不一致（pin={pinned} 实际={actual}），拒绝加载', { pinned: pinnedHash.slice(0, 16), actual: contentHash.slice(0, 16) }),
             gatewayRef: { outcome: 'denied', skillId: input.tool.registryId, version },
           }
         }
@@ -80,7 +81,7 @@ export function createSkillAdapter(ctx: {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        return { ok: false, message: `技能文本加载失败：${message}`, gatewayRef: { skillId: input.tool.registryId, version, outcome: 'denied' } }
+        return { ok: false, message: t('技能文本加载失败：{message}', { message }), gatewayRef: { skillId: input.tool.registryId, version, outcome: 'denied' } }
       }
     },
   }

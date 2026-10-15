@@ -1250,6 +1250,7 @@ try {
     for (const file of walkJs(join(process.cwd(), 'packages', 'plugin-console', 'public'))) {
       if (!file.endsWith('.js')) continue
       if (file.replaceAll('\\', '/').endsWith('/js/api.js')) continue
+      if (file.replaceAll('\\', '/').endsWith('/js/i18n.js')) continue // i18n 词典运输层（公开静态 /locales 端点、api.js 加载前运行、无令牌语义；api.js 同级豁免，注释在案）
       if (file.replaceAll('\\', '/').endsWith('/js/pages/oauth.js')) continue // 协议页豁免（注释在案）
       if (file.replaceAll('\\', '/').endsWith('/js/realtime.js')) continue // SSE/轮询运输层模块（api.js 同级豁免，注释在案）
       const text = readFileSync(file, 'utf8')
@@ -2692,6 +2693,59 @@ try {
   const agentOffline = await api('GET', `/api/agents/${selfAgent.id}`, { token: admin })
   check('下线后状态与凭证联动禁用', agentOffline.data.status === 'offline' && agentOffline.data.credential.status === 'disabled')
   void credBefore
+
+  // ================================================================ A2A 点名直调与零价快照计量（C3 契约 · 2026-10-15 P0 回归）
+  section('A2A 点名直调与零价快照计量（C3：usage 事件必落账，计量构造缺失不得被静默吞掉）')
+  {
+    const a2aStub = createServer((req, res) => {
+      if ((req.url ?? '').endsWith('/chat/completions')) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'A2A 自测应答：模型直答。' } }], usage: { prompt_tokens: 50, completion_tokens: 40 } }))
+        return
+      }
+      res.writeHead(404).end('{}')
+    })
+    await new Promise((resolve) => a2aStub.listen(0, '127.0.0.1', resolve))
+    // Agent attrs.model 为枚举校验（仅 deepseek-chat/reasoner/coder），故按 J1 段同款套路重指
+    // deepseek-chat 目录条目到本段 stub（后续需要该模型的段落各自重指，互不影响）。
+    const a2aModel = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'deepseek-chat', displayName: 'DeepSeek Chat（A2A 自测 stub）', provider: 'deepseek', endpoint: `http://127.0.0.1:${a2aStub.address().port}/v1`, apiKey: 'stub-key', costCentsPerKTokens: 0 } })
+    check('A2A：deepseek-chat 重指本段 stub', a2aModel.ok, JSON.stringify(a2aModel.error))
+    const runA2a = async () => {
+      const a2aCreate = await api('POST', '/api/agents', { token: ops, body: { name: 'A2A计量自测机器人', attrs: { description: 'A2A 计量防回归自测', model: 'deepseek-chat', riskLevel: 'low' } } })
+      check('A2A：测试 Agent 注册', a2aCreate.ok && Boolean(a2aCreate.data?.agent?.id), JSON.stringify(a2aCreate.error))
+      if (!a2aCreate.ok || !a2aCreate.data?.agent?.id) return
+      const a2aAgent = a2aCreate.data.agent
+      await api('PATCH', `/api/agents/${a2aAgent.id}`, { token: ops, body: { attrs: { systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://a2a-selftest.example.com/chat' } } })
+      const a2aTrial = await api('POST', `/api/agents/${a2aAgent.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
+      check('A2A：测试 Agent 进入试运行', a2aTrial.ok && a2aTrial.data.status === 'trial', JSON.stringify(a2aTrial.error))
+      const a2aOnlineReq = await api('POST', `/api/agents/${a2aAgent.id}/transition`, { token: ops, body: { action: 'online', note: 'A2A 自测上线' } })
+      check('A2A：上线 L4 审批单创建', a2aOnlineReq.ok && a2aOnlineReq.data.approval?.status === 'pending', JSON.stringify(a2aOnlineReq.error ?? {}).slice(0, 160))
+      if (!a2aOnlineReq.ok || !a2aOnlineReq.data?.approval?.id) return
+      const a2aApprove = await api('POST', `/api/approvals/${a2aOnlineReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: 'A2A 自测上线（异人审批）', confirmed: true, finalReview: true } })
+      check('A2A：异人审批通过并自动执行上线', a2aApprove.ok && a2aApprove.data.status === 'executed', JSON.stringify(a2aApprove.error ?? {}).slice(0, 160))
+      const a2aBaseline = await api('GET', `/api/usage/events?resource=${encodeURIComponent(`agent:${a2aAgent.id}`)}`, { token: admin })
+      check('A2A：调用前该 Agent 无计量事件（基线干净）', a2aBaseline.ok && a2aBaseline.data.total === 0, JSON.stringify(a2aBaseline.data?.total))
+      const a2aInvoke = await api('POST', `/api/agents/${a2aAgent.id}/a2a/invoke`, { token: admin, body: { message: 'A2A 点名自测' } })
+      check('A2A：点名直调成功（ok:true + reply + 模型回显）', a2aInvoke.ok && /A2A 自测应答/.test(a2aInvoke.data.reply ?? '') && a2aInvoke.data.model === 'deepseek-chat', JSON.stringify(a2aInvoke.error ?? a2aInvoke.data).slice(0, 200))
+      const a2aEvents = await api('GET', `/api/usage/events?resource=${encodeURIComponent(`agent:${a2aAgent.id}`)}`, { token: admin })
+      const a2aEvent = (a2aEvents.data.items ?? [])[0]
+      check('A2A：零价快照计量事件落账（resource=agent:<id> · 零费率 nonbillable · calls=1 · charge=0）',
+        a2aEvents.ok && Boolean(a2aEvent) && a2aEvent.resource === `agent:${a2aAgent.id}`
+        && a2aEvent.meters?.[0]?.key === 'calls' && Number(a2aEvent.meters?.[0]?.value) === 1
+        && a2aEvent.pricing?.charge_cents === 0 && a2aEvent.pricing?.rate?.nonbillable === true
+        && a2aEvent.pricing?.rate?.pattern === 'agent:*',
+        JSON.stringify(a2aEvent ?? a2aEvents.error ?? null).slice(0, 220))
+      const a2aOfflineReq = await api('POST', `/api/agents/${a2aAgent.id}/transition`, { token: ops, body: { action: 'offline', note: 'A2A 自测收尾' } })
+      await api('POST', `/api/approvals/${a2aOfflineReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: 'A2A 自测下线', confirmed: true } })
+      const a2aRejected = await api('POST', `/api/agents/${a2aAgent.id}/a2a/invoke`, { token: admin, body: { message: '下线后再调' } })
+      check('A2A：非 online 状态点名被拒（400 诚实拒绝，不下模型）', a2aRejected.status === 400 && /未上线/.test(a2aRejected.error?.message ?? ''), JSON.stringify(a2aRejected.error ?? a2aRejected.data).slice(0, 160))
+    }
+    try {
+      await runA2a()
+    } finally {
+      a2aStub.close()
+    }
+  }
 
   // ================================================================ AI 应用资料字段（头像 URL / 开发者 / 描述）
   section('AI 应用资料字段（头像 URL / 开发者下拉 / 描述）')
@@ -7377,6 +7431,58 @@ try {
   }
 
   // ================================================================ 收尾终检：凭证零进平台（红线一，T-24）
+  // ================================================================ UI 全球化 i18n（2026-10-16 批次）
+  section('UI 全球化 i18n（内核 t() / 词典齐套 / /locales 端点 / 请求级协商）')
+  {
+    const i18n = await import(new URL('../packages/platform-i18n/src/index.ts', import.meta.url))
+    check('i18n 内核导入（platform-i18n）', typeof i18n.t === 'function' && typeof i18n.runWithLocale === 'function')
+    check('t() zh-CN 原样 + 插值', i18n.runWithLocale('zh-CN', () => i18n.t('共 {n} 条', { n: 5 })) === '共 5 条')
+    check('t() en-US 词典命中 + 插值', i18n.runWithLocale('en-US', () => i18n.t('共 {n} 条', { n: 5 })) === '5 in total')
+    check('t() en-US 未命中优雅降级中文', i18n.runWithLocale('en-US', () => i18n.t('i18n 自测无词典键')) === 'i18n 自测无词典键')
+    check('locale 决议链（query > cookie > Accept-Language > env）',
+      i18n.resolveRequestLocale({ query: 'ja' }) === 'ja-JP'
+      && i18n.resolveRequestLocale({ cookie: 'en-US', acceptLanguage: 'ja-JP' }) === 'en-US'
+      && i18n.resolveRequestLocale({ acceptLanguage: 'fr-FR,ja;q=0.5' }) === 'ja-JP'
+      && i18n.resolveRequestLocale({ env: 'en-GB' }) === 'en-US')
+    // 词典齐套：全部 locale 目录 JSON 可解析 + en/ja 键集逐对一致
+    const localeRoot = new URL('../packages/platform-i18n/locales/', import.meta.url).pathname
+    const dictParityFails = []
+    let dictPairs = 0
+    for (const rootDir of [localeRoot,
+      join(process.cwd(), 'packages', 'plugin-console', 'public', 'locales'),
+      join(process.cwd(), 'packages', 'plugin-panel-core', 'public', 'locales')]) {
+      const enFiles = existsSync(join(rootDir, 'en-US')) ? readdirSync(join(rootDir, 'en-US')).filter((f) => f.endsWith('.json')) : []
+      for (const name of enFiles) {
+        const enPath = join(rootDir, 'en-US', name)
+        const jaPath = join(rootDir, 'ja-JP', name)
+        if (!existsSync(jaPath)) { dictParityFails.push(`缺 ja 侧文件：${jaPath}`); continue }
+        let en, ja
+        try { en = JSON.parse(readFileSync(enPath, 'utf8')); ja = JSON.parse(readFileSync(jaPath, 'utf8')) }
+        catch (error) { dictParityFails.push(`JSON 解析失败 ${name}: ${error.message}`); continue }
+        dictPairs += 1
+        const enKeys = Object.keys(en).sort()
+        const jaKeys = Object.keys(ja).sort()
+        if (JSON.stringify(enKeys) !== JSON.stringify(jaKeys)) {
+          const onlyEn = enKeys.filter((k) => !(k in ja)).slice(0, 3)
+          const onlyJa = jaKeys.filter((k) => !(k in en)).slice(0, 3)
+          dictParityFails.push(`${name} 键集不一致 onlyEn=${onlyEn} onlyJa=${onlyJa}`)
+        }
+      }
+    }
+    check(`词典齐套：${dictPairs} 对 en/ja 文件 JSON 可解析且键集一致`, dictPairs >= 8 && dictParityFails.length === 0, dictParityFails.slice(0, 4).join('；'))
+    // /locales 合并端点 + 请求级语言协商
+    const localesEn = await fetch(`${BASE}/locales/en-US`).then((r) => r.json())
+    check('/locales/en-US 合并端点（catalog 含通用键，规模 >100）',
+      localesEn.ok && localesEn.data.locale === 'en-US' && localesEn.data.count > 100 && typeof localesEn.data.catalog['确认'] === 'string')
+    // /api/* 未带令牌必得 401（鉴权中间件先于路由），其文案随 ?lang= 切换即证明全链协商；
+    // 默认（无 lang）输出与历史版本逐字节一致
+    const probe401En = await fetch(`${BASE}/api/i18n-selftest-probe?lang=en-US`).then((r) => r.json())
+    const probe401Zh = await fetch(`${BASE}/api/i18n-selftest-probe`).then((r) => r.json())
+    check('请求级协商：?lang=en-US 鉴权 401 文案切英文，默认 zh 逐字节不变',
+      probe401En.error?.code === 'UNAUTHORIZED' && probe401En.error?.message === 'Missing Bearer token. Please sign in first.'
+      && probe401Zh.error?.code === 'UNAUTHORIZED' && probe401Zh.error?.message === '缺少 Bearer 令牌，请先登录')
+  }
+
   section('凭证零进平台（红线一 · T-24 全目录扫描）')
   // SIGTERM 触发 main.ts 的 flushNow（把内存中的待写集合全部原子落盘）后退出，
   // 再扫描数据目录——保证连「尚未刷盘的最新写入」也在扫描覆盖之内。

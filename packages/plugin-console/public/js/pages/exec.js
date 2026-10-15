@@ -2,6 +2,7 @@
  *  总览（健康与队列）→ 目标（OKR 树 + 项目）→ 任务（Issue 流转与唤醒）→ 调度（唤醒队列 + 例行规则）。
  *  后端 /api/exec/* 未就绪或失败时按 tab 降级为错误卡（不白屏），操作失败统一 toast。 */
 import { api, session } from '../api.js'
+import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import {
   h, $, $$, esc, toast, openDrawer, confirmDialog, collectForm,
@@ -121,7 +122,7 @@ async function renderOverviewTab(body, ctx) {
   try {
     ov = await api.get('/api/exec/overview')
   } catch (error) {
-    return mountErrorCard(body, '执行总览加载失败', `${error.message}（执行中枢后端可能尚未部署到当前宿主）`, () => renderTab('overview', body, ctx))
+    return mountErrorCard(body, '执行总览加载失败', rqI18n.t('{msg}（执行中枢后端可能尚未部署到当前宿主）', { msg: error.message }), () => renderTab('overview', body, ctx))
   }
   const agents = ov.agentsHealth ?? []
 
@@ -130,12 +131,12 @@ async function renderOverviewTab(body, ctx) {
       ${statItem('zap', '待唤醒', ov.pendingWakes ?? 0, '已入队等待派发的唤醒', 'var(--warn)', 'var(--warn-bg)')}
       ${statItem('clock', '延迟队列', ov.deferredWakes ?? 0, '因阻塞/休眠延后的唤醒', 'var(--info)', 'var(--info-bg)')}
       ${statItem('activity', '活跃 Run', ov.activeRuns ?? 0, '执行中的运行实例', 'var(--ok)', 'var(--ok-bg)')}
-      ${statItem('lock', '锁定中任务', ov.lockedIssues ?? 0, ov.zombieLocks ? `含 ${ov.zombieLocks} 个疑似僵尸锁` : '被 run 持锁执行的任务', 'var(--purple)', 'var(--purple-bg)')}
+      ${statItem('lock', '锁定中任务', ov.lockedIssues ?? 0, ov.zombieLocks ? rqI18n.t('含 {n} 个疑似僵尸锁', { n: ov.zombieLocks }) : '被 run 持锁执行的任务', 'var(--purple)', 'var(--purple-bg)')}
     </div>
     <div class="card">
       <div class="card-head">
         <span class="card-title">${icon('bot', 15)} Agent 健康</span>
-        <span class="card-sub">${agents.length} 个 Agent 接入组织执行</span>
+        <span class="card-sub">${esc(rqI18n.t('{n} 个 Agent 接入组织执行', { n: agents.length }))}</span>
         ${session.can('exec.admin') ? `<div class="card-head-actions"><button class="btn btn-primary btn-sm" id="exec-tick">${icon('play', 13)} 立即调度一轮</button></div>` : ''}
       </div>
       <div class="card-body" style="padding-top:6px">
@@ -166,7 +167,7 @@ async function renderOverviewTab(body, ctx) {
     tickBtn.classList.add('btn-loading')
     try {
       const r = await api.post('/api/exec/tick')
-      toast(`调度完成：处理 ${r.processed} · 唤醒 ${r.woken} · 延迟 ${r.deferred} · 跳过 ${r.skipped} · 回收锁 ${r.reclaimed}`)
+      toast(rqI18n.t('调度完成：处理 {a} · 唤醒 {b} · 延迟 {c} · 跳过 {d} · 回收锁 {e}', { a: r.processed, b: r.woken, c: r.deferred, d: r.skipped, e: r.reclaimed }))
       await renderTab('overview', body, ctx)
     } catch (error) {
       toast(error.message, 'error')
@@ -195,7 +196,7 @@ async function renderGoalsTab(body, ctx) {
       api.get('/api/exec/projects'),
     ])
   } catch (error) {
-    return mountErrorCard(body, '目标数据加载失败', `${error.message}（执行中枢后端可能尚未部署到当前宿主）`, () => renderTab('goals', body, ctx))
+    return mountErrorCard(body, '目标数据加载失败', rqI18n.t('{msg}（执行中枢后端可能尚未部署到当前宿主）', { msg: error.message }), () => renderTab('goals', body, ctx))
   }
   const goals = goalsData.goals ?? []
   const projects = projectsData.projects ?? []
@@ -224,8 +225,8 @@ async function renderGoalsTab(body, ctx) {
               ${badge(GOAL_STATUS, goal.status)}
             </div>
             <div class="fs-12 text-3 mt-4">
-              ${goal.metric ? `指标：${esc(goal.metric)} ${esc(String(goal.metricBaseline ?? '?'))} → ${esc(String(goal.metricTarget ?? '?'))}${esc(goal.metricUnit ?? '')}` : '未设指标'}
-              ${goal.periodStart || goal.periodEnd ? ` · 期限 ${esc(goal.periodStart ?? '?')} ~ ${esc(goal.periodEnd ?? '?')}` : ''}
+              ${goal.metric ? esc(rqI18n.t('指标：{metric} {base} → {target}{unit}', { metric: goal.metric, base: String(goal.metricBaseline ?? '?'), target: String(goal.metricTarget ?? '?'), unit: goal.metricUnit ?? '' })) : '未设指标'}
+              ${goal.periodStart || goal.periodEnd ? esc(rqI18n.t(' · 期限 {start} ~ {end}', { start: goal.periodStart ?? '?', end: goal.periodEnd ?? '?' })) : ''}
             </div>
           </div>
           ${canWrite ? `
@@ -242,7 +243,7 @@ async function renderGoalsTab(body, ctx) {
     <div class="card mb-20">
       <div class="card-head">
         <span class="card-title">${icon('target', 15)} 目标树</span>
-        <span class="card-sub">${goals.length} 个目标</span>
+        <span class="card-sub">${esc(rqI18n.t('{n} 个目标', { n: goals.length }))}</span>
         ${canWrite ? `<div class="card-head-actions">
           <button class="btn btn-default btn-sm" id="goal-create">${icon('plus', 13)} 新建目标</button>
           <button class="btn btn-primary btn-sm" id="project-create">${icon('plus', 13)} 新建项目</button>
@@ -255,7 +256,7 @@ async function renderGoalsTab(body, ctx) {
     <div class="card">
       <div class="card-head">
         <span class="card-title">${icon('layers', 15)} 项目</span>
-        <span class="card-sub">${projects.length} 个项目承接目标落地</span>
+        <span class="card-sub">${esc(rqI18n.t('{n} 个项目承接目标落地', { n: projects.length }))}</span>
       </div>
       <div class="card-body" style="padding-top:8px">
         ${projects.length ? `
@@ -277,7 +278,7 @@ async function renderGoalsTab(body, ctx) {
               <div>
                 <div class="flex fs-12" style="justify-content:space-between;margin-bottom:3px">
                   <span class="text-3">任务进度</span>
-                  <span style="font-weight:600">${done}/${total}（${pct}%）</span>
+                  <span style="font-weight:600">${done}/${total}${esc(rqI18n.t('（{p}%）', { p: pct }))}</span>
                 </div>
                 <div style="height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden">
                   <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#0052D9,#00A3FF)"></div>
@@ -299,13 +300,13 @@ async function renderGoalsTab(body, ctx) {
       btn.onclick = async () => {
         const goal = goalById.get(btn.dataset.goalDel)
         const confirmed = await confirmDialog({
-          title: `删除目标 · ${goal.title}`, danger: true, confirmText: '确认删除',
-          message: `将删除目标「<b>${esc(goal.title)}</b>」。其下仍有子目标或关联项目时服务端会拒绝（409）。`,
+          title: rqI18n.t('删除目标 · {name}', { name: goal.title }), danger: true, confirmText: '确认删除',
+          message: rqI18n.t('将删除目标「<b>{name}</b>」。其下仍有子目标或关联项目时服务端会拒绝（409）。', { name: esc(goal.title) }),
         })
         if (!confirmed) return
         try {
           await api.delete(`/api/exec/goals/${goal.id}`)
-          toast('目标已删除'); ctx.rerender()
+          toast(rqI18n.t('目标已删除')); ctx.rerender()
         } catch (error) { toast(error.message, 'error') }
       }
     })
@@ -345,7 +346,7 @@ function openGoalForm(goals, goal, ctx) {
   drawer.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const data = collectForm(drawer.body)
-    if (!data.title) return toast('请填写目标标题', 'error')
+    if (!data.title) return toast(rqI18n.t('请填写目标标题'), 'error')
     const payload = {
       title: data.title,
       description: data.description || undefined,
@@ -362,7 +363,7 @@ function openGoalForm(goals, goal, ctx) {
     try {
       if (goal) await api.patch(`/api/exec/goals/${goal.id}`, payload)
       else await api.post('/api/exec/goals', payload)
-      toast(goal ? '目标已保存' : '目标已创建')
+      toast(goal ? rqI18n.t('目标已保存') : rqI18n.t('目标已创建'))
       drawer.close(); ctx.rerender()
     } catch (error) {
       toast(error.message, 'error')
@@ -396,7 +397,7 @@ function openProjectForm(goals, project, ctx) {
   drawer.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const data = collectForm(drawer.body)
-    if (!data.name) return toast('请填写项目名称', 'error')
+    if (!data.name) return toast(rqI18n.t('请填写项目名称'), 'error')
     const payload = {
       name: data.name,
       description: data.description || undefined,
@@ -407,7 +408,7 @@ function openProjectForm(goals, project, ctx) {
     try {
       if (project) await api.patch(`/api/exec/projects/${project.id}`, payload)
       else await api.post('/api/exec/projects', payload)
-      toast(project ? '项目已保存' : '项目已创建')
+      toast(project ? rqI18n.t('项目已保存') : rqI18n.t('项目已创建'))
       drawer.close(); ctx.rerender()
     } catch (error) {
       toast(error.message, 'error')
@@ -423,7 +424,7 @@ async function renderIssuesTab(body, ctx) {
   try {
     all = await api.get('/api/exec/issues')
   } catch (error) {
-    return mountErrorCard(body, '任务列表加载失败', `${error.message}（执行中枢后端可能尚未部署到当前宿主）`, () => renderTab('issues', body, ctx))
+    return mountErrorCard(body, '任务列表加载失败', rqI18n.t('{msg}（执行中枢后端可能尚未部署到当前宿主）', { msg: error.message }), () => renderTab('issues', body, ctx))
   }
   const issues = all.issues ?? []
   const canWrite = session.can('exec.write')
@@ -460,18 +461,18 @@ async function renderIssuesTab(body, ctx) {
     try {
       data = await api.get('/api/exec/issues' + api.qs({ status, projectId, agentId }))
     } catch (error) {
-      body.querySelector('#issue-table').innerHTML = `<div class="tbl-empty">${icon('alert', 28)}<span>加载失败：${esc(error.message)}</span></div>`
+      body.querySelector('#issue-table').innerHTML = `<div class="tbl-empty">${icon('alert', 28)}<span>${esc(rqI18n.t('加载失败：{msg}', { msg: error.message }))}</span></div>`
       return
     }
     const list = data.issues ?? []
-    body.querySelector('#issue-count').textContent = `共 ${list.length} 条`
+    body.querySelector('#issue-count').textContent = rqI18n.t('共 {n} 条', { n: list.length })
     body.querySelector('#issue-table').innerHTML = list.length ? `
       <table class="tbl">
         <thead><tr><th>标题</th><th>状态</th><th>执行锁</th><th>负责人 Agent</th><th>优先级</th><th>所属项目</th><th>截止</th>${canWrite ? '<th style="width:250px">操作</th>' : ''}</tr></thead>
         <tbody>
           ${list.map((issue) => `
             <tr data-id="${esc(issue.id)}">
-              <td><div class="col-strong">${esc(issue.title)}</div>${(issue.blockerIds ?? []).length ? `<div class="col-sub fs-11">阻塞于 ${issue.blockerIds.length} 个前置任务</div>` : ''}</td>
+              <td><div class="col-strong">${esc(issue.title)}</div>${(issue.blockerIds ?? []).length ? `<div class="col-sub fs-11">${esc(rqI18n.t('阻塞于 {n} 个前置任务', { n: issue.blockerIds.length }))}</div>` : ''}</td>
               <td>${badge(ISSUE_STATUS, issue.status)}</td>
               <td>${lockedBadge(issue)}</td>
               <td class="fs-12">${esc(issue.assigneeAgentName ?? issue.assigneeAgentId ?? '未指派')}</td>
@@ -495,7 +496,7 @@ async function renderIssuesTab(body, ctx) {
       btn.onclick = async () => {
         try {
           await api.post(`/api/exec/issues/${btn.dataset.transition}/transition`, { to: btn.dataset.to })
-          toast(`已流转到「${ISSUE_STATUS[btn.dataset.to]?.[1] ?? btn.dataset.to}」`)
+          toast(rqI18n.t('已流转到「{status}」', { status: rqI18n.t(ISSUE_STATUS[btn.dataset.to]?.[1] ?? btn.dataset.to) }))
           await reload()
         } catch (error) { toast(error.message, 'error') }
       }
@@ -504,7 +505,7 @@ async function renderIssuesTab(body, ctx) {
       btn.onclick = async () => {
         try {
           await api.post(`/api/exec/issues/${btn.dataset.wake}/wake`, { reason: 'manual' })
-          toast('已触发唤醒（进入唤醒队列）')
+          toast(rqI18n.t('已触发唤醒（进入唤醒队列）'))
           await reload()
         } catch (error) { toast(error.message, 'error') }
       }
@@ -523,7 +524,7 @@ async function renderIssuesTab(body, ctx) {
 function lockedBadge(issue) {
   if (!issue.executionRunId) return '<span class="text-4 fs-12">—</span>'
   const runHead = String(issue.executionRunId).slice(0, 6)
-  return `<span class="badge badge-purple no-dot mono" title="运行 ${esc(issue.executionRunId)}${issue.executionLockedAt ? ` · 加锁于 ${esc(fmtTime(issue.executionLockedAt))}` : ''}">🔒 ${esc(runHead)}</span>`
+  return `<span class="badge badge-purple no-dot mono" title="${esc(rqI18n.t('运行 {run}{locked}', { run: issue.executionRunId, locked: issue.executionLockedAt ? rqI18n.t(' · 加锁于 {time}', { time: fmtTime(issue.executionLockedAt) }) : '' }))}">🔒 ${esc(runHead)}</span>`
 }
 
 function distinct(ids, labels) {
@@ -577,7 +578,7 @@ async function openIssueCreate(ctx) {
       </div>
       ${field('前置任务', `
         <div class="flex" style="gap:8px">
-          ${selectField('blockerPick', [{ value: '', label: '选择前置任务（可选）' }, ...blockers.map((i) => ({ value: i.id, label: `${i.title}（${ISSUE_STATUS[i.status]?.[1] ?? i.status}）` }))], {})}
+          ${selectField('blockerPick', [{ value: '', label: '选择前置任务（可选）' }, ...blockers.map((i) => ({ value: i.id, label: rqI18n.t('{title}（{status}）', { title: i.title, status: rqI18n.t(ISSUE_STATUS[i.status]?.[1] ?? i.status) }) }))], {})}
           <button type="button" class="btn btn-default btn-sm" id="blocker-add" style="height:34px">${icon('plus', 12)}添加</button>
         </div>
         <div class="chips mt-8" id="blocker-chips"></div>`, { full: true, hint: '前置任务完成（依赖解除）前，本任务不会唤醒执行' })}`,
@@ -596,7 +597,7 @@ async function openIssueCreate(ctx) {
   }
   drawer.body.querySelector('#blocker-add').onclick = () => {
     const pick = drawer.body.querySelector('[name="blockerPick"]').value
-    if (!pick) return toast('请先在下拉中选择前置任务', 'error')
+    if (!pick) return toast(rqI18n.t('请先在下拉中选择前置任务'), 'error')
     picked.add(pick)
     renderChips()
   }
@@ -605,7 +606,7 @@ async function openIssueCreate(ctx) {
   drawer.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const data = collectForm(drawer.body)
-    if (!data.title) return toast('请填写任务标题', 'error')
+    if (!data.title) return toast(rqI18n.t('请填写任务标题'), 'error')
     btn.classList.add('btn-loading')
     try {
       await api.post('/api/exec/issues', {
@@ -617,7 +618,7 @@ async function openIssueCreate(ctx) {
         dueAt: data.dueAt || undefined,
         blockerIds: [...picked],
       })
-      toast('任务已创建（指派 Agent 时已自动入队唤醒）')
+      toast(rqI18n.t('任务已创建（指派 Agent 时已自动入队唤醒）'))
       drawer.close()
       ctx.rerender()
     } catch (error) {
@@ -642,14 +643,14 @@ async function openIssueDetail(issueId, ctx) {
   } catch {
     // 血缘接口失败：仅展示本地可推导信息（不阻断详情）
   }
-  if (!issue && !lineage) return toast('任务详情加载失败', 'error')
+  if (!issue && !lineage) return toast(rqI18n.t('任务详情加载失败'), 'error')
 
   const ancestry = lineage?.ancestry ?? issue?.goalAncestry ?? []
   const blockers = lineage?.blockers ?? []
   const contextPack = lineage?.contextPack ?? lineage?.context ?? null
 
   const drawer = openDrawer({
-    title: issue?.title ?? `任务 ${issueId}`,
+    title: issue?.title ?? rqI18n.t('任务 {id}', { id: issueId }),
     sub: `${badge(ISSUE_STATUS, issue?.status)} ${issue?.projectName ? ` · ${issue.projectName}` : ''}`,
     body: `
       <div class="desc-grid mb-14">
@@ -685,7 +686,7 @@ async function openIssueDetail(issueId, ctx) {
     btn.classList.add('btn-loading')
     try {
       await api.post(`/api/exec/issues/${issueId}/wake`, { reason: 'manual' })
-      toast('已触发唤醒'); drawer.close(); ctx.rerender()
+      toast(rqI18n.t('已触发唤醒')); drawer.close(); ctx.rerender()
     } catch (error) { toast(error.message, 'error') } finally { btn.classList.remove('btn-loading') }
   })
 }
@@ -699,7 +700,7 @@ async function renderRoutineTab(body, ctx) {
       api.get('/api/exec/routines'),
     ])
   } catch (error) {
-    return mountErrorCard(body, '调度数据加载失败', `${error.message}（执行中枢后端可能尚未部署到当前宿主）`, () => renderTab('routine', body, ctx))
+    return mountErrorCard(body, '调度数据加载失败', rqI18n.t('{msg}（执行中枢后端可能尚未部署到当前宿主）', { msg: error.message }), () => renderTab('routine', body, ctx))
   }
   const wakes = wakesData.wakes ?? []
   const routines = routinesData.routines ?? []
@@ -709,7 +710,7 @@ async function renderRoutineTab(body, ctx) {
     <div class="card mb-20">
       <div class="card-head">
         <span class="card-title">${icon('zap', 15)} 唤醒队列</span>
-        <span class="card-sub">${wakes.length} 条唤醒记录 · 失败项会带 lastError</span>
+        <span class="card-sub">${esc(rqI18n.t('{n} 条唤醒记录 · 失败项会带 lastError', { n: wakes.length }))}</span>
       </div>
       <div class="card-body" style="padding-top:6px">
         ${wakes.length ? `
@@ -734,7 +735,7 @@ async function renderRoutineTab(body, ctx) {
     <div class="card">
       <div class="card-head">
         <span class="card-title">${icon('clock', 15)} 例行规则</span>
-        <span class="card-sub">${routines.length} 条 · 定时唤醒 Agent 执行例行工作</span>
+        <span class="card-sub">${esc(rqI18n.t('{n} 条 · 定时唤醒 Agent 执行例行工作', { n: routines.length }))}</span>
         ${canWrite ? `<div class="card-head-actions"><button class="btn btn-primary btn-sm" id="routine-create">${icon('plus', 13)} 新建例行</button></div>` : ''}
       </div>
       <div class="card-body" style="padding-top:6px">
@@ -771,7 +772,7 @@ async function renderRoutineTab(body, ctx) {
       btn.onclick = async () => {
         try {
           await api.patch(`/api/exec/routines/${btn.dataset.toggle}`, { enabled: btn.dataset.next === 'true' })
-          toast(btn.dataset.next === 'true' ? '已启用' : '已停用')
+          toast(btn.dataset.next === 'true' ? rqI18n.t('已启用') : rqI18n.t('已停用'))
           await renderTab('routine', body, ctx)
         } catch (error) { toast(error.message, 'error') }
       }
@@ -785,7 +786,7 @@ async function renderRoutineTab(body, ctx) {
         if (!confirmed) return
         try {
           await api.delete(`/api/exec/routines/${btn.dataset.rdel}`)
-          toast('例行规则已删除')
+          toast(rqI18n.t('例行规则已删除'))
           await renderTab('routine', body, ctx)
         } catch (error) { toast(error.message, 'error') }
       }
@@ -794,7 +795,7 @@ async function renderRoutineTab(body, ctx) {
 }
 
 function routineRuleText(r) {
-  if (r.kind === 'interval') return `每 ${esc(String(r.intervalMinutes ?? '?'))} 分钟`
+  if (r.kind === 'interval') return rqI18n.t('每 {n} 分钟', { n: r.intervalMinutes ?? '?' })
   if (r.kind === 'cron') return `<span class="mono">${esc(r.cron ?? '?')}</span>`
   if (r.kind === 'webhook') return `<span class="mono">${esc(r.webhookPath ?? '?')}</span>`
   return '—'
@@ -841,8 +842,8 @@ async function openRoutineCreate(ctx) {
   drawer.el.querySelector('[data-ok]').onclick = async (e) => {
     const btn = e.currentTarget
     const data = collectForm(drawer.body)
-    if (!data.agentId) return toast('请选择 Agent', 'error')
-    if (!data.name) return toast('请填写名称', 'error')
+    if (!data.agentId) return toast(rqI18n.t('请选择 Agent'), 'error')
+    if (!data.name) return toast(rqI18n.t('请填写名称'), 'error')
     const payload = {
       agentId: data.agentId,
       name: data.name,
@@ -850,18 +851,18 @@ async function openRoutineCreate(ctx) {
       enabled: Boolean(data.enabled),
     }
     if (data.kind === 'interval') {
-      if (!data.intervalMinutes) return toast('请填写间隔分钟数', 'error')
+      if (!data.intervalMinutes) return toast(rqI18n.t('请填写间隔分钟数'), 'error')
       payload.intervalMinutes = Number(data.intervalMinutes)
     }
     if (data.kind === 'cron') {
-      if (!data.cron) return toast('请填写 Cron 表达式', 'error')
+      if (!data.cron) return toast(rqI18n.t('请填写 Cron 表达式'), 'error')
       payload.cron = data.cron
     }
     if (data.kind === 'webhook' && data.webhookPath) payload.webhookPath = data.webhookPath
     btn.classList.add('btn-loading')
     try {
       await api.post('/api/exec/routines', payload)
-      toast('例行规则已创建')
+      toast(rqI18n.t('例行规则已创建'))
       drawer.close(); ctx.rerender()
     } catch (error) {
       toast(error.message, 'error')
