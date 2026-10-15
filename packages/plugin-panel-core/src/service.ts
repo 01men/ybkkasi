@@ -19,8 +19,10 @@
  * widget 求值 resolveWidgetSource：connector/mcp/manual/mock 四源适配，逐 widget 独立降级
  * （照抄 portal.board() 范式）；来源徽标（连接器/手工/模拟）是治理硬性 DoD。
  */
+import { createHash } from 'node:crypto'
 import { Service } from '@deepseek-ai/cordis'
 import type { Collection, RecordBase } from '../../platform-core/src/storage.ts'
+import type { WorkforcePolicyRegistry } from '../../platform-core/src/workforce-port.ts'
 import { PlatformEvents } from '../../platform-core/src/bus.ts'
 import type { SceneActivity, ScenegraphPack } from '../../platform-core/src/scenegraph.ts'
 import { ACTIVITY_LABELS } from '../../platform-core/src/scenegraph.ts'
@@ -180,6 +182,26 @@ export const INDUSTRY_REGISTRY: IndustryRegistryEntry[] = [
 export const TASK_LANES = ['todo', 'doing', 'review', 'done'] as const
 export type TaskLane = (typeof TASK_LANES)[number]
 export const LANE_LABELS: Record<TaskLane, string> = { todo: '待办', doing: '进行中', review: '待审', done: '完成' }
+
+/**
+ * V16/D08 问答分型标注（additive）：面板/A2A 的模型单轮调用是「问答」，不构成任务执行。
+ * 目标 Agent 命中受管数字员工（workforce 端口服务端反查）时随应答返回本字段；
+ * 端口未就绪/未命中时不出现（legacy 语义，消费方向后兼容）。
+ */
+export interface PanelWorkforceNotice {
+  managed: true
+  employeeId: string
+  /** 固定口径文案：问答结果不构成任务执行或交付验收（问答与执行彻底分型）。 */
+  notice: string
+}
+
+/** V16/D08 技能证据化加载（D09 关联，additive）：直调成功即随应答返回本次实际加载的技能版本指纹。 */
+export interface PanelSkillLoad {
+  skillId: string
+  version: string
+  /** 当前版本指令内容摘要（sha256 hex）：安装版本、加载摘要与实际使用可对账（D09）。 */
+  contentHash?: string
+}
 
 // ---------------------------------------------------------------------------
 // 服务
@@ -481,6 +503,8 @@ export class PanelService extends Service {
       this.ctx.platformBus.emit(PlatformEvents.PanelMessageCreated, {
         messageId: record.id, dept: dept.id, channelId: trigger.channelId,
         senderName: agentCard.name, text, ddSync: 'none', card: record.card, title: record.card?.title ?? '',
+        // V16/D08 additive 分型标注（命中受管员工才出现；面板 SSE 扇出原样透传，前端按需消费）
+        ...(workforce ? { workforce } : {}),
       })
       return record
     }
@@ -495,6 +519,12 @@ export class PanelService extends Service {
     // 解析 Agent 资产（agentRef = agent:<idOrSlug>）
     const ref = agentCard.agentRef?.replace(/^agent:/, '') ?? ''
     const asset = ref ? this.ctx.resourceCore.list('agent').find((item) => item.id === ref || item.slug === ref || item.name === ref) : undefined
+    // V16/D08 问答分型探测：目标 Agent 命中受管员工 → 事件与审计 additive 标注（问答 ≠ 任务执行）；
+    // 不新建 run、不改任务状态（问答与执行彻底分型，执行面归 workforce/exec-hub）。
+    // 声明必须在 reply/fallbackToHuman 之前：reply 内的 PanelMessageCreated 事件引用本值，
+    // 而降级路径（未绑定资产/未配置模型）会在本声明之前进入 reply——声明后置曾触发 TDZ
+    // ReferenceError 令转人工任务落库被跳过（selftest「降级转人工待办落看板」实证）。
+    const workforce = asset ? await this.managedWorkforceOf(asset.id) : undefined
     if (!asset) return void fallbackToHuman('未绑定 Agent 资产（请在控制台「Agent 本体」登记并在此配置 agentRef）')
     // 模型取向：对话框显式切换的模型优先，未指定则跟随 Agent 资产的 model 属性
     const model = modelOverride ?? String((asset.attrs as Record<string, unknown> | undefined)?.model ?? '')
@@ -520,7 +550,8 @@ export class PanelService extends Service {
       this.auditSafe({
         type: 'invoke', actorType: 'machine', actorId: `agent:${agentCard.name}`, actorName: agentCard.name,
         action: 'panel.agent.invoke', resourceType: 'agent', resourceId: asset.id, resourceName: agentCard.name,
-        result: 'ok', detail: `model=${result.model} tokens=${result.inputTokens}/${result.outputTokens}`,
+        // V16：审计口径=问答/协作（panel.agent.invoke 非执行链）；受管员工命中时随 detail 留分型标注
+        result: 'ok', detail: `model=${result.model} tokens=${result.inputTokens}/${result.outputTokens}${workforce ? `；workforce=受管员工(${workforce.employeeId})，${workforce.notice}` : ''}`,
         ...(trigger.sceneCode ? { sceneCode: trigger.sceneCode } : {}),
       })
     } catch (error) {
@@ -560,6 +591,25 @@ export class PanelService extends Service {
   }
 
   /**
+   * V16/D08 受管数字员工结构化探测：按目标 agentId 经 workforce 窄端口服务端反查
+   * （ctx.workforcePolicy.port()?.describeManagedAgent）。端口未就绪 → undefined（保持 legacy
+   * 现状）；未命中 → undefined；端口执行异常 → undefined（问答面 fail-open，治理端口故障
+   * 不阻塞面板应答）。判定只依据服务端反查，与请求是否携带任何 work 上下文无关（冻结契约）。
+   */
+  private async managedWorkforceOf(agentId: string): Promise<PanelWorkforceNotice | undefined> {
+    try {
+      const registry = (this.ctx as unknown as { workforcePolicy?: WorkforcePolicyRegistry }).workforcePolicy
+      const port = registry?.port?.() ?? null
+      if (!port) return undefined
+      const managed = await port.describeManagedAgent(agentId)
+      if (!managed) return undefined
+      return { managed: true, employeeId: managed.employeeId, notice: '问答结果，不构成任务执行或交付验收' }
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
    * 面板 Agent 点名问答（J1 契约 v1：panel_agent_invoke 工具与 dsh 对话协作的服务原语）。
    * 与 invokeAgent 共享资产解析/模型取向/场景摘要组装，但同步返回应答文本、不落频道消息
    * （调用方决定是否经 sendMessage 留痕）。失败诚实返回 ok:false + reason，不造假回复、不静默。
@@ -569,7 +619,7 @@ export class PanelService extends Service {
     agentName: string,
     question: string,
     options: { userId?: string; modelOverride?: string; contextNote?: string; sceneCode?: string } = {},
-  ): Promise<{ ok: true; reply: string; model: string } | { ok: false; reason: string }> {
+  ): Promise<{ ok: true; reply: string; model: string; workforce?: PanelWorkforceNotice } | { ok: false; reason: string }> {
     const dept = this.dept(deptId)
     const agentCard = dept.agents.find((card) => card.name === agentName)
     if (!agentCard) {
@@ -581,6 +631,9 @@ export class PanelService extends Service {
     if (!asset) return { ok: false, reason: `Agent「${agentName}」未绑定 Agent 资产（agentRef），无法自主应答` }
     const model = options.modelOverride ?? String((asset.attrs as Record<string, unknown> | undefined)?.model ?? '')
     if (!model) return { ok: false, reason: `Agent「${agentName}」未配置模型（model 属性为空），且本次未指定模型` }
+    // V16/D08 问答分型探测：命中受管员工 → 应答 additive 携带 workforce 标注（问答 ≠ 任务执行）；
+    // 不新建 run、不改任务状态（问答与执行彻底分型）。
+    const workforce = await this.managedWorkforceOf(asset.id)
     const orgId = this.callerOrgId(options.userId)
     const sceneSummary = this.sceneSummaryForDept(dept)
     const systemPrompt = [
@@ -599,10 +652,15 @@ export class PanelService extends Service {
       this.auditSafe({
         type: 'invoke', actorType: 'machine', actorId: `agent:${agentName}`, actorName: agentName,
         action: 'panel.agent.invoke', resourceType: 'agent', resourceId: asset.id, resourceName: agentName,
-        result: 'ok', detail: `model=${result.model}（askAgent 直答）`,
+        // V16：审计口径=问答/协作；受管员工命中时随 detail 留分型标注
+        result: 'ok', detail: `model=${result.model}（askAgent 直答）${workforce ? `；workforce=受管员工(${workforce.employeeId})，${workforce.notice}` : ''}`,
         ...(options.sceneCode ? { sceneCode: options.sceneCode } : {}),
       })
-      return { ok: true, reply: result.content, model: result.model }
+      return {
+        ok: true, reply: result.content, model: result.model,
+        // V16/D08 additive 分型字段：命中受管数字员工才出现（legacy 路径无此键）
+        ...(workforce ? { workforce } : {}),
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.auditSafe({
@@ -663,7 +721,7 @@ export class PanelService extends Service {
     skillName: string,
     message: string,
     options: { userId?: string; modelOverride?: string; contextNote?: string; sceneCode?: string } = {},
-  ): Promise<{ ok: true; reply: string; model: string; skill: { name: string; version: string } } | { ok: false; reason: string }> {
+  ): Promise<{ ok: true; reply: string; model: string; skill: { name: string; version: string }; skillLoad?: PanelSkillLoad } | { ok: false; reason: string }> {
     const name = skillName.trim()
     if (!name) return { ok: false, reason: '技能名为空（用 /技能名 或 panel_skill_invoke 点名）' }
     const orgId = this.callerOrgId(options.userId)
@@ -680,6 +738,13 @@ export class PanelService extends Service {
     const version = record?.versions.find((item) => item.version === skill.version && item.status === 'published')
     const content = version?.content?.trim() ?? ''
     if (!content) return { ok: false, reason: `技能「${skill.name}」当前版本（${skill.version}）无指令内容，无法直调` }
+    // D09/V16（additive）证据化加载：本次实际加载的技能 ID/版本/内容摘要随应答返回，
+    // 供「安装版本 ↔ 加载摘要 ↔ 实际使用」三方对账（摘要现场计算，不落库不改 skillhub schema）。
+    const skillLoad: PanelSkillLoad = {
+      skillId: skill.id,
+      version: skill.version,
+      contentHash: createHash('sha256').update(content).digest('hex'),
+    }
     // 模型取向：显式指定优先；未指定时不跟随 Agent 资产（技能无资产），自动取目录首个在线模型
     // （班组长没选过模型也要能一把直调——目录为空才诚实拒绝）
     let model = options.modelOverride?.trim() ?? ''
@@ -706,10 +771,14 @@ export class PanelService extends Service {
         type: 'invoke', actorType: options.userId ? 'human' : 'machine', actorId: options.userId ?? 'panel:tool',
         actorName: options.userId ?? 'panel:tool',
         action: 'panel.skill.invoke', resourceType: 'skill', resourceId: skill.id, resourceName: skill.name,
-        result: 'ok', detail: `model=${result.model} version=${skill.version}`,
+        result: 'ok', detail: `model=${result.model} version=${skill.version} contentHash=${skillLoad.contentHash}`,
         ...(options.sceneCode ? { sceneCode: options.sceneCode } : {}),
       })
-      return { ok: true, reply: result.content, model: result.model, skill: { name: skill.name, version: skill.version } }
+      return {
+        ok: true, reply: result.content, model: result.model, skill: { name: skill.name, version: skill.version },
+        // D09/V16 additive：证据化加载指纹（skillId/version/contentHash）
+        skillLoad,
+      }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       this.auditSafe({

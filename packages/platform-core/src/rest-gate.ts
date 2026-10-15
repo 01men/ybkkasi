@@ -12,6 +12,7 @@
  * changeLog（构造时缺 audit 则 changeLog 快速失败，防静默丢审计）。
  */
 import type { HttpExchange, HttpHandler, RouteAuthDecl } from './http.ts'
+import type { WorkCallerRef } from './workforce-port.ts'
 
 /** 调用方身份（console 鉴权中间件写入 exchange.principal 的完整结构） */
 export interface CallerInfo {
@@ -103,4 +104,23 @@ export function createRestGate(ctx: RestGateHost): RestGate {
   }
 
   return { caller, requirePermission, guarded, body, changeLog, actorOf }
+}
+
+/**
+ * 已验证主体 → 工作策略调用者引用（WorkCallerRef，D01 additive）。
+ *
+ * 供各路由把 console 鉴权中间件写入的 exchange.principal（CallerInfo）交给
+ * workforce 窄端口（ctx.workforcePolicy / gateManagedWork / workforce.claimWork）：
+ * 身份一律取自令牌解析结果，禁止从请求体/查询参数组装。字段一一映射，
+ * 缺省字段不产出（保持 WorkCallerRef 可选项语义）。不改动既有 RestGate 行为。
+ */
+export function workCallerOf(info: CallerInfo): WorkCallerRef {
+  return {
+    kind: info.kind,
+    principalId: info.principalId,
+    ...(info.userId !== undefined ? { userId: info.userId } : {}),
+    ...(info.refType !== undefined ? { refType: info.refType } : {}),
+    ...(info.refId !== undefined ? { refId: info.refId } : {}),
+    ...(info.name ? { name: info.name } : {}),
+  }
 }

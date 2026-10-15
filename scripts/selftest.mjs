@@ -40,6 +40,10 @@ import * as consolePlugin from '../packages/plugin-console/src/index.ts'
 import * as panelCore from '../packages/plugin-panel-core/src/index.ts'
 import * as dingtalkBridge from '../packages/plugin-dingtalk-bridge/src/index.ts'
 import * as dshBridge from '../packages/plugin-dsh-bridge/src/index.ts'
+// 数字员工工作闭环（组7）：flowCore / execHub 为既有插件（静态引入）；workforce 为并行施工新包——
+// 其实现文件由组1/2 持续交付，动态 import（章节内）避免实现未齐时拖垮整个自测装载
+import * as flowCore from '../packages/plugin-flow-core/src/index.ts'
+import * as execHub from '../packages/plugin-exec-hub/src/index.ts'
 
 const readBody = (req) => new Promise((resolve) => {
   const chunks = []
@@ -2450,8 +2454,11 @@ try {
   const agentEntryUrl = await api('PATCH', `/api/agents/${selfAgent.id}`, { token: selfAgentCc.data.token, body: { attrs: { entryUrl: 'https://bot.example.com/chat' } } })
   check('Agent 自主提报交互界面地址（entryUrl 白名单生效）', agentEntryUrl.ok && agentEntryUrl.data.attrs['entryUrl'] === 'https://bot.example.com/chat', JSON.stringify(agentEntryUrl.error))
 
-  const agentSelfMeter = await api('POST', '/api/usage/record', { token: selfAgentCc.data.token, body: { org: tenantOrg.data.id, subject: `agent:${selfAgent.id}`, principal: `org:${tenantOrg.data.id}`, resource: 'mcp:real-backend', meters: [{ key: 'tokens', value: 100, unit: 'token' }], idempotency_key: 'test-usage-agent-self-1' } })
-  check('Agent 机器令牌自推计量 200（usage.write 生效，零价快照）', agentSelfMeter.ok && agentSelfMeter.data.pricing.charge_cents === 0)
+  // 自推计量归属对齐（C22 归属校验）：机器主体只能申报自身 agent:<refId>，且事件 org 必须
+  // 等于该 Agent 的登记组织（创建路由强制 orgId=创建者组织，此处按台账回读，不硬编码）
+  const selfAgentOrg = (await api('GET', '/api/agents', { token: admin })).data.agents.find((a) => a.id === selfAgent.id)?.orgId ?? ''
+  const agentSelfMeter = await api('POST', '/api/usage/record', { token: selfAgentCc.data.token, body: { org: selfAgentOrg, subject: `agent:${selfAgent.id}`, principal: `org:${selfAgentOrg}`, resource: 'mcp:real-backend', meters: [{ key: 'tokens', value: 100, unit: 'token' }], idempotency_key: 'test-usage-agent-self-1' } })
+  check('Agent 机器令牌自推计量 200（usage.write 生效，零价快照）', agentSelfMeter.ok && agentSelfMeter.data.pricing.charge_cents === 0, JSON.stringify(agentSelfMeter.error ?? agentSelfMeter.data?.pricing))
 
   // Agent 接入提示词（与 app 同构：rotate 轮换机器凭证携带完整凭证；首行含关键词「提示词」供 connector 触发）
   const agentPrompt = await api('POST', `/api/agents/${selfAgent.id}/onboarding-prompt`, { token: selfAgentCc.data.token, body: { rotate: true } })
@@ -6420,14 +6427,48 @@ try {
       exIssueLocked.status === 'in_progress' && Boolean(exIssueLocked.executionRunId), JSON.stringify({ status: exIssueLocked.status, run: exIssueLocked.executionRunId }))
     const exRun = (await api('GET', '/api/exec/runs?status=running', { token: admin })).data.runs.find((r) => r.id === exIssueLocked.executionRunId)
     check('E2/E4：run 登记上下文包（为什么而干注入）', Boolean(exRun) && /本任务服务于/.test(exRun.contextPack ?? ''), (exRun?.contextPack ?? '').slice(0, 80))
+    // 同主体二唤（语义变更依据：租约幂等化——附录 A 决策 3，2026-10-15 总负责人裁决）：
+    // 同主体重复唤醒不再进延迟队列，改为 coalesce 幂等并入既有 run
+    // （wake 状态 run + runId 即执行锁 run + 不新增 run + 本 issue 延迟队列保持为空）
     await api('POST', `/api/exec/issues/${exIssue.data.id}/wake`, { token: admin, body: { reason: '二唤验证' } })
     await api('POST', '/api/exec/tick', { token: admin })
-    const exDeferred = (await api('GET', '/api/exec/wakes?status=deferred_issue_execution', { token: admin })).data.wakes
-    check('E2/E3：执行锁持有期二唤进延迟队列（deferred_issue_execution 具名态）',
-      exDeferred.some((w) => w.issueId === exIssue.data.id), JSON.stringify(exDeferred.length))
+    const exSecondWake = (await api('GET', '/api/exec/wakes?status=run', { token: admin })).data.wakes.filter((w) => w.issueId === exIssue.data.id)
+    const exDeferredSame = (await api('GET', '/api/exec/wakes?status=deferred_issue_execution', { token: admin })).data.wakes.filter((w) => w.issueId === exIssue.data.id)
+    const exRunStillSame = (await api('GET', '/api/exec/runs?status=running', { token: admin })).data.runs.some((r) => r.id === exIssueLocked.executionRunId)
+    check('E2/E3：同主体二唤幂等并入既有 run（coalesce：wake 状态 run + runId 即执行锁 run + 不新增 run + 延迟队列空）',
+      exSecondWake.length >= 1 && exSecondWake.every((w) => w.runId === exIssueLocked.executionRunId)
+      && exDeferredSame.length === 0 && exRunStillSame,
+      JSON.stringify({ secondWakes: exSecondWake.map((w) => w.runId), lockRun: exIssueLocked.executionRunId, deferred: exDeferredSame.length }))
     await api('PATCH', `/api/exec/issues/${exIssue.data.id}`, { token: admin, body: { assigneeAgentId: exAgent.id } })
     const exPendingAfterReassign = (await api('GET', '/api/exec/wakes?status=pending', { token: admin })).data.wakes.filter((w) => w.issueId === exIssue.data.id)
     check('E3：同小时桶重复指派不重复唤醒（幂等键去重）', exPendingAfterReassign.length === 0, `pending=${exPendingAfterReassign.length}`)
+    // 跨主体二唤（语义变更依据同上：租约幂等化——附录 A 决策 3，2026-10-15 总负责人裁决）：
+    // coalesce 仅限同主体；换派第二 Agent 后再唤，不满足同主体条件 → 仍进延迟队列
+    const exAgentBReg = await api('POST', '/api/agents', { token: admin, body: { name: '自测跨主体二唤机器人', attrs: { description: 'E2/E3 跨主体二唤场景专用', model: 'deepseek-chat', riskLevel: 'low', systemPromptVersion: 'prompt-v3.2', dataClass: 'internal', entryUrl: 'https://bot.example.com/g7-cross-wake' } } })
+    const exAgentB = exAgentBReg.data?.agent
+    if (exAgentB?.id) {
+      // 运行态（draft→online 为 L4）：发起上线审批并由异人批准（R12 职责分离，借 E6/市场既有模式；
+      // 上线门禁以 entryUrl 免登通道满足 SSO 纳管要求）
+      await api('POST', `/api/agents/${exAgentB.id}/transition`, { token: admin, body: { action: 'online' } })
+      const exAgentBApproval = (await api('GET', '/api/approvals', { token: admin })).data.approvals.find((a) => a.kind === 'agent.online' && a.payload?.agentId === exAgentB.id)
+      if (exAgentBApproval?.id) {
+        await api('POST', `/api/approvals/${exAgentBApproval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: 'E2/E3 跨主体二唤场景上线', confirmed: true, finalReview: true } })
+        // 统一准入要求机器主体持 exec.write（D06 权限门）：给注册即颁发的 principal 补授权点
+        await api('PATCH', `/api/authn/principals/${exAgentBReg.data.credential.principalId}`, { token: admin, body: { scopes: ['exec.write'] } })
+        await api('PATCH', `/api/exec/issues/${exIssue.data.id}`, { token: admin, body: { assigneeAgentId: exAgentB.id } })
+        await api('POST', `/api/exec/issues/${exIssue.data.id}/wake`, { token: admin, body: { reason: '跨主体二唤验证' } })
+        await api('POST', '/api/exec/tick', { token: admin })
+        const exDeferredCross = (await api('GET', '/api/exec/wakes?status=deferred_issue_execution', { token: admin })).data.wakes.filter((w) => w.issueId === exIssue.data.id)
+        const exAllWakesDiag = (await api('GET', '/api/exec/wakes', { token: admin })).data.wakes.filter((w) => w.issueId === exIssue.data.id)
+        check('E2/E3：跨主体二唤进延迟队列（deferred_issue_execution 具名态）',
+          exDeferredCross.length >= 1,
+          JSON.stringify({ deferred: exDeferredCross.length, all: exAllWakesDiag.map((w) => ({ trigger: w.trigger, status: w.status, agent: w.agentId, err: (w.lastError ?? '').slice(0, 80) })) }))
+      } else {
+        check('E2/E3：跨主体二唤进延迟队列（deferred_issue_execution 具名态）', false, `上线审批单创建失败：${JSON.stringify(exAgentBOnline.error ?? exAgentBOnline).slice(0, 140)}`)
+      }
+    } else {
+      check('E2/E3：跨主体二唤进延迟队列（deferred_issue_execution 具名态）', false, `第二 Agent 注册失败：${JSON.stringify(exAgentBReg.error ?? {}).slice(0, 120)}`)
+    }
     await api('POST', `/api/exec/issues/${exIssue.data.id}/transition`, { token: admin, body: { to: 'review' } })
     const exDone = await api('POST', `/api/exec/issues/${exIssue.data.id}/transition`, { token: admin, body: { to: 'done' } })
     const exIssueDone = (await api('GET', `/api/exec/issues?projectId=${exProject.data.id}`, { token: admin })).data.issues.find((i) => i.id === exIssue.data.id)
@@ -6682,6 +6723,347 @@ try {
     pwProc.kill('SIGKILL')
     await new Promise((resolve) => setTimeout(resolve, 300))
     await rm(pwDataDir, { recursive: true, force: true }).catch(() => {})
+  }
+
+  // ================================================================ 数字员工工作闭环（组7：workforce 契约面 / 员工任用 / 认领幂等 / 受控调用 / 交付验收）
+  // 进程内独立最小树（等价 boot-all 依赖序 + 组7 后置段）：platform-core→基础层→网关→console
+  // →panelCore→flowCore→execHub→workforce——workforce 必须挂在其全部依赖之后、console 之后
+  // （guarded 路由依赖 console 鉴权中间件先行）。独立端口 7316 / 数据目录 DATA_DIR/workforce-mount。
+  // 并行施工宽容：plugin-workforce 实现文件由组1/2 持续交付，动态 import+挂载失败时相关断言
+  // 逐条红（标注待集成联跑），但不拖垮本章节其余断言与整个自测进程。
+  section('数字员工工作闭环（组7：契约面/员工/任用/认领/步骤幂等/交付验收）')
+  try {
+    const WF_PORT = 7316
+    const WF_BASE = `http://127.0.0.1:${WF_PORT}`
+    const wfDataDir = join(DATA_DIR, 'workforce-mount')
+    await rm(wfDataDir, { recursive: true, force: true })
+    await mkdir(wfDataDir, { recursive: true })
+    const wfCtx = new Context()
+    await wfCtx.plugin(platformCore, { dataDir: wfDataDir, http: { port: WF_PORT } })
+    await wfCtx.plugin(resourceCore)
+    await wfCtx.plugin(iam)
+    await wfCtx.plugin(authn)
+    await wfCtx.plugin(usage)
+    await wfCtx.plugin(audit)
+    await wfCtx.plugin(market)
+    await wfCtx.plugin(connector)
+    await wfCtx.plugin(mcp)
+    await wfCtx.plugin(nas)
+    await wfCtx.plugin(skillhub)
+    await wfCtx.plugin(agent)
+    await wfCtx.plugin(app)
+    await wfCtx.plugin(modelgw)
+    await wfCtx.plugin(connect, { role: 'host' })
+    await wfCtx.plugin(update)
+    await wfCtx.plugin(portal)
+    await wfCtx.plugin(consolePlugin)
+    await wfCtx.plugin(panelCore)
+    await wfCtx.plugin(flowCore)
+    await wfCtx.plugin(execHub)
+    // 缺省拒绝语义（挂载前采样）：必须在 workforce 挂载之前读取——挂载后端口已登记，
+    // 本断言恒假（曾在「挂载成功」场景误红）
+    check('契约面：workforce 挂载前端口未就绪（isReady()=false，缺省拒绝语义）', wfCtx.workforcePolicy.isReady() === false)
+    // workforce 挂载点：全部依赖之后（agent→exec-hub→workforce），且 config.dataDir 显式指向
+    // 隔离目录（缺省会落 <cwd>/data，绝不污染仓库默认数据目录）
+    let wf = null
+    let wfLoadError = ''
+    try {
+      wf = await import('../packages/plugin-workforce/src/index.ts')
+      await wfCtx.plugin(wf, { dataDir: join(wfDataDir, 'domain') })
+    } catch (error) {
+      wfLoadError = error instanceof Error ? error.message : String(error)
+    }
+    const wfPending = (name, detail = '') => check(name, false, `待集成联跑（plugin-workforce 未就绪：${wfLoadError || detail || '挂载失败'}）`)
+    const errText = (error) => (error instanceof Error ? `${error.name}:${error.message}` : String(error))
+
+    // -- 契约面（1） ------------------------------------------------------------
+    check('契约面：ctx.workforcePolicy 注册器随 platform-core 就位（窄端口横切面）',
+      typeof wfCtx.workforcePolicy?.isReady === 'function' && typeof wfCtx.workforcePolicy?.port === 'function')
+    if (wf) check('契约面：workforce 挂载后 isReady()=true（策略实现已登记）', wfCtx.workforcePolicy.isReady() === true)
+    else wfPending('契约面：workforce 挂载后 isReady()=true')
+
+    // -- V29：注册器类本身单测（端口未就绪场景在已挂载树上不可造，按蓝本改测注册器） ----------
+    try {
+      // 裸 Context 直接构造（WorkforcePolicyRegistry 构造仅存引用，不触发装配）；
+      // 若 cordis Service 基类拒绝裸构造则下方 catch 捕获——按蓝本跳过并在 detail 注明原因
+      const bareRegistry = new platformCore.WorkforcePolicyRegistry(new Context())
+      const portBefore = bareRegistry.port()
+      const readyBefore = bareRegistry.isReady()
+      bareRegistry.register({
+        resolveManagedEmployee: async () => null,
+        describeManagedAgent: async () => null,
+        authorizeWorkAction: async () => ({ allow: false, code: 'WORKFORCE_NOT_READY', message: '组7 单测假端口' }),
+      })
+      check('V29：注册器未登记时 port()=null / isReady()=false；register 后立即可用（不静默放行）',
+        portBefore === null && readyBefore === false && bareRegistry.isReady() === true && bareRegistry.port() !== null,
+        `portBefore=${String(portBefore)} readyBefore=${readyBefore}`)
+    } catch (error) {
+      // 裸 Context 构造不可行（Service 基类需要装配上下文）——按蓝本跳过，detail 即说明
+      check('V29：注册器类单测（裸 Context 构造不可行，按蓝本跳过本项）', false, `skip：${errText(error)}`)
+    }
+
+    // -- 夹具：组织 / 主管 / 测试 Agent（服务层直建，不依赖演示种子） ----------------------------
+    const adminUser = wfCtx.iam.users().findOne((u) => u.username === 'admin')
+    check('闭环夹具：console 基线初始化产出 admin（测试主管）', Boolean(adminUser?.id))
+    const adminPrincipal = wfCtx.authn.ensureHumanPrincipal(adminUser.id, adminUser.displayName ?? '平台管理员')
+    const adminCaller = { kind: 'human', principalId: adminPrincipal.id, userId: adminUser.id, name: '平台管理员' }
+    const wfOrg = wfCtx.iam.createOrg({ name: `组7闭环自测组织-${Date.now() % 100000}` }, iam.SYSTEM_ACTOR)
+    check('闭环夹具：测试组织创建', Boolean(wfOrg?.id))
+    const g7AgentReg = wfCtx.agentRegistry.register({ name: '组7闭环员工Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：数字员工绑定用 Agent', model: 'deepseek-chat', riskLevel: 'low' } })
+    const g7Agent = g7AgentReg.agent
+    // 机器 caller（§13.2）：主体来自已验证机器凭证（refType=agent 可反查员工绑定），非请求参数自报
+    const g7AgentCaller = { kind: 'machine', principalId: g7AgentReg.credential.principal.id, refType: 'agent', refId: g7Agent.id, name: g7Agent.name }
+    const g7RivalReg = wfCtx.agentRegistry.register({ name: '组7闭环他人Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：撞绑拒绝用 Agent', model: 'deepseek-chat', riskLevel: 'low' } })
+    const g7RivalCaller = { kind: 'machine', principalId: g7RivalReg.credential.principal.id, refType: 'agent', refId: g7RivalReg.agent.id, name: g7RivalReg.agent.name }
+    check('闭环夹具：测试 Agent×2 与机器凭证就位（refType=agent）', Boolean(g7Agent?.id && g7AgentReg.credential?.principal?.id && g7RivalReg.credential?.principal?.id))
+
+    // 测试模型登记（model grant 探针的真实核验对象；价格簿随 upsertModel 播种）
+    const G7_MODEL_SLUG = `g7-loop-model-${Date.now() % 100000}`
+    wfCtx.modelGateway.upsertModel({ slug: G7_MODEL_SLUG, displayName: '组7闭环测试模型', provider: 'stub', endpoint: `http://127.0.0.1:${GH_PORT}/v1`, apiKey: 'sk-g7-selftest', costCentsPerKTokens: 1, status: 'online', dataClassLimit: 'internal' })
+
+    // -- 员工 / 绑定（2） ---------------------------------------------------------
+    let employee = null
+    if (wf) {
+      try {
+        employee = wfCtx.workforceEmployees.create({ name: 'g7-quality-analyst', displayName: '组7质量分析员', orgId: wfOrg.id, supervisorUserId: adminUser.id, agentId: g7Agent.id, principalId: g7AgentReg.credential.principal.id, runtime: 'dsh' })
+        check('员工：创建员工档案（active + 主绑定 Agent 回填）', employee?.status === 'active' && employee?.primaryAgentId === g7Agent.id, JSON.stringify(employee ?? {}))
+        const bindings = wfCtx.workforceEmployees.bindingsFor(employee.id)
+        check('绑定：员工↔Agent 一对一有效绑定（active）', bindings.some((b) => b.agentId === g7Agent.id && b.status === 'active'), JSON.stringify(bindings))
+        const rivalEmployee = wfCtx.workforceEmployees.create({ name: 'g7-rival-analyst', displayName: '组7撞绑员工', orgId: wfOrg.id, supervisorUserId: adminUser.id, agentId: g7RivalReg.agent.id })
+        let dupRejected = false
+        try { wfCtx.workforceEmployees.bindAgent(adminCaller, rivalEmployee.id, g7Agent.id) } catch { dupRejected = true }
+        check('绑定：同 Agent 已被占用时再次绑定被拒绝（一对一约束）', dupRejected)
+      } catch (error) {
+        check('员工：创建员工档案（active + 主绑定 Agent 回填）', false, `异常：${errText(error)}`)
+      }
+    } else wfPending('员工：创建员工档案（active + 主绑定 Agent 回填）')
+
+    // -- 任用状态机（3）：探针失败路径与生效路径 --------------------------------------------
+    let loopAppointment = null
+    if (wf && employee) {
+      try {
+        // mcp grant 指向不存在服务：真实授权探针应当失败（无权限组授权 → 保持 preparing）
+        const grants = [
+          { kind: 'model', registryId: G7_MODEL_SLUG, actions: ['invoke'], risk: 'read' },
+          { kind: 'mcp', registryId: 'mcp_g7_missing_service', actions: ['qms_batch_read'], risk: 'read', constraints: { factoryIds: ['JH-01'] } },
+        ]
+        const appointment = wfCtx.workforceAppointments.create({ employeeId: employee.id, position: '质量分析员', orgId: wfOrg.id, dataClass: 'internal', effectiveFrom: new Date().toISOString(), grants, approvedBy: adminUser.id })
+        check('任用：创建任用版本 v1（preparing 起步，组织不可空）', appointment?.version === 1 && appointment?.status === 'preparing' && appointment?.orgId === wfOrg.id, JSON.stringify(appointment ?? {}))
+        const activated = await wfCtx.workforceAppointments.activate(adminCaller, appointment.id)
+        if (activated.status === 'preparing') {
+          check('任用激活·探针失败路径：无真实 MCP 授权时保持 preparing（不签发 permit 的前提）', Boolean(activated.statusReason), `statusReason=${activated.statusReason}`)
+        } else {
+          check('任用激活·探针通过路径：状态推进（effective）', activated.status === 'effective', `status=${activated.status}`)
+        }
+        loopAppointment = activated
+        if (loopAppointment.status !== 'effective') {
+          // 兜底任用：仅保留可核验的 model grant（探针环境受限时保住闭环前置）
+          const fallback = wfCtx.workforceAppointments.create({ employeeId: employee.id, position: '质量分析员', orgId: wfOrg.id, dataClass: 'internal', effectiveFrom: new Date().toISOString(), grants: [grants[0]], approvedBy: adminUser.id })
+          loopAppointment = await wfCtx.workforceAppointments.activate(adminCaller, fallback.id)
+        }
+        const activeManifest = loopAppointment.status === 'effective' ? wfCtx.workforceCapabilities.activeForAppointment(loopAppointment.id) : undefined
+        check('任用：生效后 activeForAppointment 清单非空（工具句柄可下发）',
+          Boolean(activeManifest) && wfCtx.workforceCapabilities.toolsFor(activeManifest.id).length >= 1,
+          loopAppointment.status === 'effective' ? `manifest=${activeManifest?.id ?? '无'}` : `待集成联跑：任用未生效（${loopAppointment.status}），探针在当前并行施工状态未推进`)
+      } catch (error) {
+        check('任用：创建任用版本 v1（preparing 起步，组织不可空）', false, `异常：${errText(error)}`)
+      }
+    } else wfPending('任用：创建任用版本 v1（preparing 起步，组织不可空）')
+
+    // -- 认领幂等（4）：以生效任用为前置 ------------------------------------------------
+    let claim1 = null
+    let firstInvocation = null
+    let issue = null
+    if (wf && employee && loopAppointment?.status === 'effective') {
+      try {
+        issue = wfCtx.execHub.createIssue({ orgId: wfOrg.id, title: '组7闭环自测：分析批次 Q-1024 异常', assigneeAgentId: g7Agent.id, createdBy: 'selftest-workforce' })
+        claim1 = await wfCtx.workforceAdmission.claimWork(g7AgentCaller, { issueId: issue.id })
+        check('认领：机器主体首次认领成功（run/租约/permit/清单四件套齐备）',
+          claim1.ok === true && Boolean(claim1.runId) && Boolean(claim1.lease?.id) && Boolean(claim1.permit?.id) && claim1.tools.length >= 1,
+          JSON.stringify(claim1.ok ? {} : { code: claim1.code, message: claim1.message }).slice(0, 200))
+      } catch (error) {
+        check('认领：机器主体首次认领成功（run/租约/permit/清单四件套齐备）', false, `异常：${errText(error)}`)
+      }
+    } else wfPending('认领：机器主体首次认领成功（run/租约/permit/清单四件套齐备）', '前置：员工/任用未生效')
+
+    if (wf && claim1?.ok) {
+      try {
+        const claimReplay = await wfCtx.workforceAdmission.claimWork(g7AgentCaller, { issueId: issue.id })
+        check('认领幂等：同主体同任务重复认领 idempotent=true 且 runId 一致（不产生第二租约）',
+          claimReplay.ok === true && claimReplay.idempotent === true && claimReplay.runId === claim1.runId && claimReplay.permit.id === claim1.permit.id,
+          JSON.stringify(claimReplay.ok ? { idempotent: claimReplay.idempotent, runId: claimReplay.runId } : claimReplay).slice(0, 200))
+      } catch (error) {
+        check('认领幂等：同主体同任务重复认领 idempotent=true 且 runId 一致（不产生第二租约）', false, `异常：${errText(error)}`)
+      }
+      try {
+        const rival = await wfCtx.workforceAdmission.claimWork(g7RivalCaller, { issueId: issue.id })
+        check('认领排他：他人主体（另一 Agent 绑定）认领同任务被拒绝', rival.ok === false && Boolean(rival.message), JSON.stringify({ code: rival.code, message: rival.message }))
+      } catch (error) {
+        // 服务层以 WorkforceError 异常拒绝同样成立（诚实失败即可，不允许静默成功）
+        check('认领排他：他人主体（另一 Agent 绑定）认领同任务被拒绝', false, `异常拒绝：${errText(error)}`)
+      }
+    } else if (wf) wfPending('认领幂等：同主体同任务重复认领 idempotent=true 且 runId 一致（不产生第二租约）', '前置：首次认领未成功')
+
+    // -- 步骤幂等（5）：优先真实适配器路径；适配器缺席时诚实落账同样计入步骤账本 -----------------
+    if (wf && claim1?.ok) {
+      try {
+        const handle = claim1.tools[0]
+        firstInvocation = await wfCtx.workforceInvocations.invoke(g7AgentCaller, { permitId: claim1.permit.id, toolHandle: handle.handle, stepKey: 'g7.step.probe_1', arguments: { probe: 'g7' } })
+        check('受控调用：受控调用诚实落账（completed/denied/approval_required 等状态 + invocationId）',
+          typeof firstInvocation.invocationId === 'string' && ['completed', 'denied', 'approval_required', 'rate_limited', 'failed', 'outcome_unknown', 'cancelled'].includes(firstInvocation.status),
+          JSON.stringify({ status: firstInvocation.status, id: firstInvocation.invocationId, code: firstInvocation.code ?? '', message: firstInvocation.message ?? '' }).slice(0, 200))
+      } catch (error) {
+        check('受控调用：受控调用诚实落账（completed/denied/approval_required 等状态 + invocationId）', false, `异常：${errText(error)}`)
+      }
+      try {
+        const handle = claim1.tools[0]
+        const replay = await wfCtx.workforceInvocations.invoke(g7AgentCaller, { permitId: claim1.permit.id, toolHandle: handle.handle, stepKey: 'g7.step.probe_1', arguments: { probe: 'g7' } })
+        check('步骤幂等：同 run 同 stepKey 同参数重复调用 → 回放原结果（同 invocationId）',
+          replay.invocationId === firstInvocation?.invocationId,
+          JSON.stringify({ first: firstInvocation?.invocationId, replay: replay.invocationId }))
+      } catch (error) {
+        check('步骤幂等：同 run 同 stepKey 同参数重复调用 → 回放原结果（同 invocationId）', false, `异常：${errText(error)}`)
+      }
+      try {
+        const handle = claim1.tools[0]
+        let conflictCode = ''
+        try {
+          const conflict = await wfCtx.workforceInvocations.invoke(g7AgentCaller, { permitId: claim1.permit.id, toolHandle: handle.handle, stepKey: 'g7.step.probe_1', arguments: { probe: 'g7-different' } })
+          conflictCode = conflict.status === 'denied' ? (conflict.code ?? '') : `status=${conflict.status}`
+        } catch (error) {
+          conflictCode = error?.code ?? errText(error) // 服务层以 WorkforceError 抛出同样成立
+        }
+        check('步骤幂等：同 stepKey 不同参数 → STEP_ARGUMENT_CONFLICT 冲突拒绝（不覆盖原动作）',
+          conflictCode === 'STEP_ARGUMENT_CONFLICT', `code=${conflictCode}`)
+      } catch (error) {
+        check('步骤幂等：同 stepKey 不同参数 → STEP_ARGUMENT_CONFLICT 冲突拒绝（不覆盖原动作）', false, `异常：${errText(error)}`)
+      }
+    } else if (wf) wfPending('步骤幂等：同 run 同 stepKey 同参数重复调用 → 回放原结果（同 invocationId）', '前置：首次认领未成功')
+
+    // -- 交付验收（8）：artifact→submit→review→accept→done；退回路径 → 回退且事实保留 ------------
+    if (wf && claim1?.ok) {
+      try {
+        const artifact = await wfCtx.workforceArtifacts.createUpload(g7AgentCaller, {
+          name: 'q-1024-根因分析草案.md', contentType: 'text/markdown',
+          contentBase64: Buffer.from('# 批次 Q-1024 根因分析（组7自测）\n\n根因假设与纠正建议。').toString('base64'),
+          runId: claim1.runId,
+        })
+        check('交付：受控 artifact 上传（staging 元信息 + sha256 摘要 + 归属 run）',
+          Boolean(artifact?.id) && artifact.sizeBytes > 0 && artifact.sha256?.length === 64 && artifact.runId === claim1.runId,
+          JSON.stringify(artifact ?? {}))
+        const deliverable = await wfCtx.workforceDelivery.submit(g7AgentCaller, { permitId: claim1.permit.id, summary: '批次 Q-1024 根因假设与纠正建议（组7自测）', artifactIds: [artifact.id] })
+        check('交付：submit 后 exec-hub 任务进入 review（技术完成≠验收完成）',
+          deliverable?.status === 'submitted' && wfCtx.execHub.issues().get(issue.id)?.status === 'review',
+          JSON.stringify({ deliverable: deliverable?.status, issue: wfCtx.execHub.issues().get(issue.id)?.status }))
+        const accepted = await wfCtx.workforceDelivery.decide(adminCaller, { deliverableId: deliverable.id, decision: 'accepted', reason: '组7自测：证据齐备验收通过' })
+        check('验收：accept 决定后任务 done（真人验收权决定业务完成）',
+          accepted?.status === 'accepted' && wfCtx.execHub.issues().get(issue.id)?.status === 'done',
+          JSON.stringify({ decision: accepted?.status, issue: wfCtx.execHub.issues().get(issue.id)?.status }))
+      } catch (error) {
+        check('交付：受控 artifact 上传（staging 元信息 + sha256 摘要 + 归属 run）', false, `异常：${errText(error)}`)
+      }
+      // 退回路径：第二任务走 submit → rejected → 任务回退且调用事实保留（V30 语义）
+      try {
+        const issue2 = wfCtx.execHub.createIssue({ orgId: wfOrg.id, title: '组7闭环自测：退回路径演练', assigneeAgentId: g7Agent.id, createdBy: 'selftest-workforce' })
+        const claimB = await wfCtx.workforceAdmission.claimWork(g7AgentCaller, { issueId: issue2.id })
+        if (claimB.ok) {
+          const artifactB = await wfCtx.workforceArtifacts.createUpload(g7AgentCaller, { name: 'q-1024-草案v1.md', contentType: 'text/markdown', contentBase64: Buffer.from('证据不足的草案 v1').toString('base64'), runId: claimB.runId })
+          const deliverableB = await wfCtx.workforceDelivery.submit(g7AgentCaller, { permitId: claimB.permit.id, summary: '待退回交付（组7自测）', artifactIds: [artifactB.id] })
+          const rejected = await wfCtx.workforceDelivery.decide(adminCaller, { deliverableId: deliverableB.id, decision: 'rejected', reason: '组7自测：证据不足退回' })
+          const issue2After = wfCtx.execHub.issues().get(issue2.id)
+          const factsKept = await wfCtx.workforceInvocations.listByRun(g7AgentCaller, claimB.runId)
+          check('验收退回：退回后任务回退执行（review→in_progress）且调用事实保留',
+            rejected?.status === 'rejected' && issue2After?.status === 'in_progress' && Array.isArray(factsKept),
+            JSON.stringify({ decision: rejected?.status, issue: issue2After?.status, invocations: Array.isArray(factsKept) ? factsKept.length : '异常' }))
+        } else {
+          check('验收退回：退回后任务回退执行（review→in_progress）且调用事实保留', false, `第二任务认领失败：${JSON.stringify({ code: claimB.code, message: claimB.message }).slice(0, 160)}`)
+        }
+      } catch (error) {
+        check('验收退回：退回后任务回退执行（review→in_progress）且调用事实保留', false, `异常：${errText(error)}`)
+      }
+    } else if (wf) wfPending('交付：受控 artifact 上传（staging 元信息 + sha256 摘要 + 归属 run）', '前置：首次认领未成功')
+
+    // -- 停职撤权（6）：置于认领/交付之后执行（撤权即终结该员工后续受控动作） -------------------
+    if (wf && employee && claim1?.ok) {
+      try {
+        const suspended = wfCtx.workforceEmployees.setStatus(adminCaller, employee.id, 'suspended', '组7自测：停职撤权')
+        const permitsAfter = wfCtx.workforceStore.permits.findWhere({ employeeId: employee.id })
+        check('停职撤权：员工 suspend 后其全部 active permit 被撤销（revoked）',
+          suspended?.status === 'suspended' && permitsAfter.length >= 1 && permitsAfter.every((p) => p.status === 'revoked'),
+          JSON.stringify(permitsAfter.map((p) => ({ id: p.id, status: p.status }))))
+        let verifyCode = ''
+        try { await wfCtx.workforceAdmission.verifyPermit(g7AgentCaller, claim1.permit.id) } catch (error) { verifyCode = error?.code ?? errText(error) }
+        check('停职撤权：verifyPermit 对已撤 permit 抛错（fail-closed，V07）', verifyCode !== '', verifyCode || '未抛错')
+        try { wfCtx.workforceEmployees.setStatus(adminCaller, employee.id, 'active', '组7自测收尾：复岗') } catch { /* 复岗失败不影响断言 */ }
+      } catch (error) {
+        check('停职撤权：员工 suspend 后其全部 active permit 被撤销（revoked）', false, `异常：${errText(error)}`)
+      }
+    } else if (wf) wfPending('停职撤权：员工 suspend 后其全部 active permit 被撤销（revoked）', '前置：认领未成功')
+
+    // -- 计量关联（§11.3）：invocationId 落库读回一致 + workforce_usage_links 事实映射 ------------
+    try {
+      const LINK_INV = 'wfi_g7_link_probe'
+      const linkEvent = wfCtx.usage.record({
+        org: wfOrg.id, subject: `agent:${g7Agent.id}`, principal: `org:${wfOrg.id}`,
+        resource: 'app:app-g7-loop', meters: [{ key: 'calls', value: 1, unit: 'call' }],
+        idempotency_key: `g7-link-${Date.now()}`, invocationId: LINK_INV,
+      })
+      const linkRow = wfCtx.txnStore.one('usage_events', { id: linkEvent.event_id })
+      const linkRead = wfCtx.usage.query({}).items.find((e) => e.event_id === linkEvent.event_id)
+      check('计量关联：usage.record 携带 invocationId → invocation_id 列落库且事件读回一致（不双计）',
+        linkRow?.invocation_id === LINK_INV && linkRead?.invocationId === LINK_INV,
+        JSON.stringify({ row: linkRow?.invocation_id, event: linkRead?.invocationId }))
+      if (wf && firstInvocation?.status === 'completed') {
+        try {
+          wfCtx.workforceInvocations.linkUsage(firstInvocation.invocationId, linkEvent.event_id, 'app:app-g7-loop')
+          const links = wfCtx.workforceStore.usageLinks.findWhere({ invocationId: firstInvocation.invocationId })
+          check('计量关联：workforce_usage_links 调用↔消费事实唯一映射（V23/V24，只关联不复制流水）',
+            links.length === 1 && links[0].usageEventId === linkEvent.event_id,
+            JSON.stringify(links))
+        } catch (error) {
+          check('计量关联：workforce_usage_links 调用↔消费事实唯一映射（V23/V24，只关联不复制流水）', false, `异常：${errText(error)}`)
+        }
+      }
+    } catch (error) {
+      check('计量关联：usage.record 携带 invocationId → invocation_id 列落库且事件读回一致（不双计）', false, `异常：${errText(error)}`)
+    }
+
+    // -- REST 冒烟：/api/workforce/overview（guarded 路由依赖 console 中间件先行） ----------------
+    try {
+      const wfApi = async (method, path, { token, body } = {}) => {
+        const headers = { 'content-type': 'application/json' }
+        if (token) headers.authorization = `Bearer ${token}`
+        const response = await fetch(`${WF_BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+        let payload = null
+        try { payload = await response.json() } catch { /* ignore */ }
+        return { status: response.status, ok: payload?.ok ?? false, data: payload?.data, error: payload?.error }
+      }
+      const wfPwFile = join(wfDataDir, 'admin-initial-password.txt')
+      const wfPassword = existsSync(wfPwFile)
+        ? (readFileSync(wfPwFile, 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('平台管理员'))[0] ?? '')
+        : ''
+      const wfLogin = await wfApi('POST', '/api/auth/login', { body: { username: 'admin', password: wfPassword } })
+      const wfAdminToken = wfLogin.data?.token
+      check('REST 冒烟：独立最小树 /api/auth/login 可用（console 基线口令文件）', Boolean(wfAdminToken), `status=${wfLogin.status}`)
+      // workforce.read 细粒度令牌：权限点已入目录 → 机器凭证路径；未入目录（并行组）→ 回退 admin 并注明
+      let scopedToken = ''
+      try {
+        const scopedCred = wfCtx.authn.createMachineCredential({ name: 'g7-workforce-read', refType: 'agent', refId: g7Agent.id, scopes: ['workforce.read'] })
+        const scopedCc = await wfApi('POST', '/api/auth/client-credentials', { body: { clientId: scopedCred.clientId, clientSecret: scopedCred.clientSecret } })
+        scopedToken = scopedCc.data?.token ?? ''
+      } catch { /* workforce.* 权限点尚未入权限目录——回退 admin 令牌验证 200 */ }
+      const overview = await wfApi('GET', '/api/workforce/overview', { token: scopedToken || wfAdminToken })
+      check(`REST 冒烟：GET /api/workforce/overview 200（${scopedToken ? 'workforce.read 权限令牌' : 'admin 令牌——workforce.read 权限点待并行组入目录'}）`,
+        overview.status === 200, `status=${overview.status} error=${JSON.stringify(overview.error ?? {}).slice(0, 160)}`)
+      const deniedCred = wfCtx.authn.createMachineCredential({ name: 'g7-no-perm', refType: 'external', scopes: ['agent.read'] })
+      const deniedCc = await wfApi('POST', '/api/auth/client-credentials', { body: { clientId: deniedCred.clientId, clientSecret: deniedCred.clientSecret } })
+      const overviewDenied = await wfApi('GET', '/api/workforce/overview', { token: deniedCc.data?.token })
+      check('REST 冒烟：无 workforce 权限令牌访问 /api/workforce/overview 403', overviewDenied.status === 403, `status=${overviewDenied.status}`)
+    } catch (error) {
+      check('REST 冒烟：GET /api/workforce/overview 200（workforce.read 权限令牌）', false, `异常：${errText(error)}`)
+    }
+  } catch (error) {
+    check('数字员工工作闭环章节（组7）装配与执行', false, `章节异常中断：${error instanceof Error ? error.stack?.slice(0, 400) ?? error.message : String(error)}`)
   }
 
   // ================================================================ 收尾终检：凭证零进平台（红线一，T-24）

@@ -36,9 +36,9 @@ export const AGENT_TYPE_SPEC: ResourceTypeSpec = {
       { key: 'dataClass', label: '数据密级', type: 'enum', group: 'governance', requiredForOnline: true, options: [
         { value: 'public', label: '公开', hint: '可对外展示' },
         { value: 'internal', label: '内部', hint: '仅限员工可见' },
-        { value: 'confidential', label: '机密', hint: '调用需额外审批' },
-        { value: 'secret', label: '绝密', hint: '禁止 Agent 直接处理' },
-      ], hint: '高密级资源的调用需额外审批（方案 §七）' },
+        { value: 'confidential', label: '机密', hint: '机密：Agent 处理需审批（业务审批先行，处理前挂审批单）。业务语义说明：本枚举是 Agent 业务密级口径，与模型渠道分级（modelgw 的 public/internal/secret）是两套同名不同义的口径，同名键含义不互等——到统一业务密级（platform-core WorkDataClass）的映射必须由 workforce 适配器显式完成，禁止按名直译或静默回落（D14）' },
+        { value: 'secret', label: '绝密', hint: '绝密：禁止 Agent 直接处理（模型/资源调用前直接拒绝，不存在「审批后处理」）。业务语义说明：本枚举是 Agent 业务密级口径，与模型渠道分级（modelgw 的 public/internal/secret）是两套同名不同义的口径，同名键含义不互等——到统一业务密级（platform-core WorkDataClass）的映射必须由 workforce 适配器显式完成，禁止按名直译或静默回落（D14）' },
+      ], hint: '高密级资源的调用需额外审批（方案 §七）。注意：本字段是 Agent 业务密级口径，与模型渠道分级（modelgw：public/internal/secret）是两套同名不同义的枚举，由 workforce 适配器显式映射（D14）；绝密=禁止 Agent 直接处理，机密=Agent 处理需审批' },
       { key: 'autonomy', label: '自治级别', type: 'enum', group: 'governance', defaultValue: 'A0', options: [
         { value: 'A0', label: 'A0 提示', hint: '仅建议/提示，不执行动作' },
         { value: 'A1', label: 'A1 执行', hint: '可执行低风险动作（人在环）' },

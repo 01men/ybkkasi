@@ -8,7 +8,12 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
-import { PlatformEvents, newId, sha256Hex, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import {
+  PlatformEvents, newId, sha256Hex,
+  gateManagedWork, WORK_DENY_CODE_LABELS,
+  type Collection, type RecordBase,
+  type WorkCallerRef, type WorkDenyCode, type WorkExecutionContext, type WorkRefIndex, type WorkforcePolicyRegistry,
+} from '../../platform-core/src/index.ts'
 import * as mcpTools from './tools.ts'
 
 // ---------------------------------------------------------------------------
@@ -99,6 +104,22 @@ export interface McpCallRecord {
   exec: 'real' | 'demo'
   /** 调用水印（WP-10/L1）：服务经公司级终审后，其全部调用附带水印，审计可追溯。 */
   watermark?: { finalReview: true; at: string }
+  /** 领域拒绝码（数字员工工作级授权拒绝时登记，审计可区分拒绝层级）。 */
+  code?: WorkDenyCode
+  /** 工作关联（D11 additive）：受管数字员工调用时与 workforce 账本的可穿透引用。 */
+  work?: McpCallWorkRef
+}
+
+/** 调用记录的工作关联字段（additive，JSON 集合无严格 schema；§11.3 增量关联）。 */
+export interface McpCallWorkRef {
+  /** workforce 受控调用账本的调用 ID（生产侧提供时回填）。 */
+  invocationId?: string
+  /** 本次放行依据的工作授权（permit）ID（服务端 gate 核验结果）。 */
+  permitId?: string
+  /** 业务 run ID。 */
+  runId?: string
+  /** 执行员工 ID（服务端反查结果）。 */
+  employeeId?: string
 }
 
 export interface InvokeCaller {
@@ -116,6 +137,8 @@ export interface InvokeResult {
   version: string
   result?: unknown
   error?: string
+  /** 领域拒绝码（additive）：status='denied' 且为工作级授权拒绝时携带，指导停止/申请/等待/重试。 */
+  code?: WorkDenyCode
 }
 
 /** mcpServers 配置的单个服务条目（解析结果）。 */
@@ -735,19 +758,54 @@ export class McpService extends Service {
 
   // -- 调用网关 -----------------------------------------------------------
 
-  async invoke(caller: InvokeCaller, serviceId: string, toolName: string, args: Record<string, unknown> = {}): Promise<InvokeResult> {
+  async invoke(caller: InvokeCaller, serviceId: string, toolName: string, args: Record<string, unknown> = {}, workRef?: WorkRefIndex): Promise<InvokeResult> {
     const service = this.services().get(serviceId)
     if (!service) throw new Error(`MCP 服务不存在：${serviceId}`)
     const started = Date.now()
 
-    const fail = (status: McpCallRecord['status'], error: string): InvokeResult => {
-      this.recordCall(service, toolName, caller, { ok: false, status, latencyMs: Date.now() - started, version: service.currentVersion, error })
+    const fail = (status: McpCallRecord['status'], error: string, work?: McpCallWorkRef): InvokeResult => {
+      this.recordCall(service, toolName, caller, { ok: false, status, latencyMs: Date.now() - started, version: service.currentVersion, error }, work)
       return { ok: false, status, latencyMs: Date.now() - started, version: service.currentVersion, error }
     }
 
-    if (service.status === 'offline') return fail('denied', '服务已下线')
-    if (service.status === 'draft' || service.status === 'verifying') return fail('denied', '服务尚未发布')
-    if (service.health.breakerOpen) return fail('breaker_open', '熔断器开启：服务连续失败，暂拒绝调用')
+    // -- 工作级授权闸门（施工蓝本 §9.5 / 附录 D.5：受管判定只按可信 caller 反查） ----------------
+    // 插入点在真实传输（realTransport）之前、原有授权链之前；端口未就绪或非受管 caller →
+    // legacy，原有授权链一步不少（两层授权取交集）。workRef 仅作索引透传（§10.4），
+    // 授权事实（permit/租约/能力清单/参数范围）一律由 workforce 侧服务端回查。
+    const callerRef = workCallerRefFromInvokeCaller(caller)
+    const toolSpec = service.tools.find((item) => item.name === toolName)
+    // 风险初判：按工具登记风险；未登记/拿不准按 'write' 保守处理（V11：未知风险不按 read 放行）。
+    // authorize() 之后的最终 readOnly 与初判不符且 gate 已放行时无需重跑（一期口径）。
+    const gateRisk: 'read' | 'write' | 'admin' = toolSpec?.riskLevel === 'read' ? 'read' : toolSpec?.riskLevel === 'admin' ? 'admin' : 'write'
+    const gate = await gateManagedWork(workforcePolicyOf(this.ctx), callerRef, {
+      facts: { kind: 'mcp', registryId: serviceId, action: toolName, risk: gateRisk },
+      ...(workRef ? { ref: workRef } : {}),
+      // 参数摘要哈希（便宜可算）：用于 workforce 步骤冲突判定与审计
+      argsHash: sha256Hex(JSON.stringify(args ?? {})),
+    })
+    if (gate.mode === 'denied') {
+      const message = `数字员工调用被拒绝：${WORK_DENY_CODE_LABELS[gate.code]}${gate.message ? `（${gate.message}）` : ''}`
+      const latencyMs = Date.now() - started
+      // 拒绝同样落调用记录（V07：拒绝是事实，按原 status='denied' 口径留存并附领域拒绝码；
+      // 工作上下文仅在放行时由服务端核验产生，拒绝路径无可关联的 work 事实）
+      this.recordCall(service, toolName, caller, {
+        ok: false, status: 'denied', latencyMs, version: service.currentVersion, error: message, code: gate.code,
+      })
+      return { ok: false, status: 'denied', latencyMs, version: service.currentVersion, error: message, code: gate.code }
+    }
+    // managed：把服务端核验后的工作上下文带入本次调用的记录关联（D11）
+    const work: WorkExecutionContext | undefined = gate.mode === 'managed' ? gate.work : undefined
+    const workRefForRecord: McpCallWorkRef | undefined = work
+      ? {
+          permitId: work.permitId,
+          ...(work.runId ? { runId: work.runId } : {}),
+          employeeId: work.employeeId,
+        }
+      : undefined
+
+    if (service.status === 'offline') return fail('denied', '服务已下线', workRefForRecord)
+    if (service.status === 'draft' || service.status === 'verifying') return fail('denied', '服务尚未发布', workRefForRecord)
+    if (service.health.breakerOpen) return fail('breaker_open', '熔断器开启：服务连续失败，暂拒绝调用', workRefForRecord)
 
     // 限流：每服务每分钟令牌桶
     const key = `${serviceId}:${caller.type}:${caller.id}`
@@ -755,14 +813,15 @@ export class McpService extends Service {
     const bucket = (this.rateBuckets.get(key) ?? []).filter((t) => nowMs - t < 60_000)
     if (bucket.length >= service.rateLimitPerMin) {
       this.rateBuckets.set(key, bucket)
-      return fail('rate_limited', `触发限流：${service.rateLimitPerMin} 次/分钟`)
+      return fail('rate_limited', `触发限流：${service.rateLimitPerMin} 次/分钟`, workRefForRecord)
     }
     bucket.push(nowMs)
     this.rateBuckets.set(key, bucket)
 
+    // 资源级授权（原有链一步不少：权限组主体匹配 → 服务/工具白名单 → 只读约束）
     const auth = this.authorize(caller, serviceId, toolName)
     if (!auth.ok) {
-      this.recordCall(service, toolName, caller, { ok: false, status: 'denied', latencyMs: Date.now() - started, version: service.currentVersion, error: auth.reason })
+      this.recordCall(service, toolName, caller, { ok: false, status: 'denied', latencyMs: Date.now() - started, version: service.currentVersion, error: auth.reason }, workRefForRecord)
       return { ok: false, status: 'denied', latencyMs: Date.now() - started, version: service.currentVersion, error: auth.reason }
     }
 
@@ -785,14 +844,14 @@ export class McpService extends Service {
       if (!transportResult.ok) {
         // 业务失败计入熔断（评审修复：熔断不能只依赖 30s 探活，真实调用失败同样累计）
         this.noteBusinessFailure(service, transportResult.error ?? 'MCP 服务调用失败')
-        return fail('error', transportResult.error ?? 'MCP 服务调用失败')
+        return fail('error', transportResult.error ?? 'MCP 服务调用失败', workRefForRecord)
       }
       this.noteBusinessSuccess(service)
       result = transportResult.result
       tokens = transportResult.tokens
     }
     const latencyMs = Date.now() - started
-    this.recordCall(service, toolName, caller, { ok: true, status: 'ok', latencyMs, version, tokens })
+    this.recordCall(service, toolName, caller, { ok: true, status: 'ok', latencyMs, version, tokens }, workRefForRecord)
     return { ok: true, status: 'ok', latencyMs, version, result }
   }
 
@@ -840,7 +899,9 @@ export class McpService extends Service {
     version: string
     error?: string
     tokens?: number
-  }): void {
+    /** 工作级授权拒绝的领域拒绝码（additive，审计区分拒绝层级）。 */
+    code?: WorkDenyCode
+  }, work?: McpCallWorkRef): void {
     const record: McpCallRecord = {
       id: newId('call'),
       at: now(),
@@ -860,6 +921,8 @@ export class McpService extends Service {
       tokens: outcome.tokens ?? 0,
       exec: service.exec,
       ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+      ...(outcome.code !== undefined ? { code: outcome.code } : {}),
+      ...(work ? { work } : {}),
     }
     this.calls().insert(record)
     // 调用环上限 5000 条，防膨胀
@@ -886,6 +949,9 @@ export class McpService extends Service {
             ...(record.tokens > 0 ? [{ key: 'tokens', value: record.tokens, unit: 'token' }] : []),
           ],
           idempotency_key: `mcp:${record.id}`,
+          // 工作关联（D11/V27）：workforce 调用 ID 作为统一 trace 附加（additive 可选字段，
+          // 幂等键 mcp:<callId> 照旧不改——usage 侧未识别的关联字段由组7增量承接）
+          ...(work?.invocationId ? { trace_id: work.invocationId } : {}),
         })
       } catch (error) {
         this.ctx.logger('mcp').warn('usage 计量登记失败', error)
@@ -1060,6 +1126,41 @@ function round3(value: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// 工作级授权辅助（施工蓝本 §10.2 / D.5：网关只消费窄端口，不反向依赖 workforce）
+// ---------------------------------------------------------------------------
+
+/**
+ * 窄端口运行时读取：platform-core 装配时注册 WorkforcePolicyRegistry（provide='workforcePolicy'）。
+ * Context 类型增补由 workforce 侧统一持有；这里防御式读取——服务未装配（独立单测宿主）时
+ * 返回 undefined，gateManagedWork 按端口未就绪走 legacy，保持现状。
+ */
+function workforcePolicyOf(ctx: Context): WorkforcePolicyRegistry | undefined {
+  try {
+    return (ctx as unknown as { workforcePolicy?: WorkforcePolicyRegistry }).workforcePolicy ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 已验证调用者 → WorkCallerRef（身份一律来自入口令牌解析结果，禁止来自请求参数）。
+ * user → human（principalId=userId）；agent/app → machine（refType/refId 供 workforce
+ * 反查数字员工技术绑定，对齐 authn principals 的 refType 语义）。
+ */
+function workCallerRefFromInvokeCaller(caller: InvokeCaller): WorkCallerRef {
+  if (caller.type === 'user') {
+    return { kind: 'human', principalId: caller.id, userId: caller.id, name: caller.name }
+  }
+  return {
+    kind: 'machine',
+    principalId: caller.id,
+    refType: caller.type === 'agent' ? 'agent' : 'app',
+    refId: caller.id,
+    name: caller.name,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 插件
 // ---------------------------------------------------------------------------
 
@@ -1070,7 +1171,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export const name = 'mcp'
-export const inject = ['opsStorage', 'platformBus', 'iam', 'audit', 'usage']
+export const inject = ['opsStorage', 'platformBus', 'iam', 'audit', 'usage', 'workforcePolicy']
 
 export function apply(ctx: Context) {
   const registry = new McpService(ctx)

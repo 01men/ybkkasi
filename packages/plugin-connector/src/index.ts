@@ -18,6 +18,13 @@ import { OcClient, OC_VERSION_PIN, type OcConnectionSummary, type OcRunLog, type
 import { OcError } from './errors.ts'
 import { rankOf, resolveRiskLevel, riskTierOf, type RiskLevel, type RiskTier } from './risk.ts'
 import { inOdd, normalizeOdd, type OddDeclaration } from './odd.ts'
+import {
+  WORK_DENY_CODE_LABELS,
+  gateManagedWork,
+  type WorkCallerRef,
+  type WorkRefIndex,
+  type WorkforcePolicyRegistry,
+} from '../../platform-core/src/workforce-port.ts'
 import * as connectorTools from './tools.ts'
 
 // ---------------------------------------------------------------------------
@@ -114,6 +121,8 @@ export interface InvokeCaller {
   id: string
   name: string
   actChain?: Array<{ name: string; type: string }>
+  /** additive（D10）：入口侧已验证的 principal ID（工具面来自 exec.principal）；缺省时按 id 反查。 */
+  principalId?: string
 }
 
 export type ConnectorInvokeStatus =
@@ -141,6 +150,37 @@ const PROCESSED_RUN_CAP = 4000
 
 function nowIso(): string {
   return new Date().toISOString()
+}
+
+/**
+ * 规范化参数序列化（§11.5）：对象键名字典序稳定排序、剔除 undefined，保证
+ * 「同参数不同键序/瞬态字段」得到同一摘要——稳定幂等键与 gate argsHash 共用本口径。
+ */
+function canonicalArgsJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null)
+  if (Array.isArray(value)) return `[${value.map(canonicalArgsJson).join(',')}]`
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalArgsJson(item)}`).join(',')}}`
+}
+
+/**
+ * InvokeCaller → 已验证工作调用者引用（D10/附录 D.5）：只携带服务端已核验字段；
+ * 受管判定由 workforce 端口按 refType/refId（agent/app 资源）或 userId 反查，与请求参数无关。
+ */
+function workCallerOf(caller: InvokeCaller): WorkCallerRef {
+  if (caller.type === 'user') {
+    const principalId = caller.principalId ?? caller.id
+    return { kind: 'human', principalId, userId: caller.id, name: caller.name }
+  }
+  return {
+    kind: 'machine',
+    principalId: caller.principalId ?? caller.id,
+    refType: caller.type === 'agent' ? 'agent' : 'app',
+    refId: caller.id,
+    name: caller.name,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,11 +278,12 @@ export class ConnectorHubService extends Service {
   callerFromPrincipal(principal?: ToolPrincipal): InvokeCaller {
     if (!principal) throw new Error('工具执行缺少身份上下文（fail-closed）')
     const act = principal.actChain?.length ? { actChain: principal.actChain } : {}
-    if (principal.kind === 'human') return { type: 'user', id: principal.userId ?? principal.principalId, name: principal.name, ...act }
+    const verified = { principalId: principal.principalId, ...act }
+    if (principal.kind === 'human') return { type: 'user', id: principal.userId ?? principal.principalId, name: principal.name, ...verified }
     const record = this.ctx.authn.principals().get(principal.principalId)
-    if (record?.refType === 'agent' && record.refId) return { type: 'agent', id: record.refId, name: principal.name, ...act }
-    if (record?.refType === 'app' && record.refId) return { type: 'app', id: record.refId, name: principal.name, ...act }
-    return { type: 'app', id: principal.principalId, name: principal.name, ...act }
+    if (record?.refType === 'agent' && record.refId) return { type: 'agent', id: record.refId, name: principal.name, ...verified }
+    if (record?.refType === 'app' && record.refId) return { type: 'app', id: record.refId, name: principal.name, ...verified }
+    return { type: 'app', id: principal.principalId, name: principal.name, ...verified }
   }
 
   private boundResourceOrg(principalId: string): string | undefined {
@@ -1232,9 +1273,45 @@ export class ConnectorHubService extends Service {
     dryRun?: boolean
     /** 审批执行能力令牌（OPT-P1-02）：仅类内部执行器闭包可铸造；REST/工具面不可达，伪造即 fail-closed。 */
     approvalCapability?: ApprovalExecutionCapability
+    /** additive（D10/§10.4）：工作授权引用索引，仅作索引透传；授权事实一律由 workforce 端口服务端回查。 */
+    workRef?: WorkRefIndex
   }): Promise<InvokeOutcome> {
     const started = Date.now()
     const input = params.input ?? {}
+
+    // ②′ 工作级准入（D10/蓝本 §4.3+附录 D.5）：在现有控制链之前追加，不替代、不删除原七步链。
+    // 受管判定只按可信 caller 反查（与是否携带 workRef 无关——员工删除引用不得退回宽松分支）；
+    // 端口未就绪或非受管 caller → legacy 原链照走。动作事实（provider/风险）读现有动作定义，不接受自报。
+    const actionDef = (() => {
+      try {
+        return this.requireAction(params.actionId)
+      } catch {
+        return undefined
+      }
+    })()
+    const argsHash = sha256Hex(canonicalArgsJson(input))
+    const gate = actionDef
+      ? await gateManagedWork(
+          (this.ctx as { workforcePolicy?: WorkforcePolicyRegistry }).workforcePolicy,
+          workCallerOf(caller),
+          {
+            facts: {
+              kind: 'connector',
+              registryId: actionDef.service,
+              action: params.actionId,
+              risk: actionDef.riskLevel === 'read' ? 'read' : 'write',
+            },
+            ...(params.workRef ? { ref: params.workRef } : {}),
+            argsHash,
+          },
+        )
+      : { mode: 'legacy' as const }
+    if (gate.mode === 'denied') {
+      // 拒绝风格与既有 denied 出口一致：中文原因 + 领域 code（§13.3）
+      const reason = `${WORK_DENY_CODE_LABELS[gate.code]}：${gate.message}`
+      this.emitDeniedEvent(caller, params.actionId, reason, started)
+      return { ok: false, status: 'denied', error: reason, latencyMs: Date.now() - started, code: gate.code }
+    }
 
     // ③ 第一层授权（subject 匹配 + policy 校验；orgId 由命中组决定——journal 决策③）
     const verdict = this.authorize(caller, params.actionId, input)
@@ -1359,7 +1436,15 @@ export class ConnectorHubService extends Service {
         this.emitDeniedEvent(caller, params.actionId, `权限组策略在授权后变更（快照漂移 ${authorizedHash.slice(0, 8)}→${currentHash ? currentHash.slice(0, 8) : 'deleted'}），拒绝按旧快照执行`, started)
         return { ok: false, status: 'denied', error: '权限组策略在授权后发生变更（快照漂移），已拒绝执行：请重试以按最新策略重新授权', latencyMs: Date.now() - started }
       }
-      const idempotencyKey = action.riskLevel === 'read' ? undefined : crypto.randomUUID()
+      // 稳定业务幂等键（§4.3/§11.5，V19/V20）：受管放行且 run 已绑定时改用稳定键
+      // sha256(`wf:<runId>:<stepKey>:<actionId>:<参数摘要>`)（截断 48 位安全长度），跨请求复用——
+      // 同一步骤重投不再生成第二次业务写入；非受管路径保持原随机键（现状不变）。
+      const managedRunId = gate.mode === 'managed' ? (gate.work.runId ?? params.workRef?.runId ?? '') : ''
+      const idempotencyKey = action.riskLevel === 'read'
+        ? undefined
+        : gate.mode === 'managed' && managedRunId
+          ? sha256Hex(`wf:${managedRunId}:${params.workRef?.stepKey ?? ''}:${action.id}:${argsHash}`).slice(0, 48)
+          : crypto.randomUUID()
       const chosenAlias = effectiveAlias
       const outcome = await this.executeWithRecovery(group, action, {
         input, alias: chosenAlias, idempotencyKey,
@@ -1672,7 +1757,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export const name = 'connector'
-export const inject = ['opsStorage', 'platformBus', 'iam', 'audit', 'usage', 'txnStore', 'authn', 'resourceCore']
+export const inject = ['opsStorage', 'platformBus', 'iam', 'audit', 'usage', 'txnStore', 'authn', 'resourceCore', 'workforcePolicy']
 
 export function apply(ctx: Context) {
   // 与 plugin-mcp 相同的装配形态：构造即注册（provide='connectorHub'），

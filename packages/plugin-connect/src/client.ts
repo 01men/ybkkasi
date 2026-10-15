@@ -160,7 +160,23 @@ export class ConnectClientService extends Service {
     const hubUrl = this.config.hubUrl
     const executeOnce = async (): Promise<{ isError?: boolean; value?: unknown; error?: { message?: string } }> => {
       const token = await this.machineToken()
-      return await this.hubCall(hubUrl, 'POST', '/api/tools/execute', { name: toolName, args }, {
+      return await this.hubCall(hubUrl, 'POST', '/api/tools/execute', {
+        name: toolName,
+        args,
+        // 节点身份 ≠ 员工执行身份（D13/§10.4）：转发请求 additive 携带自身已验证主体绑定信封，
+        // 仅供宿主工具桥侧（/api/tools/execute）日志/归因观测。硬性边界：
+        //   1. 信封只随转发透传自身凭证绑定，不含任何可提升权限的声明；
+        //   2. 宿主鉴权仍以 Bearer 机器令牌独立验证，本字段绝不参与授权判定；
+        //   3. 不携带也不接受任何「平台内部请求」免验标记（§10.5：内部动作必须由受信任内部路径发起）。
+        meta: {
+          principal: {
+            kind: 'machine' as const,
+            principalId: this.config.principalId,
+            clientId: this.config.clientId,
+            clientName: this.config.clientName,
+          },
+        },
+      }, {
         authorization: `Bearer ${token}`,
         signal: exec?.signal ?? AbortSignal.timeout(60_000),
       }) as { isError?: boolean; value?: unknown; error?: { message?: string } }

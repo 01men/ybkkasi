@@ -44,6 +44,8 @@ export const inject = [
   'iam', 'authn', 'oidc', 'entryTickets', 'audit', 'usage', 'market', 'modelGateway',
   'mcpRegistry', 'nasRegistry', 'nasAuthz', 'nasShareLinks', 'skillHub', 'resourceCore', 'agentRegistry', 'appRegistry', 'update',
   'connectorHub',
+  // 数字员工窄端口登记器（platform-core 首位装配即提供；实现由 plugin-workforce 后补登记，port() 缺席=legacy）
+  'workforcePolicy',
 ]
 
 // 公开路径白名单（免鉴权）：导出供 selftest「rbac endpoint matrix」比对——清单变动即红

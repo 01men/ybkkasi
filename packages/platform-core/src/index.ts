@@ -13,6 +13,7 @@ import { PlatformBusService } from './bus.ts'
 import { ToolRuntimeLite } from './tools-lite.ts'
 import { HttpServerService } from './http.ts'
 import { SqliteTxnService } from './sqlite.ts'
+import { WorkforcePolicyRegistry } from './workforce-port.ts'
 import { BehaviorService } from './behavior.ts'
 import { ScenegraphService } from './scenegraph.ts'
 
@@ -24,6 +25,7 @@ export * from './rest-gate.ts'
 export * from './ids.ts'
 export * from './sensitive.ts'
 export * from './sqlite.ts'
+export * from './workforce-port.ts'
 export * from './yaml.ts'
 export * from './zip.ts'
 export * from './plugin-ctx.ts'
@@ -47,6 +49,9 @@ export async function apply(ctx: Context, config: PlatformCoreConfig = {}) {
   const storage = new StorageService(ctx, { dataDir: config.dataDir })
   ctx.plugin(PlatformBusService)
   ctx.plugin(SqliteTxnService, { dataDir: config.dataDir })
+  // 数字员工工作策略登记器（窄端口）：plugin-workforce ready 后登记实现，
+  // 资源网关/exec-hub 经 ctx.workforcePolicy 消费（装配顺序无关，防循环依赖）
+  ctx.plugin(WorkforcePolicyRegistry)
   if (config.provideToolRuntime !== false) {
     ctx.plugin(ToolRuntimeLite)
   }

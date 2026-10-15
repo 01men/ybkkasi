@@ -22,14 +22,16 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../platform-core/src/index.ts'
-import { createRestGate, defineTool, PlatformEvents, newId, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { createRestGate, defineTool, PlatformEvents, newId, WORK_DENY_CODE_LABELS, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
 import type { AuditLogRecord } from '../../plugin-audit/src/index.ts'
 import {
   buildIssueContextPack, blockersResolved, computeAgentHealth, cronIsValid, cronMatches,
-  decideReleaseRecovery, decideWakeAdmission, issueCanTransition, materializeGoalAncestry,
+  decideCompleteOwnership, decideLeaseClaim, decideReleaseRecovery, decideRunAdoption,
+  decideWakeAdmission, issueCanTransition, materializeGoalAncestry,
   normalizeAgentKey, wakeIdempotencyKey,
   type AgentHealthLevel, type IssueStatus,
 } from './domain.ts'
+import { LeaseStoreService, type RunLeaseRecord } from './lease-store.ts'
 import { seedExecHub } from './seed.ts'
 
 // ---------------------------------------------------------------------------
@@ -178,8 +180,32 @@ const FIRST_TICK_MS = Number(process.env.EXEC_HUB_FIRST_TICK_MS ?? Math.min(TICK
 const BATCH_SIZE = Number(process.env.EXEC_HUB_BATCH ?? 50)
 /** 僵尸锁阈值：Paperclip 建议约 2× 心跳周期，缺省 5 分钟。 */
 const LOCK_TIMEOUT_MS = Number(process.env.EXEC_LOCK_TIMEOUT_MS ?? 300_000)
+/** 执行租约缺省 TTL（附录 A 决策 3：exec_run_leases 权威；运行时应在到期前 renewLease 心跳）。 */
+const DEFAULT_LEASE_TTL_MS = Number(process.env.EXEC_LEASE_TTL_MS ?? 15 * 60_000)
 const HEARTBEAT_RETENTION_MS = 7 * 86_400_000
 const METRICS_OVERDUE_MS = 24 * 3_600_000
+
+// ---------------------------------------------------------------------------
+// exec-hub 集成端口返回类型（结构镜像 plugin-workforce contract.ts 的
+// EmployeeClaimResult / EmployeeLeaseResult，冻结契约 V1.0——防循环不 import，
+// 结构逐字段对齐，Group 2 结构化消费）
+// ---------------------------------------------------------------------------
+
+/** 统一拒绝码（exec-hub 工作面口径；与 platform-core WorkDenyCode 同名子集）。 */
+export type ExecHubWorkDenyCode =
+  | 'ISSUE_NOT_FOUND' | 'ISSUE_CLOSED' | 'LEASE_HELD_BY_OTHER'
+  | 'ADMISSION_DENIED' | 'BUDGET_EXCEEDED' | 'APPROVAL_REQUIRED'
+  | 'RUN_NOT_OWNED' | 'LEASE_STALE' | 'EXEC_HUB_UNAVAILABLE' | 'POLICY_INTERNAL_ERROR'
+
+/** 员工认领结果（镜像 contract.EmployeeClaimResult）。 */
+export type EmployeeClaimResult =
+  | { ok: true; issueId: string; runId: string; lease: RunLeaseRecord; created: boolean }
+  | { ok: false; code: ExecHubWorkDenyCode; message: string; holder?: string }
+
+/** 员工租约结果（镜像 contract.EmployeeLeaseResult）。 */
+export type EmployeeLeaseResult =
+  | { ok: true; lease: RunLeaseRecord }
+  | { ok: false; code: Extract<ExecHubWorkDenyCode, 'LEASE_STALE' | 'RUN_NOT_OWNED' | 'EXEC_HUB_UNAVAILABLE'>; message: string }
 
 // ---------------------------------------------------------------------------
 // 服务
@@ -188,12 +214,22 @@ const METRICS_OVERDUE_MS = 24 * 3_600_000
 export class ExecutionHubService extends Service {
   static readonly provide = 'execHub'
 
+  /**
+   * 执行租约权威存储（附录 A 决策 3：exec_run_leases 为唯一权威，issue 三字段为投影）。
+   * txnStore 由 platform-core 首位装配（exec-hub 之前），构造期即可迁移建表。
+   */
+  readonly leaseStore: LeaseStoreService
+
   /** 纳管提报催办的日去重（进程内；重启重发一次可接受，告警不追求恰好一次）。 */
   private metricsReminderDayKeys = new Set<string>()
   private tickBusy = false
 
   constructor(ctx: Context) {
     super(ctx, 'execHub')
+
+    // 权威租约存储：建表幂等（exec_run_leases；索引 issueId+status、runId）
+    this.leaseStore = new LeaseStoreService(ctx.txnStore, { ttlMs: DEFAULT_LEASE_TTL_MS })
+    this.leaseStore.migrate()
 
     // 审批通过（exec.issue.run）→ 重新入队被门禁挂起的唤醒
     ctx.platformBus.on(PlatformEvents.ApprovalDecided, (payload) => {
@@ -507,10 +543,23 @@ export class ExecutionHubService extends Service {
 
   // -- 执行锁（E2：CAS 语义，检查-置位在同一同步段＝Node 原子） -------------------
 
+  /**
+   * 投影取锁（issue 三字段 CAS）。附录 A 决策 3 后本方法只维护投影，持有裁决以
+   * exec_run_leases 为权威；两处护栏语义（D05/D06 幂等认领）：
+   *   - 同 runId 重复获取＝ok（刷新 agentKey/心跳时间戳，不报冲突）；
+   *   - 投影指向已终态/已消失的 run（租约权威口径下无人持有）→ 视为可夺回，直接覆盖。
+   */
   acquireLock(issueId: string, runId: string, agentKey: string): { ok: true } | { ok: false; reason: 'no_issue' | 'locked_by_other'; holder?: string } {
     const issue = this.issues().get(issueId)
     if (!issue) return { ok: false, reason: 'no_issue' }
-    if (issue.executionRunId) return { ok: false, reason: 'locked_by_other', holder: issue.executionRunId }
+    if (issue.executionRunId === runId) {
+      this.issues().update(issueId, { executionAgentKey: agentKey, executionLockedAt: new Date().toISOString() })
+      return { ok: true }
+    }
+    if (issue.executionRunId) {
+      const holder = this.runs().get(issue.executionRunId)
+      if (holder && holder.status === 'running') return { ok: false, reason: 'locked_by_other', holder: issue.executionRunId }
+    }
     this.issues().update(issueId, {
       executionRunId: runId,
       executionAgentKey: agentKey,
@@ -551,6 +600,8 @@ export class ExecutionHubService extends Service {
       }
       const holderRun = issue.executionRunId!
       this.issues().update(issue.id, { executionRunId: undefined, executionAgentKey: undefined, executionLockedAt: undefined })
+      // 租约与投影同步收口：僵尸投影对应的权威租约一并释放（防 TTL 内幽灵持有）
+      this.releaseLeasesSafe(holderRun, `zombie-reclaim:${decision.kind}`)
       reclaimed += 1
       this.auditSafe({
         type: 'change', actorType: 'machine', actorId: 'exec-hub', actorName: '执行中枢',
@@ -577,8 +628,15 @@ export class ExecutionHubService extends Service {
     })
   }
 
-  /** run 收尾：终态 + run 级释放锁 + in_progress 任务交回审阅（review）。 */
-  completeRun(runId: string, options: { status?: RunStatus; summary?: string } = {}): RunRecord {
+  /**
+   * run 收尾：终态 + run 级释放锁与租约 + in_progress 任务交回审阅（review）。
+   *
+   * 兼容说明：任务去向现状为 review（「交付已提交、真人验收」，§6.5），既有调用方
+   * （transitionIssue 收尾等）行为不变；仅 exec_complete 显式传
+   * failedIssueDisposition='todo' 时，失败 run 的进行中任务转回待办（todo）等待重派
+   * （直接更新，与 review 同款处理——todo 供调度重新唤醒，不占 review 验收队列）。
+   */
+  completeRun(runId: string, options: { status?: RunStatus; summary?: string; failedIssueDisposition?: 'review' | 'todo' } = {}): RunRecord {
     const run = this.runs().get(runId)
     if (!run) throw new Error(`run 不存在：${runId}`)
     if (run.status !== 'running') return run
@@ -588,9 +646,12 @@ export class ExecutionHubService extends Service {
       ...(options.summary ? { summary: options.summary } : {}),
     })
     this.releaseLocks(runId)
+    // 租约随 run 终态释放（权威存储收口；投影已由 releaseLocks 清理）
+    this.releaseLeasesSafe(runId, `run-${updated.status}`)
+    const failedToTodo = updated.status !== 'completed' && options.failedIssueDisposition === 'todo'
     for (const issueId of run.issueIds) {
       const issue = this.issues().get(issueId)
-      if (issue && issue.status === 'in_progress') this.issues().update(issueId, { status: 'review' })
+      if (issue && issue.status === 'in_progress') this.issues().update(issueId, { status: failedToTodo ? 'todo' : 'review' })
     }
     this.auditSafe({
       type: 'invoke', actorType: 'machine', actorId: 'exec-hub', actorName: '执行中枢',
@@ -602,6 +663,221 @@ export class ExecutionHubService extends Service {
       runId, agentId: run.agentId, issueIds: run.issueIds, status: updated.status,
     })
     return updated
+  }
+
+  // -- 员工工作集成端口（ExecHubWorkIntegration，附录 A 决策 3/§6.2） ----------------
+  //
+  // plugin-workforce 结构化消费（组2）：认领＝「幂等确认已分配租约」——
+  // 统一准入（冻结/预算/权限/P0，与 processWake 同源函数不绕行）→ get-or-create run
+  // （V05：调度预取锁的 run 直接被认领采用，不另造）→ exec_run_leases 原子取租约
+  // （权威）→ issue 投影写齐（现状兼容）。本插件不 import plugin-workforce（§10.2）。
+
+  /** 员工幂等认领：同员工+同任务重复认领返回既有 run/租约（created=false）。 */
+  async claimForEmployee(input: { issueId: string; employeeId: string; agentKey: string; principalId: string; ttlMs?: number }): Promise<EmployeeClaimResult> {
+    try {
+      if (!input.issueId) return { ok: false, code: 'ISSUE_NOT_FOUND', message: '任务 ID 必填' }
+      if (!input.employeeId || !input.principalId) {
+        return { ok: false, code: 'ADMISSION_DENIED', message: '认领参数不足：employeeId 与 principalId 必填（fail-closed）' }
+      }
+      const issue = this.issues().get(input.issueId)
+      if (!issue) return { ok: false, code: 'ISSUE_NOT_FOUND', message: `任务不存在：${input.issueId}` }
+      if (issue.status === 'done' || issue.status === 'cancelled') {
+        return { ok: false, code: 'ISSUE_CLOSED', message: `任务已${issue.status === 'done' ? '完成' : '取消'}关闭，不可认领` }
+      }
+      // agentKey 归一：优先入参，否则 employee:<id>
+      const agentKey = input.agentKey?.trim() ? normalizeAgentKey(input.agentKey) : `employee:${input.employeeId}`
+      // 统一准入照跑（冻结/预算/权限/P0——复用 processWake 同源函数，D06 不绕行）
+      const admission = this.admitAgentForClaim(issue, agentKey)
+      if (!admission.ok) return { ok: false, code: admission.code, message: admission.message }
+      const ttlMs = input.ttlMs && input.ttlMs > 0 ? input.ttlMs : DEFAULT_LEASE_TTL_MS
+      // 幂等裁决（domain 纯函数）先行：同持有者已有有效租约 → 续期并复用既有 run，不另造
+      const existing = this.leaseStore.activeForIssue(issue.id)
+      if (existing) {
+        const decision = decideLeaseClaim({
+          activeLeasePresent: true,
+          activeLeaseExpired: false,
+          existingEmployeeId: existing.employeeId,
+          existingAgentKey: existing.agentKey,
+          requestedEmployeeId: input.employeeId,
+          requestedAgentKey: agentKey,
+        })
+        if (decision.kind === 'idempotent') {
+          const renewed = this.leaseStore.renew({ leaseId: existing.id, ttlMs })
+          const lease = renewed.ok ? renewed.lease : existing
+          this.writeExecutionProjection(issue.id, lease.runId, agentKey)
+          this.ensureIssueInProgress(issue)
+          return { ok: true, issueId: issue.id, runId: lease.runId, lease, created: false }
+        }
+        if (decision.kind === 'held-by-other') {
+          return { ok: false, code: 'LEASE_HELD_BY_OTHER', message: `任务执行租约由 ${decision.holder} 持有，不可重复认领`, holder: decision.holder }
+        }
+      }
+      // get-or-create run（V05/D05：唤醒预持锁的运行中 run 直接采用；脏投影才新建）
+      const agentId = this.resolveAgentIdForIssue(issue, agentKey)
+      const projectedRun = issue.executionRunId ? this.runs().get(issue.executionRunId) : undefined
+      const adoption = decideRunAdoption({
+        projectedRunIdPresent: Boolean(issue.executionRunId),
+        projectedRunRunning: Boolean(projectedRun && projectedRun.status === 'running'),
+      })
+      let runId: string
+      if (adoption.kind === 'adopt' && issue.executionRunId) {
+        runId = issue.executionRunId
+        if (projectedRun && !projectedRun.issueIds.includes(issue.id)) {
+          this.runs().update(runId, { issueIds: [...projectedRun.issueIds, issue.id] })
+        }
+      } else {
+        const agent = agentId ? this.agentOf(agentId) : undefined
+        runId = this.createRun({
+          orgId: issue.orgId, ...(agentId ? { agentId } : {}), issueIds: [issue.id], trigger: 'api',
+          contextPack: this.buildIssueContext(issue, agent ?? {}),
+        }).id
+      }
+      // 原子取租约（权威 CAS；竞争失败映射为他人持有）
+      const acquired = this.leaseStore.acquire({ issueId: issue.id, runId, employeeId: input.employeeId, agentKey, principalId: input.principalId, ttlMs })
+      if (!acquired.ok) {
+        return { ok: false, code: 'LEASE_HELD_BY_OTHER', message: `任务执行租约由 ${acquired.holder} 持有，不可重复认领`, holder: acquired.holder }
+      }
+      // 投影写齐（附录 A 决策 3：权威在 exec_run_leases，投影保持现状兼容）
+      const cas = this.acquireLock(issue.id, runId, agentKey)
+      if (!cas.ok && cas.reason === 'locked_by_other') {
+        // 投影残留他人运行中 run（迁移期脏投影）：以租约权威为准覆盖投影
+        this.writeExecutionProjection(issue.id, runId, agentKey)
+      }
+      this.ensureIssueInProgress(issue)
+      this.ctx.platformBus.emit(PlatformEvents.ExecIssueChanged, { issueId: issue.id, action: 'claimed', status: 'in_progress', runId, employeeId: input.employeeId })
+      this.auditSafe({
+        type: 'invoke', actorType: 'machine', actorId: `employee:${input.employeeId}`, actorName: agentKey,
+        action: 'exec.work.claimed', resourceType: 'issue', resourceId: issue.id, resourceName: issue.title,
+        result: 'ok', detail: `run=${runId} lease=${acquired.lease.id} v${acquired.lease.leaseVersion}${acquired.created ? '' : '（幂等续期）'}`,
+      })
+      return { ok: true, issueId: issue.id, runId, lease: acquired.lease, created: acquired.created }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: `执行中枢认领失败：${message}` }
+    }
+  }
+
+  /** 续租/进度心跳：同主体、active、未过期才能续（否则 LEASE_STALE）。 */
+  async renewLease(input: { runId: string; principalId: string; ttlMs?: number }): Promise<EmployeeLeaseResult> {
+    try {
+      if (!input.runId || !input.principalId) {
+        return { ok: false, code: 'LEASE_STALE', message: '续租参数不足：runId 与 principalId 必填（fail-closed）' }
+      }
+      const renewed = this.leaseStore.renew({ runId: input.runId, principalId: input.principalId, ttlMs: input.ttlMs })
+      if (!renewed.ok) return { ok: false, code: 'LEASE_STALE', message: renewed.message }
+      return { ok: true, lease: renewed.lease }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: `执行中枢续租失败：${message}` }
+    }
+  }
+
+  /** exec_complete 的主体/run 所有权校验（D07）：跨员工/旧租约拒绝（端口口径从严：无租约记录亦拒绝）。 */
+  async assertRunOwnership(input: { runId: string; principalId: string }): Promise<{ ok: true; lease: RunLeaseRecord } | { ok: false; code: ExecHubWorkDenyCode; message: string }> {
+    try {
+      if (!input.runId || !input.principalId) {
+        return { ok: false, code: 'RUN_NOT_OWNED', message: '所有权校验参数不足：runId 与 principalId 必填（fail-closed）' }
+      }
+      const lease = this.leaseStore.latestForRun(input.runId)
+      const decision = decideCompleteOwnership({
+        hasLeaseRecord: Boolean(lease),
+        status: lease?.status ?? 'released',
+        expired: lease ? new Date(lease.expiresAt).getTime() <= Date.now() : true,
+        callerPrincipalId: input.principalId,
+        leasePrincipalId: lease?.principalId ?? '',
+      })
+      if (decision.kind === 'deny') return { ok: false, code: decision.code, message: decision.reason }
+      if (!lease) return { ok: false, code: 'RUN_NOT_OWNED', message: '该 run 无有效执行租约，不归属当前调用主体' }
+      return { ok: true, lease }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { ok: false, code: 'EXEC_HUB_UNAVAILABLE', message: `执行中枢所有权校验失败：${message}` }
+    }
+  }
+
+  /** 停职/撤销联动：按 run 释放权威租约并清理 issue 投影（不改变 run 业务状态）。 */
+  releaseForRun(runId: string, reason: string): void {
+    if (!runId) return
+    const released = this.leaseStore.release(runId, reason || 'released')
+    this.releaseLocks(runId)
+    if (released > 0) {
+      this.auditSafe({
+        type: 'change', actorType: 'machine', actorId: 'exec-hub', actorName: '执行中枢',
+        action: 'exec.work.lease_released', resourceType: 'run', resourceId: runId,
+        result: 'ok', detail: `leases=${released} reason=${reason || 'released'}`,
+      })
+    }
+  }
+
+  /** 统一准入（D06）：冻结/预算/权限（Agent 可解析时）+ P0 审批门禁（任务级恒查）。复用 processWake 同源函数。 */
+  private admitAgentForClaim(issue: IssueRecord, agentKey: string): { ok: true } | { ok: false; code: 'ADMISSION_DENIED' | 'BUDGET_EXCEEDED' | 'APPROVAL_REQUIRED'; message: string } {
+    const agentId = this.resolveAgentIdForIssue(issue, agentKey)
+    const agent = agentId ? this.agentOf(agentId) : undefined
+    if (agent) {
+      if (this.isAgentFrozen(agent.id)) {
+        return { ok: false, code: 'ADMISSION_DENIED', message: `Agent 已冻结（预算超限联动），待解冻审批：${agent.name}` }
+      }
+      const budgetGate = this.checkAgentBudget(agent.id, agent.orgId)
+      if (budgetGate.blocked) return { ok: false, code: 'BUDGET_EXCEEDED', message: `预算熔断：${budgetGate.reason ?? '预算已超限'}` }
+      const scopes = this.agentScopes(agent.id)
+      if (scopes === null || !(scopes.includes('exec.write') || scopes.includes('*'))) {
+        return { ok: false, code: 'ADMISSION_DENIED', message: 'Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）' }
+      }
+    }
+    if (issue.priority === 'P0' && !this.p0ApprovalPassed(issue.id)) {
+      return { ok: false, code: 'APPROVAL_REQUIRED', message: 'P0 任务需先通过 exec.issue.run 审批（已自动挂单，等待放行）' }
+    }
+    return { ok: true }
+  }
+
+  /** 冻结检查（复用点：processWake 与员工认领准入同源）。 */
+  private isAgentFrozen(agentId: string): boolean {
+    try {
+      return Boolean(this.ctx.agentRegistry && typeof this.ctx.agentRegistry.isFrozen === 'function' && this.ctx.agentRegistry.isFrozen(agentId))
+    } catch {
+      return false
+    }
+  }
+
+  /** 认领准入的 Agent 解析：优先任务负责人，其次按 agentKey 匹配（id 直等 / 归一化名称）。 */
+  private resolveAgentIdForIssue(issue: IssueRecord, agentKey: string): string | undefined {
+    if (issue.assigneeAgentId && this.agentOf(issue.assigneeAgentId)) return issue.assigneeAgentId
+    const normalized = normalizeAgentKey(agentKey)
+    if (normalized) {
+      const byId = this.agentOf(normalized)
+      if (byId) return byId.id
+      const byName = this.ctx.resourceCore.list('agent').find((candidate) => normalizeAgentKey(candidate.name) === normalized)
+      if (byName) return byName.id
+    }
+    return issue.assigneeAgentId || undefined
+  }
+
+  /** 投影写齐（附录 A 决策 3：权威在 exec_run_leases，三字段降级为投影）。 */
+  private writeExecutionProjection(issueId: string, runId: string, agentKey: string): void {
+    this.issues().update(issueId, {
+      executionRunId: runId,
+      executionAgentKey: agentKey,
+      executionLockedAt: new Date().toISOString(),
+    })
+  }
+
+  /** 工具侧投影写入口（exec_claim 幂等分支复用；公开薄包装）。 */
+  writeClaimProjectionForTool(issueId: string, runId: string, agentKey: string): void {
+    this.writeExecutionProjection(issueId, runId, agentKey)
+  }
+
+  /** 任务进行中推进（认领/唤醒共用：todo → in_progress）。 */
+  private ensureIssueInProgress(issue: IssueRecord): void {
+    if (issue.status === 'todo') this.issues().update(issue.id, { status: 'in_progress' })
+  }
+
+  /** 租约释放的安全包装（租约面异常不阻断 run 收尾主链路）。 */
+  private releaseLeasesSafe(runId: string, reason: string): void {
+    try {
+      this.leaseStore.release(runId, reason)
+    } catch (error) {
+      this.ctx.logger('exec-hub').warn(`租约释放异常（run=${runId} reason=${reason}）：${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   // -- 唤醒队列（E3） -------------------------------------------------------------
@@ -750,8 +1026,8 @@ export class ExecutionHubService extends Service {
       return 'failed'
     }
 
-    // 联动①：冻结检查（R10：预算超限冻结后不再唤醒，直至解冻审批执行）
-    if (this.ctx.agentRegistry && typeof this.ctx.agentRegistry.isFrozen === 'function' && this.ctx.agentRegistry.isFrozen(agentId)) {
+    // 联动①：冻结检查（R10：预算超限冻结后不再唤醒，直至解冻审批执行；与员工认领准入同源 isAgentFrozen）
+    if (this.isAgentFrozen(agentId)) {
       this.recordHeartbeat(agent, 'skipped_frozen', wake.trigger)
       this.wakes().update(wakeId, { status: 'failed', lastError: 'Agent 已冻结（预算超限联动），待解冻审批' })
       this.auditSafe({
@@ -1535,22 +1811,128 @@ export function apply(ctx: Context) {
 
     tools.register(defineTool({
       name: 'exec_claim',
-      description: '认领任务并取执行锁（CAS：他人持有则告知 locked_by_other；认领即建 run 并置任务进行中）。',
+      description: '认领任务并取执行租约（幂等：同主体重复认领返回既有 run 不报错；他人持有则告知 locked_by_other；受管数字员工自动走统一准入与员工租约）。',
       permission: 'exec.write',
       parameters: { issueId: { type: 'string', required: true, description: '任务 ID' } },
       output: { type: 'object', additionalProperties: true },
       async execute(args, exec) {
-        const issue = hub.issues().get(String(args.issueId ?? ''))
-        if (!issue) throw new Error(`任务不存在：${String(args.issueId)}`)
+        const issueId = String(args.issueId ?? '')
+        // D05/D06 fail-closed：无调用主体不认领（身份不入工具参数，一律取 exec.principal）
+        if (!exec.principal) throw new Error('缺少调用主体（exec.principal），拒绝认领（fail-closed）——请检查令牌与会话注入')
+        const issue = hub.issues().get(issueId)
+        if (!issue) throw new Error(`任务不存在：${issueId}`)
+        const principal = exec.principal
+        // 受管数字员工路径（运行时结构化探测 workforce 服务，不进 inject——装配在 exec-hub 之后）
+        const workforce = ctx as unknown as {
+          workforceAdmission?: { claimWork?: (caller: unknown, input: { issueId: string }) => Promise<unknown> }
+          workforceIdentity?: { resolveByCaller?: (caller: unknown) => Promise<unknown> }
+        }
+        const admission = workforce.workforceAdmission
+        const identity = workforce.workforceIdentity
+        const isManagedAgent = principal.kind === 'machine' && principal.refType === 'agent'
+          && typeof admission?.claimWork === 'function' && typeof identity?.resolveByCaller === 'function'
+        if (isManagedAgent) {
+          // WorkCallerRef 形状（platform-core/workforce-port）：可信主体由令牌解析，禁止 args 传入
+          const caller = {
+            kind: 'machine' as const,
+            principalId: principal.principalId,
+            refType: principal.refType,
+            refId: principal.refId,
+            ...(principal.name ? { name: principal.name } : {}),
+          }
+          let resolution: unknown
+          try {
+            resolution = await identity.resolveByCaller!(caller)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            return { ok: false, code: 'POLICY_INTERNAL_ERROR', message: `受管身份反查失败（fail-closed）：${message}` }
+          }
+          if (resolution) {
+            // 命中受管员工 → 统一认领入口（准入/permit/能力清单/租约一次完成，不复制实现）
+            const outcome = await admission.claimWork!(caller, { issueId }) as {
+              ok: boolean
+              employeeId?: string; agentId?: string; issueId?: string; runId?: string; idempotent?: boolean
+              lease?: { id: string; leaseVersion: number; expiresAt: string }
+              permit?: { id: string }; manifest?: { id: string }; tools?: Array<{ handle: string }>
+              code?: string; message?: string; holder?: string
+            }
+            if (outcome.ok) {
+              return {
+                ok: true,
+                issueId: outcome.issueId ?? issueId,
+                runId: outcome.runId ?? '',
+                employeeId: outcome.employeeId ?? '',
+                ...(outcome.agentId ? { agentId: outcome.agentId } : {}),
+                leaseId: outcome.lease?.id ?? '',
+                leaseVersion: outcome.lease?.leaseVersion ?? 0,
+                expiresAt: outcome.lease?.expiresAt ?? '',
+                ...(outcome.permit ? { permitId: outcome.permit.id } : {}),
+                ...(outcome.manifest ? { manifestId: outcome.manifest.id } : {}),
+                ...(outcome.tools ? { tools: outcome.tools.map((tool) => tool.handle) } : {}),
+                idempotent: outcome.idempotent === true,
+              }
+            }
+            const code = outcome.code ?? 'POLICY_INTERNAL_ERROR'
+            const label = WORK_DENY_CODE_LABELS[code as keyof typeof WORK_DENY_CODE_LABELS]
+            return {
+              ok: false,
+              code,
+              message: outcome.message || (label ? `${label}（code=${code}）` : `认领被拒绝（code=${code}）`),
+              ...(outcome.holder ? { holder: outcome.holder } : {}),
+            }
+          }
+          // 非受管（resolveByCaller=null）→ 落回旧 exec_claim 语义（保持兼容）
+        }
+        // -- 旧语义（D05/D06 幂等修正版） -----------------------------------------
         // 机器主体只能认领指派给自己的任务（人类 exec.write 持有者不受此限）
-        if (exec.principal?.kind === 'machine' && exec.principal.refType === 'agent' && issue.assigneeAgentId !== exec.principal.refId) {
+        if (principal.kind === 'machine' && principal.refType === 'agent' && issue.assigneeAgentId !== principal.refId) {
           throw new Error('该任务未指派给你（no_permission）')
         }
-        if (issue.executionRunId) return { ok: false, reason: 'locked_by_other', holder: issue.executionRunId }
         const agent = issue.assigneeAgentId ? ctx.resourceCore.collection('agent').get(issue.assigneeAgentId) : undefined
+        const agentKey = normalizeAgentKey(agent?.name ?? 'unknown')
+        // 幂等①：权威租约已存在——同 agentKey（legacy 判同键）→ 返回既有 run；他人 → locked_by_other
+        const active = hub.leaseStore.activeForIssue(issue.id)
+        if (active) {
+          const decision = decideLeaseClaim({
+            activeLeasePresent: true,
+            activeLeaseExpired: false,
+            existingEmployeeId: active.employeeId,
+            existingAgentKey: active.agentKey,
+            requestedEmployeeId: '',
+            requestedAgentKey: agentKey,
+          })
+          if (decision.kind === 'idempotent') {
+            hub.leaseStore.renew({ leaseId: active.id })
+            hub.writeClaimProjectionForTool(issue.id, active.runId, agentKey)
+            return { ok: true, runId: active.runId, idempotent: true, leaseId: active.id, leaseVersion: active.leaseVersion }
+          }
+          return { ok: false, reason: 'locked_by_other', holder: active.runId }
+        }
+        // 幂等②：无租约但投影指向同主体的运行中 run（唤醒预取锁/旧认领）→ 采纳既有 run（V05）
+        if (issue.executionRunId) {
+          const existingRun = hub.runs().get(issue.executionRunId)
+          if (existingRun && existingRun.status === 'running') {
+            const sameSubject = principal.kind === 'machine' && principal.refType === 'agent'
+              ? existingRun.agentId === principal.refId
+              : existingRun.agentId === issue.assigneeAgentId
+            if (sameSubject) {
+              const adopted = hub.leaseStore.acquire({ issueId: issue.id, runId: existingRun.id, employeeId: '', agentKey, principalId: principal.principalId })
+              if (adopted.ok) {
+                hub.writeClaimProjectionForTool(issue.id, existingRun.id, agentKey)
+                if (issue.status === 'todo') hub.issues().update(issue.id, { status: 'in_progress' })
+                return { ok: true, runId: existingRun.id, idempotent: true, leaseId: adopted.lease.id, leaseVersion: adopted.lease.leaseVersion }
+              }
+              return { ok: false, reason: 'locked_by_other', holder: existingRun.id }
+            }
+            return { ok: false, reason: 'locked_by_other', holder: issue.executionRunId }
+          }
+          // run 缺失/已终态＝脏投影：继续新建（acquireLock 会覆盖残留投影）
+        }
         const runId = newId('run')
-        const acquired = hub.acquireLock(issue.id, runId, normalizeAgentKey(agent?.name ?? 'unknown'))
-        if (!acquired.ok) return { ok: false, reason: acquired.reason, holder: acquired.holder }
+        const acquired = hub.leaseStore.acquire({ issueId: issue.id, runId, employeeId: '', agentKey, principalId: principal.principalId })
+        if (!acquired.ok) return { ok: false, reason: 'locked_by_other', holder: acquired.holder }
+        const cas = hub.acquireLock(issue.id, runId, agentKey)
+        if (!cas.ok) return { ok: false, reason: cas.reason, holder: cas.holder }
         hub.runs().insert({
           id: runId, orgId: issue.orgId,
           ...(issue.assigneeAgentId ? { agentId: issue.assigneeAgentId } : {}),
@@ -1560,34 +1942,53 @@ export function apply(ctx: Context) {
         })
         if (issue.status === 'todo') hub.issues().update(issue.id, { status: 'in_progress' })
         ctx.platformBus.emit(PlatformEvents.ExecIssueChanged, { issueId: issue.id, action: 'claimed', status: 'in_progress', runId })
-        return { ok: true, runId }
+        return { ok: true, runId, leaseId: acquired.lease.id, leaseVersion: acquired.lease.leaseVersion }
       },
     }))
 
     tools.register(defineTool({
       name: 'exec_complete',
-      description: '交回产出并完结 run（run 级释放执行锁；进行中任务转待审 review）。',
+      description: '交回产出并完结 run（run 级释放执行租约与锁；完成任务转待审 review，失败任务转回待办；需与认领主体一致）。',
       permission: 'exec.write',
       parameters: {
         runId: { type: 'string', description: 'run ID（exec_claim 返回）' },
         issueId: { type: 'string', description: '任务 ID（无 runId 时按其持有 run 收尾）' },
         summary: { type: 'string', description: '产出摘要' },
-        status: { type: 'string', enum: ['completed', 'failed'], description: '缺省 completed' },
+        status: { type: 'string', enum: ['completed', 'failed'], description: '缺省 completed；failed 时进行中任务转回待办' },
       },
       output: { type: 'object', additionalProperties: true },
-      async execute(args) {
+      async execute(args, exec) {
+        const principal = exec.principal
+        const status = args.status === 'failed' ? 'failed' : 'completed'
         let runId = String(args.runId ?? '')
         if (!runId) {
           const issueId = String(args.issueId ?? '')
-          const issue = hub.issues().get(issueId)
-          if (!issue?.executionRunId) throw new Error('缺少 runId，或该任务未持有执行锁')
-          runId = issue.executionRunId
+          const issue = issueId ? hub.issues().get(issueId) : undefined
+          runId = issue?.executionRunId ?? ''
+          if (!runId && !principal) {
+            // 参数不足升级提示（D07 fail-closed，不静默放行）
+            throw new Error('参数不足：既未提供 runId，也无法识别调用主体（exec.principal 缺失）——请携带 exec_claim 返回的 runId 重试；如身份异常请联系管理员升级人工处理')
+          }
+          if (!runId) throw new Error('缺少 runId，或该任务未持有执行锁')
+        }
+        // D07 主体/run 所有权校验：run 有租约记录时必须主体一致（旧租约拒绝 LEASE_STALE）
+        const lease = hub.leaseStore.latestForRun(runId)
+        const ownership = decideCompleteOwnership({
+          hasLeaseRecord: Boolean(lease),
+          status: lease?.status ?? 'released',
+          expired: lease ? new Date(lease.expiresAt).getTime() <= Date.now() : true,
+          callerPrincipalId: principal?.principalId ?? '',
+          leasePrincipalId: lease?.principalId ?? '',
+        })
+        if (ownership.kind === 'deny') {
+          throw new Error(`${ownership.reason}（code=${ownership.code}）`)
         }
         const run = hub.completeRun(runId, {
-          ...(args.status === 'failed' ? { status: 'failed' } : { status: 'completed' }),
+          status,
           ...(args.summary ? { summary: String(args.summary) } : {}),
+          ...(status === 'failed' ? { failedIssueDisposition: 'todo' as const } : {}),
         })
-        return { ok: true, runId, status: run.status, releasedLock: true }
+        return { ok: true, runId, status: run.status, releasedLock: true, ...(lease ? { leaseReleased: true } : {}) }
       },
     }))
 
@@ -1626,4 +2027,7 @@ export const inject = [
   // 设计适配（2026-10-14）cockpit() 驾驶舱聚合所需只读面（提供方均在 exec-hub 之前装配，
   // 见 boot-all.ts / cordis.yml 装配序列）：usage=今日计量聚合，其余为六类资产存量计数与异常面
   'usage', 'mcpRegistry', 'skillHub', 'nasRegistry',
+  // 附录 A 决策 3（2026-10-15）：exec_run_leases 权威租约存储——txnStore 由 platform-core
+  // 首位装配（boot-all.ts 第一插件），先于 exec-hub；workforce 侧服务一律运行时探测，不进本列表
+  'txnStore',
 ]

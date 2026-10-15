@@ -18,7 +18,12 @@
  *     （meter_key=calls），是否计费由运营调价决定；
  *   - D2 非计费事件统一零价快照：零费率规则产出 charge_cents=0 且 rate.nonbillable=true；
  *     UsageRecordInput.nonbillable=true 为便捷构造入口（非计费反馈/知识事件），仅允许配零费率规则，
- *     防止「标了非计费却按计费规则入账」的口径漂移。
+ *     防止「标了非计费却按计费规则入账」的口径漂移；
+ *   - D3（数字员工整改组7，2026-10-15）工作调用关联（§11.3 additive-only）：UsageRecordInput /
+ *     UsageEvent 增可选 invocationId，落库列 invocation_id TEXT NOT NULL DEFAULT ''（存量库启动时
+ *     pragma 探测 + ALTER TABLE 幂等迁移）。语义：把本次消费事实关联到 workforce_invocations 的一条
+ *     工作调用账（workforce_usage_links 的伴随索引），聚合/对账口径不变、不双计；幂等键机制与历史
+ *     resource 键一字不动。
  *
  * 商业模式收敛（元冰可开发计划 M0，2026-09-09）：平台商业口径为「私有化年费 + 治理包」，
  * usage 管道定位为**用量透明计量与内部成本参考**——价格簿 list 侧统一零价快照（charge_cents=0，
@@ -62,6 +67,8 @@ export interface UsageEvent {
   event_id: string
   idempotency_key: string
   trace_id?: string
+  /** D3（additive）：关联的数字员工工作调用账 ID（workforce_invocations.id）；非工作调用事件不下发该键。 */
+  invocationId?: string
   occurred_at: string
   tenant_id: string
   org: string
@@ -84,6 +91,8 @@ export interface UsageRecordInput {
   meters: UsageMeter[]
   tenant_id?: string
   trace_id?: string
+  /** D3（additive，可选）：数字员工工作调用账 ID（invocation_id 列）；缺省空串，聚合口径不变。 */
+  invocationId?: string
   /** 幂等键：调用方自带（推荐，如 <producer>:<业务单号>）；缺省按主体+资源+窗口+序号生成。 */
   idempotency_key?: string
   occurred_at?: string
@@ -166,7 +175,16 @@ export class UsageService extends Service {
       meters_json: 'TEXT NOT NULL',
       pricing_json: 'TEXT NOT NULL',
       trace_id: "TEXT NOT NULL DEFAULT ''",
+      // D3（组7 additive）：数字员工工作调用关联列——新库直接建齐；存量库由下方 pragma 探测迁移
+      invocation_id: "TEXT NOT NULL DEFAULT ''",
     }, { uniques: [['idempotency_key']], indexes: [['occurred_at'], ['principal'], ['tenant_id']] })
+    // 存量库增量迁移（D3，幂等守护）：pragma table_info 探测无列才 ALTER——
+    // 只 additive（NOT NULL 带默认值），不改既有列、不动索引与幂等键
+    const usageColumns = this.ctx.txnStore.sql<{ name: string }>('pragma table_info(usage_events)')
+    if (!usageColumns.some((column) => column.name === 'invocation_id')) {
+      this.ctx.txnStore.run("ALTER TABLE usage_events ADD COLUMN invocation_id TEXT NOT NULL DEFAULT ''")
+      this.ctx.logger('usage').info('usage_events 增量迁移：已补 invocation_id 列（数字员工工作调用关联，D3 additive）')
+    }
     // 消费水位（引擎级幂等）：同一消费方对同一事件只产生一次副作用——
     // replay()/死信重投不会造成 billing/audit 投影双计（评审实证缺陷的修复点）。
     ctx.txnStore.ensureTable('usage_consumptions', {
@@ -268,6 +286,8 @@ export class UsageService extends Service {
       event_id: newId('uevt'),
       idempotency_key: input.idempotency_key ?? this.autoIdempotencyKey(input),
       ...(input.trace_id !== undefined ? { trace_id: input.trace_id } : {}),
+      // D3（additive）：仅调用方显式携带时下发该键（schema 前向兼容：消费端容忍缺省）
+      ...(input.invocationId !== undefined ? { invocationId: input.invocationId } : {}),
       occurred_at: input.occurred_at ?? new Date().toISOString(),
       tenant_id: tenant,
       org: input.org,
@@ -1235,6 +1255,8 @@ interface UsageRow {
   meters_json: string
   pricing_json: string
   trace_id: string
+  /** D3（组7 additive）：存量库迁移前该列不存在，读侧按 undefined 容忍。 */
+  invocation_id?: string
 }
 
 function usageRow(event: UsageEvent): Record<string, string | number> {
@@ -1251,6 +1273,7 @@ function usageRow(event: UsageEvent): Record<string, string | number> {
     meters_json: JSON.stringify(event.meters),
     pricing_json: JSON.stringify(event.pricing),
     trace_id: event.trace_id ?? '',
+    invocation_id: event.invocationId ?? '',
   }
 }
 
@@ -1261,6 +1284,8 @@ function rowToEvent(row: UsageRow): UsageEvent {
     event_id: row.id,
     idempotency_key: row.idempotency_key,
     ...(row.trace_id !== '' ? { trace_id: row.trace_id } : {}),
+    // D3 读路径同步：存量行（迁移前列缺省 ''）不下发该键，新行原样带回（重放/消费方不丢关联）
+    ...(row.invocation_id !== undefined && row.invocation_id !== '' ? { invocationId: row.invocation_id } : {}),
     occurred_at: row.occurred_at,
     tenant_id: row.tenant_id,
     org: row.org,

@@ -276,3 +276,111 @@ export function cronIsValid(expr: string): boolean {
 export function wakeIdempotencyKey(trigger: string, parts: Array<string | number | undefined>): string {
   return [trigger, ...parts.map((p) => String(p ?? ''))].join(':')
 }
+
+// ---------------------------------------------------------------------------
+// 执行租约纯决策（附录 A 决策 3：exec_run_leases 为权威，issue 三字段为投影）
+//
+// 施工蓝本 §6.2/§7-D05/D06：认领＝「幂等确认已分配租约」——同员工同任务重复认领
+// 返回既有 run/租约（不报「他人持有」）；他主体、旧租约、已关闭任务拒绝。
+// 决策与存储分层：本组函数只吃事实（facts），IO 与事务在 lease-store.ts / 服务层。
+// ---------------------------------------------------------------------------
+
+/** 租约状态（结构对齐 plugin-workforce contract.ts 的 LeaseStatus，防循环不 import）。 */
+export type LeaseStatusLite = 'active' | 'released' | 'superseded'
+
+export interface LeaseClaimFacts {
+  /** 该 issue 在权威表中是否存在 active 租约。 */
+  activeLeasePresent: boolean
+  /** 既有 active 租约是否已过 expiresAt（过期＝无人实际持有，可被新租约取代）。 */
+  activeLeaseExpired: boolean
+  /** 既有租约归属员工（legacy 机器直认领为空串）。 */
+  existingEmployeeId: string
+  /** 既有租约归属 agentKey。 */
+  existingAgentKey: string
+  /** 本次认领员工。 */
+  requestedEmployeeId: string
+  /** 本次认领 agentKey。 */
+  requestedAgentKey: string
+}
+
+export type LeaseClaimDecision =
+  | { kind: 'idempotent' }                    // 同持有者重复认领 → 幂等续期既有租约（created=false）
+  | { kind: 'held-by-other'; holder: string } // 他人/他 Agent 持有 → 拒绝
+  | { kind: 'acquire' }                       // 无有效租约（含过期）→ 新取（版本+1）
+
+/**
+ * 认领幂等裁决（D05/D06）：受管员工按 employeeId 判同（换绑 Agent 不影响幂等）；
+ * legacy 机器直认领（employeeId 为空串）按 agentKey 判同。过期租约不算持有。
+ */
+export function decideLeaseClaim(f: LeaseClaimFacts): LeaseClaimDecision {
+  if (f.activeLeasePresent && !f.activeLeaseExpired) {
+    const sameHolder = f.requestedEmployeeId !== ''
+      ? f.existingEmployeeId === f.requestedEmployeeId
+      : f.existingEmployeeId === '' && f.existingAgentKey === f.requestedAgentKey
+    if (sameHolder) return { kind: 'idempotent' }
+    return { kind: 'held-by-other', holder: f.existingAgentKey || f.existingEmployeeId }
+  }
+  return { kind: 'acquire' }
+}
+
+export interface LeaseRenewalFacts {
+  status: LeaseStatusLite
+  /** now > expiresAt。 */
+  expired: boolean
+  /** 请求主体与租约 principalId 一致（主体缺席视为不一致，fail-closed）。 */
+  principalMatches: boolean
+}
+
+export type LeaseRenewalDecision = { kind: 'renew' } | { kind: 'stale' }
+
+/** 续租裁决（§11.6）：同主体 + active + 未过期才能续；旧租约/他主体/已释放一律 stale。 */
+export function decideLeaseRenewal(f: LeaseRenewalFacts): LeaseRenewalDecision {
+  return f.status === 'active' && !f.expired && f.principalMatches ? { kind: 'renew' } : { kind: 'stale' }
+}
+
+export interface CompleteOwnershipFacts {
+  /** run 是否存在租约记录（任意状态）。无记录＝旧路径 run，保持兼容放行（D07 口径）。 */
+  hasLeaseRecord: boolean
+  status: LeaseStatusLite
+  expired: boolean
+  /** 调用主体 principalId（exec.principal 缺失时为空串）。 */
+  callerPrincipalId: string
+  leasePrincipalId: string
+}
+
+export type CompleteOwnershipDecision =
+  | { kind: 'allow' }
+  | { kind: 'deny'; code: 'LEASE_STALE' | 'RUN_NOT_OWNED'; reason: string }
+
+/**
+ * complete 主体校验（D07/§6.5/V06）：run 有租约记录时必须主体一致；
+ * 旧租约（released/superseded/过期）先判 LEASE_STALE，再判主体 RUN_NOT_OWNED；
+ * 无租约记录的 run 走旧路径兼容放行（校验在调用侧按需收紧）。
+ */
+export function decideCompleteOwnership(f: CompleteOwnershipFacts): CompleteOwnershipDecision {
+  if (!f.hasLeaseRecord) return { kind: 'allow' }
+  if (f.status !== 'active' || f.expired) {
+    return { kind: 'deny', code: 'LEASE_STALE', reason: '执行租约已过期或被更高版本取代（旧租约），请先重新认领' }
+  }
+  if (!f.callerPrincipalId || f.callerPrincipalId !== f.leasePrincipalId) {
+    return { kind: 'deny', code: 'RUN_NOT_OWNED', reason: '该 run 不归属当前调用主体，禁止代他人交回执行回执' }
+  }
+  return { kind: 'allow' }
+}
+
+export interface RunAdoptionFacts {
+  /** issue 投影字段 executionRunId 是否非空。 */
+  projectedRunIdPresent: boolean
+  /** 投影指向的 run 是否仍处于 running（终态/消失＝脏投影）。 */
+  projectedRunRunning: boolean
+}
+
+export type RunAdoptionDecision = { kind: 'adopt' } | { kind: 'create' }
+
+/**
+ * get-or-create 裁决（V05）：调度预取锁留下的 run 直接被运行时认领采用（不再另造 run），
+ * 只有投影缺席或脏投影（run 终态/消失）才新建——「认领已分配租约」的 run 侧语义。
+ */
+export function decideRunAdoption(f: RunAdoptionFacts): RunAdoptionDecision {
+  return f.projectedRunIdPresent && f.projectedRunRunning ? { kind: 'adopt' } : { kind: 'create' }
+}

@@ -26,6 +26,7 @@ import * as consolePlugin from '@dsh-ops/plugin-console'
 import * as panelCore from '@dsh-ops/plugin-panel-core'
 import * as flowCore from '@dsh-ops/plugin-flow-core'
 import * as execHub from '@dsh-ops/plugin-exec-hub'
+import * as workforce from '@dsh-ops/plugin-workforce'
 import * as dingtalkBridge from '@dsh-ops/plugin-dingtalk-bridge'
 
 export interface BootOptions {
@@ -70,6 +71,10 @@ export async function bootAll(ctx: Context, options: BootOptions): Promise<void>
   // 执行中枢（ybkk-MATRIX 目标四「干活中枢」）：目标血缘/任务执行锁/心跳唤醒/例行调度，
   // /api/exec/* 自注册 guarded 路由——依赖 console 中间件、resourceCore/agentRegistry/modelgw/flow 先行
   await ctx.plugin(execHub)
+  // 数字员工域（员工/任用/permit/受控调用/交付验收）：/api/workforce/* guarded 路由依赖 console 中间件，
+  // 员工工作路径依赖 exec-hub 先行——须在其后、钉钉桥接之前装配；装配完成后经 platform-core 的
+  // workforcePolicy 窄端口登记策略实现（artifact staging 与 SQLite 同底座，数据目录复用 options.dataDir）
+  await ctx.plugin(workforce, { dataDir: options.dataDir })
   // 钉钉桥接（群桥/出向投递/审批推送/告警通道）：订阅 panel.message.created 与 audit.alert.fired
   await ctx.plugin(dingtalkBridge)
 }

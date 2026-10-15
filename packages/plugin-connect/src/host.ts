@@ -86,6 +86,49 @@ export function codesCollection(ctx: Context): Collection<EnrollCodeRecord> {
   return collection
 }
 
+// ---------------------------------------------------------------------------
+// D13 归因观测（connect 转发路径：client.forward() → 宿主 /api/tools/execute）
+// ---------------------------------------------------------------------------
+
+/** 多主体归因检测的短窗口长度：同一客户端凭证在该窗口内出现多个不同主体即告警一次。 */
+const FORWARD_PRINCIPAL_WINDOW_MS = 60_000
+
+/** 每个客户端凭证一份窗口状态（进程内观测态，不落库；条目随窗口过期被替换，规模以接入客户端数为上界）。 */
+const forwardPrincipalWindows = new Map<string, { windowStart: number; seen: Set<string> }>()
+
+/**
+ * 共享接入客户端多主体归因风险检测（D13/观测，不阻断）：
+ * 接入客户端转发工具调用时以 meta.principal 信封透传主体绑定（见 client.forward）；宿主工具桥侧
+ * 消费本函数——同一客户端凭证短窗口内出现多个不同 principalId（共享凭证承载多员工/多运行时）
+ * → logger.warn 中文提示「归因风险」。仅观测：不阻断调用、不参与鉴权（鉴权仍以 Bearer 令牌
+ * 服务端验证为唯一事实），无观测也不伪造执行归属（技术健康与业务进展分维度，D13）。
+ * @param logger 带 warn 的日志面（cordis ctx.logger('connect') 结构化满足即可）
+ * @param clientPrincipalId 宿主侧 Bearer 令牌验证出的客户端机器主体（唯一鉴权事实）
+ * @param forwardedPrincipalId 转发信封申报的主体（仅作归因观测，缺省回落客户端主体本身）
+ */
+export function noteForwardedPrincipal(
+  logger: { warn: (message: string, ...args: unknown[]) => void },
+  clientPrincipalId: string,
+  forwardedPrincipalId?: string,
+): void {
+  const claimed = forwardedPrincipalId?.trim() || clientPrincipalId
+  if (!clientPrincipalId) return
+  const now = Date.now()
+  const entry = forwardPrincipalWindows.get(clientPrincipalId)
+  if (!entry || now - entry.windowStart > FORWARD_PRINCIPAL_WINDOW_MS) {
+    forwardPrincipalWindows.set(clientPrincipalId, { windowStart: now, seen: new Set([claimed]) })
+    return
+  }
+  entry.seen.add(claimed)
+  // 恰好到 2 个不同主体时告警一次（窗口内不重复刷屏；窗口过期后重建会再次允许首个新主体告警）
+  if (entry.seen.size === 2) {
+    logger.warn(
+      `归因风险提示：同一接入客户端凭证（${clientPrincipalId}）在 ${Math.round(FORWARD_PRINCIPAL_WINDOW_MS / 1000)} 秒窗口内出现多个不同主体（${[...entry.seen].join('、')}），`
+      + '该客户端疑似共享承载多个员工/运行时，转发调用的执行归因可能失真（节点身份≠员工执行身份，建议一员工一凭证；D13 观测，不阻断）',
+    )
+  }
+}
+
 export function clientsCollection(ctx: Context): Collection<ConnectClientRecord> {
   const collection = ctx.opsStorage.collection<ConnectClientRecord>('connect:clients')
   collection.uniqueOn('connect_client_principal', (record) => record.principalId)

@@ -23,7 +23,12 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
-import { newId, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import {
+  newId,
+  gateManagedWork, WORK_DATA_CLASS_ORDER, WORK_DENY_CODE_LABELS,
+  type Collection, type RecordBase,
+  type WorkCallerRef, type WorkDataClass, type WorkExecutionContext, type WorkforcePolicyRegistry,
+} from '../../platform-core/src/index.ts'
 import * as modelgwTools from './tools.ts'
 
 // ---------------------------------------------------------------------------
@@ -35,6 +40,22 @@ export type DataClass = 'public' | 'internal' | 'secret'
 
 export const DATA_CLASS_RANK: Record<DataClass, number> = { public: 0, internal: 1, secret: 2 }
 export const DATA_CLASS_LABELS: Record<DataClass, string> = { public: '公开', internal: '内部', secret: '秘密' }
+
+/**
+ * D14 统一业务密级 → 网关渠道分级的显式映射表（禁止同名枚举直接等同、禁止缺失隐式回落）：
+ *   public      → public    （公开→公开，一一对应）
+ *   internal    → internal  （内部→内部，一一对应）
+ *   secret      → secret    （业务秘密级 ↔ 渠道秘密级，语义同级）
+ *   confidential→ secret    （机密钳制到网关最高分级：机密数据仅允许最高分级渠道承载，
+ *                          网关无更高分级可表达，绝不向 public/internal 渠道路由）
+ *   topsecret   → 不进映射：受管调用在映射前直接拒绝（绝密禁止数字员工处理，验收 V14 模型侧）。
+ */
+const WORK_DATA_CLASS_TO_GATEWAY: Record<Exclude<WorkDataClass, 'topsecret'>, DataClass> = {
+  public: 'public',
+  internal: 'internal',
+  secret: 'secret',
+  confidential: 'secret',
+}
 
 export interface ModelRecord extends RecordBase {
   slug: string
@@ -63,6 +84,25 @@ export interface ModelInvokeInput {
   temperature?: number
   /** 本次会话请求的数据分级（1-1，缺省 internal）：高于渠道上限即拒绝（选择器锁死+原因）。 */
   dataClass?: DataClass
+  /**
+   * 可信调用者（D10 additive，结构对齐 WorkCallerRef）：由调用入口从已验证令牌/会话组装，
+   * 禁止把请求体同形 JSON 当作可信身份（§10.4）。缺失时按非受管路径 legacy 直通（现状不变）。
+   */
+  caller?: WorkCallerRef
+  /**
+   * 工作引用索引（additive，§10.4）：仅 permitId/runId/stepKey/invocationId 四个索引键；
+   * 授权事实（permit/任用/租约/预算）一律由 workforce 侧服务端回查，本字段不作授权依据。
+   */
+  work?: ModelWorkRef
+}
+
+/** 模型调用的工作引用索引（与 WorkRefIndex 的模型侧子集对齐）。 */
+export interface ModelWorkRef {
+  permitId?: string
+  runId?: string
+  stepKey?: string
+  /** workforce 受控调用账本的调用 ID：透传 usage trace 关联（V23/V27，不改变历史幂等键口径）。 */
+  invocationId?: string
 }
 
 export interface ModelInvokeResult {
@@ -75,6 +115,8 @@ export interface ModelInvokeResult {
   costCents: number
   /** 降级链流转记录（1-2，仅 invokeWithFallback 路径返回）。 */
   degradations?: Array<{ from: string; reason: string; at: string }>
+  /** usage 事件 ID（D11 additive）：工作调用账本与消费事实的对账关联键（只关联不重复登记）。 */
+  usageEventId?: string
 }
 
 export interface ModelInvokeError extends Error {
@@ -183,6 +225,59 @@ export class ModelGatewayService extends Service {
     return created
   }
 
+  // -- 工作级授权与密级映射（D10/D14，additive） ---------------------------------
+
+  /**
+   * 窄端口运行时读取：platform-core 装配时注册 WorkforcePolicyRegistry（provide='workforcePolicy'）。
+   * Context 类型增补由 workforce 侧统一持有；这里防御式读取——服务未装配时返回 undefined，
+   * gateManagedWork 按端口未就绪走 legacy，非受管路径现状不变（V29：新工作路径不静默无策略放行）。
+   */
+  private workforcePolicy(): WorkforcePolicyRegistry | undefined {
+    try {
+      return (this.ctx as unknown as { workforcePolicy?: WorkforcePolicyRegistry }).workforcePolicy ?? undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * 工作级授权闸门（受管数字员工模型调用）：入口在资源级校验之前执行；
+   * caller 缺失或端口未就绪 → legacy（返回 null，原有链一步不少）；拒绝 → 中文错误 + 领域码（fail-closed）。
+   * 判定只按可信 caller 反查，与是否携带 work 引用无关（D.5 防绕行）。
+   * registryId：单渠道传模型 slug；降级链传渠道组 slug（实际执行渠道仍在链内逐个过分级/预算校验）。
+   */
+  private async gateManagedModelCall(
+    caller: WorkCallerRef | undefined,
+    registryId: string,
+    ref?: ModelWorkRef,
+  ): Promise<WorkExecutionContext | null> {
+    const gate = await gateManagedWork(this.workforcePolicy(), caller, {
+      facts: { kind: 'model', registryId, action: 'invoke', risk: 'read' },
+      ...(ref && (ref.permitId || ref.runId || ref.stepKey) ? { ref: { permitId: ref.permitId, runId: ref.runId, stepKey: ref.stepKey } } : {}),
+    })
+    if (gate.mode === 'legacy') return null
+    if (gate.mode === 'denied') {
+      const error = new Error(`数字员工调用被拒绝：${WORK_DENY_CODE_LABELS[gate.code]}${gate.message ? `（${gate.message}）` : ''}`) as Error & { code?: string }
+      error.code = gate.code
+      throw error
+    }
+    return gate.work
+  }
+
+  /**
+   * 受管调用的有效密级（D14）：max(请求 dataClass（缺省 internal）, 任用冻结密级上限)——
+   * 受管时必须以 max 口径走，禁止把缺失隐式回落 internal 造成降级。
+   * topsecret 在显式映射前直接拒绝（绝密禁止数字员工处理）；其余经显式映射表落到网关分级。
+   */
+  private effectiveManagedDataClass(requested: DataClass | undefined, workCeiling: WorkDataClass): DataClass {
+    const base: WorkDataClass = requested ?? 'internal'
+    const effective = WORK_DATA_CLASS_ORDER[base] >= WORK_DATA_CLASS_ORDER[workCeiling] ? base : workCeiling
+    if (effective === 'topsecret') {
+      throw new Error('绝密数据禁止数字员工处理')
+    }
+    return WORK_DATA_CLASS_TO_GATEWAY[effective]
+  }
+
   // -- 渠道分级路由（1-1） ---------------------------------------------------
 
   /**
@@ -250,8 +345,14 @@ export class ModelGatewayService extends Service {
    * 内容安全拦截：外部内容安全网关未接入（诚实缺位），接入后在 invokeOnce 返回路径上挂钩。
    */
   async invokeWithFallback(input: Omit<ModelInvokeInput, 'model'> & { group: string }): Promise<ModelInvokeResult | { ok: false; escalated: true; reason: string; degradations: Array<{ from: string; reason: string; at: string }> }> {
-    const group = this.channelGroups().findOne((item) => item.slug === input.group)
-    if (!group) throw new Error(`渠道组不存在：${input.group}（请先登记主/备渠道组）`)
+    // 工作级授权闸门（D10）：入口先过闸，渠道组 slug 作为 registryId；拒绝直接终止整链。
+    // 受管时有效密级以 max(请求, 任用上限) 显式映射（D14）；非受管 legacy 路径 effectiveInput===input 现状不变。
+    const work = await this.gateManagedModelCall(input.caller, input.group, input.work)
+    const effectiveInput = work
+      ? { ...input, dataClass: this.effectiveManagedDataClass(input.dataClass, work.dataClass) }
+      : input
+    const group = this.channelGroups().findOne((item) => item.slug === effectiveInput.group)
+    if (!group) throw new Error(`渠道组不存在：${effectiveInput.group}（请先登记主/备渠道组）`)
     if (!group.enabled) throw new Error(`渠道组已停用：${group.slug}`)
     const chain = [group.primary, group.backup1, group.backup2].filter((slug): slug is string => Boolean(slug))
     const stepTimeoutMs = group.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS
@@ -266,7 +367,7 @@ export class ModelGatewayService extends Service {
         this.recordTelemetry({ model: slug, ok: false, latencyMs: 0, outputTokens: 0, degraded: true, error: reason })
         this.ctx.platformBus.emit('modelgw.degraded', {
           group: group.slug, from: slug, to: chain[index + 1] ?? (group.manual ? 'manual:人工' : '（链尾）'),
-          reason, step: index + 1, subject: input.subject, orgId: input.orgId,
+          reason, step: index + 1, subject: effectiveInput.subject, orgId: effectiveInput.orgId,
         })
       }
       if (!model) {
@@ -279,7 +380,7 @@ export class ModelGatewayService extends Service {
       }
       try {
         // 分级路由（1-1）逐步校验：备用渠道分级低于请求数据分级时同样锁死
-        this.assertDataClassAllowed(model, input.dataClass)
+        this.assertDataClassAllowed(model, effectiveInput.dataClass)
       } catch (error) {
         reject(error instanceof Error ? error.message : String(error))
         continue
@@ -289,14 +390,14 @@ export class ModelGatewayService extends Service {
       // 按当前渠道 slug 评估（对被调模型的命中语义与单渠道路径完全一致，R3 通配/R10 主体不受影响），
       // 熔断错误不进降级（reject）而直接终止整链——错误文案与信封和单渠道路径一致
       try {
-        this.enforceBudget({ ...input, model: slug })
+        this.enforceBudget({ ...effectiveInput, model: slug })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         this.recordTelemetry({ model: slug, ok: false, latencyMs: 0, outputTokens: 0, degraded: index > 0, error: `预算熔断：${message}` })
         throw error
       }
       try {
-        const result = await this.invokeTracked(model, input, stepTimeoutMs, index > 0)
+        const result = await this.invokeTracked(model, effectiveInput, stepTimeoutMs, index > 0)
         if (degradations.length > 0) return { ...result, degradations }
         return result
       } catch (error) {
@@ -493,20 +594,27 @@ export class ModelGatewayService extends Service {
   // -- 调用 ---------------------------------------------------------------------
 
   async invoke(input: ModelInvokeInput): Promise<ModelInvokeResult> {
-    const model = this.models().findOne((item) => item.slug === input.model)
-    if (!model) throw new Error(`模型不存在：${input.model}（请先在模型目录登记）`)
+    // 工作级授权闸门（D10）：入口先过闸，再进资源级校验（渠道分级/预算/上游），两层授权取交集（§9.5）
+    const work = await this.gateManagedModelCall(input.caller, input.model, input.work)
+    // D14：受管时有效密级 = max(请求 dataClass 缺省 internal, 任用冻结上限)，经显式映射表落到网关分级
+    // （topsecret 已在映射前拒绝）；非受管 legacy 路径 effectiveInput===input，现状不变
+    const effectiveInput = work
+      ? { ...input, dataClass: this.effectiveManagedDataClass(input.dataClass, work.dataClass) }
+      : input
+    const model = this.models().findOne((item) => item.slug === effectiveInput.model)
+    if (!model) throw new Error(`模型不存在：${effectiveInput.model}（请先在模型目录登记）`)
     if (model.status !== 'online') throw new Error(`模型已下线：${model.slug}`)
     if (!model.endpoint) throw new Error(`模型 ${model.slug} 未配置 endpoint，拒绝调用（不生成假 completion）`)
     // 分级路由（1-1）：越级直接拒绝（选择器锁死+原因）
-    this.assertDataClassAllowed(model, input.dataClass)
-    // 预算熔断（1-4）：block 动作在调用前生效
+    this.assertDataClassAllowed(model, effectiveInput.dataClass)
+    // 预算熔断（1-4）：block 动作在调用前生效（受管调用预算不足自然失败 → workforce 侧落 BUDGET_EXCEEDED）
     try {
-      this.enforceBudget(input)
+      this.enforceBudget(effectiveInput)
     } catch (error) {
       this.recordTelemetry({ model: model.slug, ok: false, latencyMs: 0, outputTokens: 0, error: `预算熔断：${error instanceof Error ? error.message : String(error)}` })
       throw error
     }
-    return this.invokeTracked(model, input, INVOKE_TIMEOUT_MS, false)
+    return this.invokeTracked(model, effectiveInput, INVOKE_TIMEOUT_MS, false)
   }
 
   /** 带遥测的单渠道调用：时延/成败/降级标记滚动落库（7d 可用率与 TPS 代理的数据源）。 */
@@ -581,6 +689,9 @@ export class ModelGatewayService extends Service {
         { key: 'output_tokens', value: outputTokens, unit: 'token' },
       ],
       idempotency_key: `modelgw:${newId('mi')}`,
+      // 工作关联（D11/V23/V27 additive）：受管调用时把 workforce 调用 ID 作为统一 trace 附加——
+      // 幂等键 modelgw:<mi> 与历史键 model:<slug> 照旧不改；usage 侧未识别的关联字段由组7增量承接
+      ...(input.work?.invocationId ? { trace_id: input.work.invocationId } : {}),
     })
 
     return {
@@ -590,6 +701,8 @@ export class ModelGatewayService extends Service {
       inputTokens,
       outputTokens,
       costCents: event.pricing.cost_cents,
+      // usage 事件回执（additive）：供工作调用账本对账关联（只关联，不重复登记消费）
+      usageEventId: event.event_id,
     }
   }
 }
@@ -605,7 +718,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export const name = 'modelgw'
-export const inject = ['opsStorage', 'usage', 'platformBus']
+export const inject = ['opsStorage', 'usage', 'platformBus', 'workforcePolicy']
 
 export function apply(ctx: Context) {
   ctx.plugin(ModelGatewayService)

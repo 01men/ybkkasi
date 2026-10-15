@@ -2,10 +2,29 @@
  * mcp 插件对模型暴露的工具。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, type ToolPrincipal } from '../../platform-core/src/index.ts'
+import { defineTool, type ToolPrincipal, type WorkRefIndex } from '../../platform-core/src/index.ts'
 
 export const name = 'mcp-tools'
 export const inject = ['tools', 'mcpRegistry', 'authn']
+
+/**
+ * work 参数白名单提取（施工蓝本 §10.4：技术参数透传与可信作用域）：
+ * work 只允许携带 permitId/runId/stepKey 三个索引键（仅作索引，授权事实一律服务端回查）；
+ * 其他任何键（包括 caller、employeeId 等身份字段）一律忽略——身份与授权不来自请求参数。
+ */
+function workRefFromArgs(raw: unknown): WorkRefIndex | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const pick = (value: unknown): string | undefined => (typeof value === 'string' && value.trim() !== '' ? value : undefined)
+  const permitId = pick((raw as Record<string, unknown>).permitId)
+  const runId = pick((raw as Record<string, unknown>).runId)
+  const stepKey = pick((raw as Record<string, unknown>).stepKey)
+  const ref: WorkRefIndex = {
+    ...(permitId !== undefined ? { permitId } : {}),
+    ...(runId !== undefined ? { runId } : {}),
+    ...(stepKey !== undefined ? { stepKey } : {}),
+  }
+  return Object.keys(ref).length > 0 ? ref : undefined
+}
 
 export function apply(ctx: Context) {
   const t = ctx.tools
@@ -113,10 +132,14 @@ export function apply(ctx: Context) {
       serviceId: { type: 'string', required: true, description: '服务 ID' },
       tool: { type: 'string', required: true, description: '工具名' },
       args: { type: 'object', description: '工具参数' },
+      work: {
+        type: 'object',
+        description: '工作引用索引（可选，仅 permitId/runId/stepKey 三个键）：只作索引透传，授权事实一律由服务端回查；其他键一律忽略',
+      },
     },
     output: { type: 'object', additionalProperties: true },
     async execute(args, exec) {
-      return await ctx.mcpRegistry.invoke(callerFromPrincipal(exec.principal), args.serviceId, args.tool, args.args ?? {})
+      return await ctx.mcpRegistry.invoke(callerFromPrincipal(exec.principal), args.serviceId, args.tool, args.args ?? {}, workRefFromArgs(args.work))
     },
   }))
 

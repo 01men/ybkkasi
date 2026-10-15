@@ -5,6 +5,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConsoleRouteDeps } from './deps.ts'
 import { platformVersionInfo } from '../../../platform-core/src/index.ts'
+import { noteForwardedPrincipal } from '../../../plugin-connect/src/host.ts'
 
 export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { http, guarded, body, changeLog, caller } = deps
@@ -114,6 +115,14 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
       return
     }
     const args = injectToolIdentity(input.name, input.args ?? {}, info)
+    // D13 观测（connect 转发路径）：接入客户端（plugin-connect client.forward）的转发体若携带
+    // meta.principal 主体绑定信封，在此做「同一客户端凭证短窗口多主体」归因风险检测——
+    // 仅 logger.warn 中文提示（不阻断、不参与鉴权）：鉴权仍以 exchange.principal（Bearer 令牌
+    // 服务端验证结果）为唯一事实，信封字段只作日志/归因观测（§10.4：结构相同的参数不构成授权事实）。
+    const forwardedPrincipalId = (input as { meta?: { principal?: { principalId?: string } } }).meta?.principal?.principalId
+    if (typeof forwardedPrincipalId === 'string' && forwardedPrincipalId) {
+      noteForwardedPrincipal(ctx.logger('connect'), info.principalId, forwardedPrincipalId)
+    }
     const result = await ctx.tools.execute({ name: input.name, arguments: args, principal: info })
     return result
   })
@@ -141,6 +150,12 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
         kind: verified.principal.type,
         principalId: verified.principal.id,
         ...(verified.principal.type === 'human' && verified.principal.refId ? { userId: verified.principal.refId } : {}),
+        // D01（V01/V02）：machine 主体补齐凭证关联资源 refType/refId——此前只回 userId（human），
+        // machine 的 refType/refId 在本入口被丢弃，导致 exec_claim 等「按 exec.principal.refType==='agent'
+        // 反查任务归属」的口径在 /mcp 链路拿到不完整主体（REST 鉴权中间件构造的 CallerInfo 本就带这两字段）。
+        // 现与 plugin-console/src/index.ts 鉴权中间件同构：machine → refType/refId 照带，human → userId 照旧，
+        // 使 /mcp 与 REST /api/tools/execute 两条链路的 CallerInfo 主体结构一致（同凭证同任务同主体）。
+        ...(verified.principal.type === 'machine' ? { refType: verified.principal.refType, refId: verified.principal.refId } : {}),
         name: verified.principal.name,
         permissions: verified.scopes,
         actChain: verified.actChain,

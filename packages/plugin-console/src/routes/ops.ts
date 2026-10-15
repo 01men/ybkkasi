@@ -4,6 +4,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConsoleRouteDeps } from './deps.ts'
+import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { nonbillableUsage } from '../../../plugin-usage/src/index.ts'
 
 export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
@@ -42,8 +43,71 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     })
   })
 
+  /**
+   * 计量自推（self-report）防伪造（C22/D11/V23 关联）：usage.write 是 Agent 默认凭证权限点，
+   * 请求体 subject/org 此前不做归属校验，任意持点主体可伪造他者（他 agent/他人/他组织）的计量事实。
+   * 现按可信 caller（exchange.principal，禁止来自请求参数）收敛 subject 归属：
+   *   - machine：只能申报与自己凭证绑定的 agent:<refId>（refId 与令牌 principal.refId 一致）；
+   *     事件 org 与该 Agent 登记组织不一致同样拒绝（跨组织）；
+   *   - human：只能申报自己（user:<userId>）或本组织子树内的协作类键（kb:* / panel:*）；
+   *   - '*' 平台管理员保留既有运维补录路径（既有合法路径不动）。
+   * 跨主体/跨组织 → 403 中文拒绝 + audit.authz.denied 留痕（不静默改写）。
+   */
+  const orgSubtreeContains = (rootId: string, orgId: string): boolean => {
+    let current = ctx.iam.orgs().get(orgId)
+    let guard = 0
+    while (current && guard++ < 32) {
+      if (current.id === rootId) return true
+      current = current.parentId ? ctx.iam.orgs().get(current.parentId) : undefined
+    }
+    return false
+  }
+  const denyUsageOwnership = (exchange: HttpExchange, info: ReturnType<ConsoleRouteDeps['caller']>, subject: string, reason: string): void => {
+    ctx.platformBus.emit('audit.authz.denied', {
+      actorId: info.userId ?? info.principalId,
+      actorName: info.name,
+      point: 'usage.write(subject-ownership)',
+      path: exchange.path,
+      ...(subject ? { subject } : {}),
+    })
+    exchange.fail(403, 'FORBIDDEN', `禁止写入其他主体或组织的计量事实（${reason}）`)
+  }
+  const assertUsageSubjectOwnership = (exchange: HttpExchange, info: ReturnType<ConsoleRouteDeps['caller']>, input: { org: string; subject: string }): boolean => {
+    if (info.permissions.includes('*')) return true
+    if (info.kind === 'machine') {
+      const boundSubject = info.refType === 'agent' && info.refId ? `agent:${info.refId}` : ''
+      if (!boundSubject) {
+        denyUsageOwnership(exchange, info, input.subject, '机器凭证未绑定 Agent 资源，无自有计量主体')
+        return false
+      }
+      if (input.subject !== boundSubject) {
+        denyUsageOwnership(exchange, info, input.subject, `机器主体只能申报自身计量 subject=${boundSubject}`)
+        return false
+      }
+      const agent = ctx.resourceCore.get('agent', info.refId!)
+      if (agent?.orgId && input.org && input.org !== agent.orgId) {
+        denyUsageOwnership(exchange, info, input.subject, `事件 org=${input.org} 超出绑定 Agent 组织（${agent.orgId}）`)
+        return false
+      }
+      return true
+    }
+    const user = info.userId ? ctx.iam.users().get(info.userId) : undefined
+    const ownOrg = user?.orgId
+    const subjectAllowed = input.subject === `user:${info.userId}` || /^(kb|panel):/.test(input.subject)
+    if (!subjectAllowed) {
+      denyUsageOwnership(exchange, info, input.subject, '人类主体只能申报本人（user:<self>）或本组织协作类键（kb:*/panel:*）')
+      return false
+    }
+    if (!ownOrg || !input.org || !orgSubtreeContains(ownOrg, input.org)) {
+      denyUsageOwnership(exchange, info, input.subject, `事件 org=${input.org || '（空）'} 超出你的组织子树（${ownOrg ?? '未归属组织'}）`)
+      return false
+    }
+    return true
+  }
+
   guarded('POST', '/api/usage/record', 'usage.write', (exchange) => {
     const input = body<{ org: string; subject: string; principal: string; resource: string; meters: Array<{ key: string; value: number; unit: string }>; tenant_id?: string; trace_id?: string; idempotency_key?: string }>(exchange)
+    if (!assertUsageSubjectOwnership(exchange, caller(exchange), input)) return
     const event = ctx.usage.record(input)
     changeLog(exchange, 'usage.record', 'usage_event', event.event_id, event.resource, `${event.meters.map((meter) => `${meter.key}=${meter.value}`).join(',')} charge=${event.pricing.charge_cents}分`)
     return event
@@ -285,6 +349,18 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
       orgId,
       subject: info.userId ? `user:${info.userId}` : `machine:${info.principalId}`,
       messages,
+      // C22/D11（additive）：渠道组直调也组装可信 caller 随调用传入——身份只取 exchange.principal
+      // （console 鉴权中间件的 Bearer 验证结果），禁止来自请求体；modelgw（组4）按可选 caller
+      // 做受管数字员工判定与统一归因，使面板渠道组链路与 REST/MCP 链路的主体口径一致。
+      // org/subject 现状保留（组织维度口径不动，历史统计不失真）。
+      caller: {
+        kind: info.kind,
+        principalId: info.principalId,
+        ...(info.userId ? { userId: info.userId } : {}),
+        ...(info.refType ? { refType: info.refType } : {}),
+        ...(info.refId ? { refId: info.refId } : {}),
+        name: info.name,
+      },
       ...(dataClass ? { dataClass } : {}),
       ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
     })

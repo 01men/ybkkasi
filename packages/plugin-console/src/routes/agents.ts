@@ -3,8 +3,8 @@
  * 自 plugin-console/index.ts 拆出，处理器逐字搬运（行为与迁出前一致）。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { HttpExchange } from '../../../platform-core/src/index.ts'
-import { newId } from '../../../platform-core/src/index.ts'
+import type { HttpExchange, WorkforcePolicyRegistry } from '../../../platform-core/src/index.ts'
+import { newId, PlatformEvents } from '../../../platform-core/src/index.ts'
 import { AgentRegistryService } from '../../../plugin-agent/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 import { scopedOrgFilterOf } from './iam.ts'
@@ -160,9 +160,28 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
     return result
   })
 
+  /**
+   * V16/D08 受管数字员工结构化探测（A2A「问答 vs 执行」分型）：按目标 agentId 反查受管员工。
+   * 端口未就绪（ctx.workforcePolicy.port() 为 null）→ 保持现状（legacy，不标注）；
+   * 端口执行异常 → 吞掉并按未命中处理（问答面 fail-open，不因治理端口故障阻塞 A2A 应答）。
+   * 判定只依据服务端反查，与请求是否携带任何 work 上下文无关（冻结契约语义）。
+   */
+  const describeManagedAgentSafe = async (agentId: string): Promise<{ employeeId: string } | null> => {
+    try {
+      const registry = (ctx as unknown as { workforcePolicy?: WorkforcePolicyRegistry }).workforcePolicy
+      const port = registry?.port?.() ?? null
+      if (!port) return null
+      return await port.describeManagedAgent(agentId)
+    } catch {
+      return null
+    }
+  }
+
   // -- A2A 跨运行时调用（IAW 交接 7-1 最小闭环） ---------------------------------
   // 平台原生 Agent 的 A2A 端点：外部运行时（Hermes/OpenClaw/WorkBuddy）凭机器凭证点名调用；
   // 响应回显 autonomy/runtime 供调用方做 A0-A3 交互深度协商（v1：级别随响应透出，深度协商留 v2）。
+  // V16/D08 口径：A2A 是单轮「问答」（模型直答），不构成工具执行循环、不算任务执行或交付验收；
+  // 目标 agent 命中受管数字员工时响应 additive 透出 workforce 分型字段（见下方成功分支）。
   guarded('POST', '/api/agents/:id/a2a/invoke', 'agent.a2a.invoke', async (exchange) => {
     const input = body<{ message: string; dataClass?: string; contextNote?: string }>(exchange)
     if (!input.message?.trim()) {
@@ -187,6 +206,9 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
     const subject = info.refType === 'agent' && info.refId ? `agent:${info.refId}` : (info.userId ? `user:${info.userId}` : `a2a:${info.principalId}`)
     const dataClass = input.dataClass === 'public' || input.dataClass === 'internal' || input.dataClass === 'secret' ? input.dataClass : undefined
     const systemPrompt = String(attrs.systemPrompt ?? `你是企业数字同事「${agent.name}」。${String(attrs.description ?? '')}`)
+    // V16/D08 分型探测：目标 agent 命中受管员工 → 响应 additive 透出 workforce 标注（问答 ≠ 任务执行）
+    const managed = await describeManagedAgentSafe(agent.id)
+    const workforce = managed ? { managed: true, employeeId: managed.employeeId, notice: '问答结果，不构成任务执行或交付验收' } : undefined
     try {
       const result = await ctx.modelGateway.invoke({
         model,
@@ -199,6 +221,8 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
         ],
       })
       try {
+        // V16 计量口径：A2A 属「协作/问答」面（nonbillable calls 快照），不计任务完成、不进
+        // agentRegistry 任务/执行口径（metrics-report 的 sessions 与执行中枢验收是另一条链）。
         ctx.usage.record(nonbillableUsage({
           org: orgId, subject, principal: orgId ? `org:${orgId}` : 'platform', resource: `agent:${agent.id}`,
           idempotency_key: `a2a:${agent.id}:${info.principalId}:${newId('a2a')}`,
@@ -207,16 +231,19 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
       ctx.audit.record({
         type: 'invoke', actorType: info.kind === 'human' ? 'human' : 'machine', actorId: subject, actorName: info.name,
         action: 'agent.a2a.invoke', resourceType: 'agent', resourceId: agent.id, resourceName: agent.name,
-        result: 'ok', detail: `runtime=${String(attrs.runtime ?? 'dsh')} autonomy=${String(attrs.autonomy ?? 'A0')} model=${result.model}`,
+        result: 'ok', detail: `runtime=${String(attrs.runtime ?? 'dsh')} autonomy=${String(attrs.autonomy ?? 'A0')} model=${result.model}${workforce ? `；workforce=受管员工(${workforce.employeeId})，${workforce.notice}` : ''}`,
       })
       ctx.platformBus.emit(PlatformEvents.AgentA2aInvoked, {
         agentId: agent.id, slug: agent.slug, from: subject, model: result.model,
         autonomy: String(attrs.autonomy ?? 'A0'), runtime: String(attrs.runtime ?? 'dsh'),
+        ...(workforce ? { workforce } : {}),
       })
       return {
         ok: true, reply: result.content, model: result.model,
         autonomy: String(attrs.autonomy ?? 'A0'), runtime: String(attrs.runtime ?? 'dsh'),
         inputTokens: result.inputTokens, outputTokens: result.outputTokens,
+        // V16/D08 additive 分型字段：命中受管数字员工才出现（legacy 路径无此键，消费方向后兼容）
+        ...(workforce ? { workforce } : {}),
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)

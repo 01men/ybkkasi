@@ -191,6 +191,12 @@ const COPY = {
     message: '平台认证服务装配不完整或暂不可用。请稍后重试；持续出现请联系平台管理员。',
     action: null,
   },
+  EXEC_HUB_UNAVAILABLE: {
+    tone: 'warn',
+    title: '执行中枢暂不可用',
+    message: '执行中枢（exec-hub）装配不完整或暂不可用，数字员工待办暂无法拉取。请稍后重试；持续出现请联系平台管理员。',
+    action: null,
+  },
 
   // ── NAS / 下载 / 版本冲突 ─────────────────────────────────────────────
   SHARE_LINK_INVALID: {

@@ -11,7 +11,9 @@
  *   - normalizeAgentKey / 血缘物化 / 上下文装配；
  *   - computeAgentHealth 五档边界；
  *   - 任务状态机与依赖解除语义；
- *   - 5 段 cron 词法与命中（含日/周 POSIX 或语义）。
+ *   - 5 段 cron 词法与命中（含日/周 POSIX 或语义）；
+ *   - 执行租约纯决策（附录 A 决策 3）：认领幂等（同主体幂等/他主体拒绝/过期可重取）、
+ *     租约续期迁移（旧租约 stale）、complete 主体校验（D07）、run 采用裁决（V05）。
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -21,6 +23,7 @@ import {
   materializeGoalAncestry, lineageSummary, buildIssueContextPack,
   computeAgentHealth, issueCanTransition, blockersResolved,
   cronMatches, cronIsValid, wakeIdempotencyKey,
+  decideLeaseClaim, decideLeaseRenewal, decideCompleteOwnership, decideRunAdoption,
 } from './domain.ts'
 
 // ---------------------------------------------------------------------------
@@ -215,4 +218,104 @@ test('cronMatches：命中矩阵（UTC）', () => {
 test('wakeIdempotencyKey：拼接稳定', () => {
   assert.equal(wakeIdempotencyKey('assign', ['i1', 'a1', 42]), 'assign:i1:a1:42')
   assert.equal(wakeIdempotencyKey('assign', ['i1', undefined]), 'assign:i1:')
+})
+
+// ---------------------------------------------------------------------------
+// 执行租约纯决策（附录 A 决策 3：认领幂等 / 租约迁移 / complete 主体校验）
+// ---------------------------------------------------------------------------
+
+test('decideLeaseClaim：同主体重复认领=幂等，他主体=拒绝，过期=可重取', () => {
+  // 受管员工：按 employeeId 判同（换绑 agentKey 不影响幂等——契约「同员工+同任务返回既有 run」）
+  assert.deepEqual(decideLeaseClaim({
+    activeLeasePresent: true, activeLeaseExpired: false,
+    existingEmployeeId: 'emp_1', existingAgentKey: 'employee:emp_1',
+    requestedEmployeeId: 'emp_1', requestedAgentKey: 'qc bot',
+  }), { kind: 'idempotent' })
+  // 他员工持有 → held-by-other（holder 取 agentKey 优先）
+  assert.deepEqual(decideLeaseClaim({
+    activeLeasePresent: true, activeLeaseExpired: false,
+    existingEmployeeId: 'emp_1', existingAgentKey: 'employee:emp_1',
+    requestedEmployeeId: 'emp_2', requestedAgentKey: 'employee:emp_2',
+  }), { kind: 'held-by-other', holder: 'employee:emp_1' })
+  // legacy 机器直认领（employeeId 空串）：按 agentKey 判同
+  assert.deepEqual(decideLeaseClaim({
+    activeLeasePresent: true, activeLeaseExpired: false,
+    existingEmployeeId: '', existingAgentKey: 'qc bot',
+    requestedEmployeeId: '', requestedAgentKey: 'qc bot',
+  }), { kind: 'idempotent' })
+  assert.deepEqual(decideLeaseClaim({
+    activeLeasePresent: true, activeLeaseExpired: false,
+    existingEmployeeId: '', existingAgentKey: 'qc bot',
+    requestedEmployeeId: '', requestedAgentKey: 'pack bot',
+  }), { kind: 'held-by-other', holder: 'qc bot' })
+  // legacy 认领不得幂等接管受管租约（employeeId 口径不同即他主体）
+  assert.equal(decideLeaseClaim({
+    activeLeasePresent: true, activeLeaseExpired: false,
+    existingEmployeeId: 'emp_1', existingAgentKey: 'employee:emp_1',
+    requestedEmployeeId: '', requestedAgentKey: 'employee:emp_1',
+  }).kind, 'held-by-other')
+  // 过期租约＝无人实际持有 → acquire（新版本+1）
+  assert.deepEqual(decideLeaseClaim({
+    activeLeasePresent: true, activeLeaseExpired: true,
+    existingEmployeeId: 'emp_1', existingAgentKey: 'employee:emp_1',
+    requestedEmployeeId: 'emp_1', requestedAgentKey: 'employee:emp_1',
+  }), { kind: 'acquire' })
+  // 无租约 → acquire
+  assert.deepEqual(decideLeaseClaim({
+    activeLeasePresent: false, activeLeaseExpired: false,
+    existingEmployeeId: '', existingAgentKey: '',
+    requestedEmployeeId: 'emp_9', requestedAgentKey: 'employee:emp_9',
+  }), { kind: 'acquire' })
+})
+
+test('decideLeaseRenewal：同主体+active+未过期才续，旧租约一律 stale', () => {
+  assert.deepEqual(decideLeaseRenewal({ status: 'active', expired: false, principalMatches: true }), { kind: 'renew' })
+  // 旧租约（被更高版本取代）
+  assert.deepEqual(decideLeaseRenewal({ status: 'superseded', expired: false, principalMatches: true }), { kind: 'stale' })
+  // 已释放
+  assert.deepEqual(decideLeaseRenewal({ status: 'released', expired: false, principalMatches: true }), { kind: 'stale' })
+  // 已过期（即使 active 且同主体）
+  assert.deepEqual(decideLeaseRenewal({ status: 'active', expired: true, principalMatches: true }), { kind: 'stale' })
+  // 他主体（fail-closed：主体缺席视为不一致）
+  assert.deepEqual(decideLeaseRenewal({ status: 'active', expired: false, principalMatches: false }), { kind: 'stale' })
+})
+
+test('decideCompleteOwnership：无租约兼容放行；旧租约=LEASE_STALE；主体不符=RUN_NOT_OWNED', () => {
+  // 旧路径 run（无租约记录）→ 兼容放行（D07 口径：有租约记录才强制主体一致）
+  assert.deepEqual(decideCompleteOwnership({
+    hasLeaseRecord: false, status: 'released', expired: true,
+    callerPrincipalId: '', leasePrincipalId: '',
+  }), { kind: 'allow' })
+  // 主体一致 + active + 未过期 → allow
+  assert.deepEqual(decideCompleteOwnership({
+    hasLeaseRecord: true, status: 'active', expired: false,
+    callerPrincipalId: 'prin_a', leasePrincipalId: 'prin_a',
+  }), { kind: 'allow' })
+  // 旧租约（superseded）→ LEASE_STALE（先于主体判定）
+  assert.deepEqual(decideCompleteOwnership({
+    hasLeaseRecord: true, status: 'superseded', expired: false,
+    callerPrincipalId: 'prin_a', leasePrincipalId: 'prin_a',
+  }), { kind: 'deny', code: 'LEASE_STALE', reason: '执行租约已过期或被更高版本取代（旧租约），请先重新认领' })
+  // 过期 active → LEASE_STALE
+  assert.equal(decideCompleteOwnership({
+    hasLeaseRecord: true, status: 'active', expired: true,
+    callerPrincipalId: 'prin_a', leasePrincipalId: 'prin_a',
+  }).code, 'LEASE_STALE')
+  // 主体不符 → RUN_NOT_OWNED（V06：员工用另一个 run 提交完成被拒）
+  assert.equal(decideCompleteOwnership({
+    hasLeaseRecord: true, status: 'active', expired: false,
+    callerPrincipalId: 'prin_b', leasePrincipalId: 'prin_a',
+  }).code, 'RUN_NOT_OWNED')
+  // 调用主体缺席 + 有租约 → fail-closed 拒绝（不能匿名交回他人 run）
+  assert.equal(decideCompleteOwnership({
+    hasLeaseRecord: true, status: 'active', expired: false,
+    callerPrincipalId: '', leasePrincipalId: 'prin_a',
+  }).code, 'RUN_NOT_OWNED')
+})
+
+test('decideRunAdoption：投影运行中=adopt（V05 不因预持锁卡死），缺席/脏投影=create', () => {
+  assert.deepEqual(decideRunAdoption({ projectedRunIdPresent: true, projectedRunRunning: true }), { kind: 'adopt' })
+  assert.deepEqual(decideRunAdoption({ projectedRunIdPresent: false, projectedRunRunning: false }), { kind: 'create' })
+  // 投影指向已终态/已消失的 run＝脏投影 → 新建
+  assert.deepEqual(decideRunAdoption({ projectedRunIdPresent: true, projectedRunRunning: false }), { kind: 'create' })
 })
