@@ -73,7 +73,8 @@ async function loadLocale(locale) {
     const response = await fetch(`${MOUNT}/locales/${encodeURIComponent(locale)}`, { headers: { accept: 'application/json' } })
     if (!response.ok) throw new Error(`locales ${response.status}`)
     const payload = await response.json()
-    state.dict = (payload && payload.catalog) || {}
+    // 端点走标准信封 { ok, data: { locale, count, catalog } }——catalog 在 data 之下
+    state.dict = (payload && payload.data && payload.data.catalog) || {}
   } catch {
     state.dict = {} // 词典获取失败=回退中文显示，不阻断页面
   }
