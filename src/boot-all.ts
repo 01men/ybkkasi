@@ -28,6 +28,8 @@ import * as flowCore from '@dsh-ops/plugin-flow-core'
 import * as execHub from '@dsh-ops/plugin-exec-hub'
 import * as workforce from '@dsh-ops/plugin-workforce'
 import * as dingtalkBridge from '@dsh-ops/plugin-dingtalk-bridge'
+// W2 启动健壮性：双实例断言 + 装配后插件树体检
+import { assertSingleRoot, formatTreeHealth, probeTree } from '@dsh-ops/platform-core'
 
 export interface BootOptions {
   dataDir: string
@@ -35,6 +37,8 @@ export interface BootOptions {
 }
 
 export async function bootAll(ctx: Context, options: BootOptions): Promise<void> {
+  // 装配前断言进程内只有一个 root（双实例会让 fiber 静默 PENDING，必须 fail-fast）
+  assertSingleRoot(ctx)
   await ctx.plugin(platformCore, { dataDir: options.dataDir, http: { port: options.port } })
   const restored = await ctx.opsStorage.restoreAll()
   if (restored.length > 0) {
@@ -77,4 +81,11 @@ export async function bootAll(ctx: Context, options: BootOptions): Promise<void>
   await ctx.plugin(workforce, { dataDir: options.dataDir })
   // 钉钉桥接（群桥/出向投递/审批推送/告警通道）：订阅 panel.message.created 与 audit.alert.fired
   await ctx.plugin(dingtalkBridge)
+  // 装配后体检：必须在全部 await ctx.plugin 之后（此刻 fiber 都应 ACTIVE）；
+  // 必需服务不可达或存在拦启动的卡死 fiber 时直接拒绝启动，禁止降级为告警放行
+  // （FAILED fiber 仅在声明 provide 已被其他 ACTIVE fiber 接管时豁免，见 boot-probe.ts）
+  const health = probeTree(ctx, ['opsStorage', 'platformBus', 'httpServer', 'iam', 'authn', 'usage', 'audit'])
+  if (!health.ok) {
+    throw new Error(formatTreeHealth(health))
+  }
 }

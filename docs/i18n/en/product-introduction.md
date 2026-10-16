@@ -1,10 +1,10 @@
 > **English edition** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source: `llms.txt`, `README.md` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
 
-# RongQi (ybkk-AIOS) — Product Introduction
+# YuanBingKe (ybkk-AIOS) — Product Introduction
 
 
-**RongQi** (original Chinese brand: 元冰可; product code name **ybkk-AIOS**) is a self-hosted enterprise AI resource management platform. It gives enterprises one identity system, one permission model, one usage meter, and one audit trail for six classes of AI assets — with usage transparency and internal cost pass-through as the only money-adjacent surfaces. This page is the positioning one-pager for marketing and sales enablement. The fuller product panorama is in [README.md](README.md).
+**YuanBingKe** (original Chinese brand: 元冰可; product code name **ybkk-AIOS**) is a self-hosted enterprise AI resource management platform. It gives enterprises one identity system, one permission model, one usage meter, and one audit trail for six classes of AI assets — with usage transparency and internal cost pass-through as the only money-adjacent surfaces. This page is the positioning one-pager for marketing and sales enablement. The fuller product panorama is in [README.md](README.md).
 
 **At a glance:** 6 managed asset types · 25 plugin entries in one dsh bundle install · 40+ operations tools exposed to any MCP client (as of the latest release) · 4 audit log classes · 730-day default usage retention (`USAGE_RETENTION_DAYS`) · zero monetary settlement semantics.
 
@@ -19,7 +19,7 @@ Enterprises adopting AI accumulate resources faster than they can govern them:
 
 ## 2. The solution
 
-RongQi registers all six asset types into a single platform running inside the enterprise boundary:
+YuanBingKe registers all six asset types into a single platform running inside the enterprise boundary:
 
 - **Unified identity and access.** Multi-level organization tree, roles / user groups, permission-point matrix, OIDC SSO for in-house applications, DingTalk directory sync with scheduled auto-sync, and on-behalf-of token chains so every machine action stays attributable to a human.
 - **Lifecycle governance.** Every asset type has a draft → validate → canary → full rollout path (or its domain equivalent), immutable releases, one-click rollback, and L4 mandatory approvals for dangerous operations (go-live / offline / delist / revoke) with reason capture and result write-back.
@@ -28,7 +28,7 @@ RongQi registers all six asset types into a single platform running inside the e
 
 **Before / after, in one table:**
 
-| Question | Typical enterprise today | With RongQi |
+| Question | Typical enterprise today | With YuanBingKe |
 |---|---|---|
 | What AI assets exist? | spreadsheets, tribal knowledge | asset registry with ownership, health, lifecycle state |
 | Who may use what? | per-tool ad hoc accounts | permission points, scene-level authorization, machine credentials |
@@ -117,7 +117,7 @@ Governance is not a separate compliance module bolted on: scene-level authorizat
 
 ## 5. Who it is for
 
-| Persona | What they do in RongQi |
+| Persona | What they do in YuanBingKe |
 |---|---|
 | **Platform admin** | Owns baseline initialization, administrator accounts, connectors, self-update, and platform-wide settings. Works in the Console（控制台） and with the `dshctl` CLI. |
 | **Resource admin** | Day-to-day management of MCP services, skills, agents, and applications: deployments, canary releases, health inspections, marketplace approvals (demo account `ops`). |
@@ -153,7 +153,7 @@ As of the 2026-10-16 release, the runtime UI ships with a built-in language swit
 
 ## 8. Deployment and commercial fit
 
-Two supported forms out of the box: an independent process (`npm install && npm start`, default `http://127.0.0.1:7300`) or a dsh bundle mount (`dsh plugin --profile web add github:01men/ybkkasi`, data plane under the `/rq` prefix). Commercially, RongQi is priced by "team + domain assets" (industry knowledge-graph packs / scenario packs), with private on-premises project delivery available for manufacturing customers. See [getting-started.md](getting-started.md) for the hands-on path.
+Two supported forms out of the box: an independent process (`npm install && npm start`, default `http://127.0.0.1:7300`) or a dsh bundle mount (`dsh plugin --profile web add github:01men/ybkkasi`, data plane under the `/rq` prefix). Commercially, YuanBingKe is priced by "team + domain assets" (industry knowledge-graph packs / scenario packs), with private on-premises project delivery available for manufacturing customers. See [getting-started.md](getting-started.md) for the hands-on path.
 
 Market talking points, by region (positioning guidance from the i18n governance notes — not legal advice): for US buyers, lead with self-hosting, governance ROI, and the honest certification roadmap; for Europe, self-hosting and on-prem delivery are the data-residency path (a formal GDPR DPA process is roadmap); for India, emphasize the scale elasticity of "team + domain assets" pricing (DPDP awareness); for Africa, data sovereignty and low-bandwidth, low-dependency operations (plain-Markdown docs, no cloud dependency); for Japan, note the explicit roadmap labeling and the built-in Japanese interface (APPI awareness); for Singapore, the English edition is the official version (PDPA awareness).
 

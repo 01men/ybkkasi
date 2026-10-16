@@ -8,6 +8,7 @@
  * 两种后端严格同一 Collection<T> 契约，插件代码零改动。
  */
 import { copyFile, mkdir, readdir, readFile, rename, open } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
@@ -46,6 +47,34 @@ export interface Collection<T extends RecordBase> {
    */
   uniqueOn(label: string, keyOf: (record: T) => string): void
 }
+
+/**
+ * sqlite 后端默认 JSON 豁免名单（ADR-0001 §五第 3 批「低频配置型集合」，与 ADR 同名可查）。
+ *
+ * 名单依据（grep 全仓 opsStorage.collection 注册点核对的真实集合名；代码内集合名用 `:`，
+ * 数据文件名由 fileNameOf 转义为 `~`）：
+ *   - resource:dependencies · update:state · platform:bootstrap —— 低频配置型；
+ *   - market:*（前缀通配）—— market:developers / market:installs / market:submissions；
+ *   - 各插件 migrations / snapshot 集合：agent:migrations · app:migrations · iam:migrations
+ *     · iam:groupSnapshots（写一次的数据演化标记，无 DB 化收益）；
+ *   - oidc-keys —— 平台级 OIDC 签名密钥文件（plugin-authn 直读 dataDir 下 oidc-keys.json，
+ *     并非集合；restoreAll 按文件名扫描会命中该名，入名单使其留在 JSON 路径按平台级文件跳过，
+ *     不在 sqlite meta 里留下伪集合记录）。
+ *
+ * 语义：PLATFORM_STORAGE_JSON_KEEP **未设置**时应用本名单；显式设置时完全覆盖默认
+ *（含「显式给空串 = 一个都不豁免」，见 parseKeepEnv）。
+ */
+export const DEFAULT_JSON_KEEP: readonly string[] = [
+  'resource:dependencies',
+  'update:state',
+  'oidc-keys',
+  'market:*',
+  'platform:bootstrap',
+  'agent:migrations',
+  'app:migrations',
+  'iam:migrations',
+  'iam:groupSnapshots',
+]
 
 export interface CollectionOptions {
   /**
@@ -196,6 +225,8 @@ export class StorageService extends Service {
   private sqliteNames = new Set<string>()
   private sqliteBackend?: SqliteCollectionBackend
   private readonly jsonKeep: string[]
+  /** JSON 豁免名单是否来自显式环境变量（默认名单不触发「json 后端下无效」告警）。 */
+  private readonly jsonKeepExplicit: boolean
   private dirty = new Set<string>()
   private flushTimer: ReturnType<typeof setTimeout> | undefined
   /** 落盘串行链（并发 flushNow 排队执行，避免同名 tmp 竞争）。 */
@@ -212,8 +243,12 @@ export class StorageService extends Service {
     super(ctx, 'opsStorage')
     this.dataDirPath = config.dataDir ?? join(process.cwd(), "data")
     this.backend = config.backend ?? parseBackendEnv(process.env.PLATFORM_STORAGE)
-    this.jsonKeep = parseKeepEnv(process.env.PLATFORM_STORAGE_JSON_KEEP)
-    if (this.jsonKeep.length > 0 && this.backend !== 'sqlite') {
+    // 豁免名单：环境变量未设置 → 内置默认名单（ADR-0001 §五第 3 批）；
+    // 显式设置 → 完全覆盖默认（parseKeepEnv('') 返回 []，即「一个都不豁免」）。
+    const keepEnv = process.env.PLATFORM_STORAGE_JSON_KEEP
+    this.jsonKeep = keepEnv === undefined ? [...DEFAULT_JSON_KEEP] : parseKeepEnv(keepEnv)
+    this.jsonKeepExplicit = keepEnv !== undefined
+    if (this.jsonKeepExplicit && this.jsonKeep.length > 0 && this.backend !== 'sqlite') {
       console.warn('[storage] PLATFORM_STORAGE_JSON_KEEP 仅在 PLATFORM_STORAGE=sqlite 下生效，当前忽略')
     }
     ctx.effect(() => () => {
@@ -319,6 +354,8 @@ export class StorageService extends Service {
    * sqlite 后端恢复：DB 为准，首启自动回填同名 JSON 集合文件（文件保留为回滚源）。
    * meta.backfilled_at=NULL 表示导入未完成（上次启动在导入事务提交前崩溃）——重试导入，
    * 导入与标记在 storage-sqlite 的同一事务内原子生效，不会出现「半套数据」。
+   * 导入事务内回填后先行对账（条数 + 关键字段哈希，assertBackfillParity）：
+   * 不一致即抛错并整体回滚，标记不会落在坏数据上。
    */
   private async restoreSqlite<T extends RecordBase>(name: string): Promise<Collection<T>> {
     const backend = this.ensureSqliteBackend()
@@ -334,7 +371,7 @@ export class StorageService extends Service {
       const code = (error as NodeJS.ErrnoException).code
       if (code !== 'ENOENT') await this.backupCorrupt(name, file, error)
     }
-    backend.backfill(name, records)
+    backend.backfill(name, records, (rows) => assertBackfillParity(name, records, rows))
     if (records.length > 0) {
       console.log(`[storage] 集合 ${name} 已回填 ${records.length} 条至 SQLite（${file} 保留为回滚源）`)
     }
@@ -453,6 +490,42 @@ function fileNameOf(name: string): string {
   return name.replace(/[:*?"<>|]/g, '~')
 }
 
+/**
+ * 回填对账（ADR-0001 缺口②）：JSON 源与 SQLite 落库逐条对账——条数一致 + 每条记录
+ * 规范化序列化（键递归排序）SHA-256 哈希一致。不一致即抛错（响亮失败），错误消息
+ * 含集合名与差异数；配合 backfill 单事务语义，抛错时导入与 meta 标记一并回滚，
+ * 下次启动重试并再次失败——绝不带着静默不一致完成回填。
+ */
+function assertBackfillParity(name: string, source: RecordBase[], rows: Array<{ id: string; doc: string }>): void {
+  if (rows.length !== source.length) {
+    throw new Error(t('[storage] 集合 {name} 回填对账失败：条数不一致（JSON 源 {json} 条 / SQLite 落库 {sql} 条）', { name, json: source.length, sql: rows.length }))
+  }
+  const sourceHashes = new Map(source.map((record) => [record.id, recordHash(record)]))
+  let diff = 0
+  for (const row of rows) {
+    const expected = sourceHashes.get(row.id)
+    if (expected === undefined || expected !== recordHash(JSON.parse(row.doc) as RecordBase)) diff++
+  }
+  if (diff > 0) {
+    throw new Error(t('[storage] 集合 {name} 回填对账失败：{count} 条记录关键字段哈希不一致', { name, count: diff }))
+  }
+}
+
+/** 稳定序列化哈希：键递归排序后 JSON 序列化再 SHA-256（对账专用，与存储写入格式无关）。 */
+function recordHash(record: RecordBase): string {
+  return createHash('sha256').update(canonicalJson(record)).digest('hex')
+}
+
+/** 规范化 JSON：对象键逐层排序、剔除 undefined，保证同构数据序列化逐字节一致。 */
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(',')}]`
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`
+}
+
 function decodeFileName(name: string): string {
   return name.replace(/~/g, ':')
 }
@@ -466,7 +539,11 @@ function parseBackendEnv(value: string | undefined): StorageBackendKind {
   return 'json'
 }
 
-/** PLATFORM_STORAGE_JSON_KEEP：sqlite 后端下仍保留 JSON 落盘的集合名（逗号分隔，`前缀*` 通配）。 */
+/**
+ * PLATFORM_STORAGE_JSON_KEEP：sqlite 后端下仍保留 JSON 落盘的集合名（逗号分隔，`前缀*` 通配）。
+ * 语义：未设置 → 用 DEFAULT_JSON_KEEP；显式设置 → 完全覆盖默认名单——
+ * 空串解析为空数组，即「显式给空串 = 一个都不豁免，全部集合走 sqlite」。
+ */
 function parseKeepEnv(value: string | undefined): string[] {
   if (!value) return []
   return value.split(',').map((item) => item.trim()).filter(Boolean)

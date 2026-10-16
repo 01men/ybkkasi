@@ -1,9 +1,9 @@
 > **日本語版** — 機械翻訳支援＋i18n PM による統一校正。**中文原文が正式版です（齟齬時は中文が優先）。**
 > 原典: `README.md`（リポジトリルート、補助原典 `docs/deploy-enterprise.md`）· 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
 
-# クイックスタート — RongQi（ybkk-AIOS）
+# クイックスタート — YuanBingKe（ybkk-AIOS）
 
-本ガイドは、RongQi（製品の中国語名: 元冰可）を最短で起動し、初回ログインまで完了させるための手順を
+本ガイドは、YuanBingKe（製品の中国語名: 元冰可）を最短で起動し、初回ログインまで完了させるための手順を
 まとめたものです。評価・導入の最初の一歩としてご利用ください。企業内での本格的なデプロイ
 （systemd によるプロセス管理・リバースプロキシ・接続コードによるリモート dsh 接続等）は、
 中文の [docs/deploy-enterprise.md](../../deploy-enterprise.md)（内部寄り）を参照してください。

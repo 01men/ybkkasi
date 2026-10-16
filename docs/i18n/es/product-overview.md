@@ -1,12 +1,12 @@
 > **Spanish edition (Tier-2 overview)** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source baseline: 2026-10-15 · Glossary: [../GLOSSARY.md](../GLOSSARY.md) · Governance: [../README.md](../README.md)
 
-# RongQi (ybkk-AIOS) — gestión de recursos de IA para la empresa
+# YuanBingKe (ybkk-AIOS) — gestión de recursos de IA para la empresa
 
 **Posicionamiento:** una plataforma de gestión de recursos de IA para la empresa, construida sobre
 la arquitectura dsh "Everything is a plugin" (todo es un plugin).
 
-RongQi (nombre de marca original en chino: 元冰可, código de producto ybkk-AIOS) es una plataforma
+YuanBingKe (nombre de marca original en chino: 元冰可, código de producto ybkk-AIOS) es una plataforma
 empresarial autoalojada (self-hosted) para la gestión centralizada de recursos de IA. Se apoya en la
 arquitectura de dsh (DeepSeek Harness). Seis tipos de activos se administran bajo una única identidad
 (IAM/OIDC SSO), un único sistema de permisos, una única medición de uso y una única auditoría.
@@ -18,7 +18,7 @@ operan en silos, con cuentas dispersas, permisos difusos, costes de modelos opac
 trazabilidad de auditoría utilizable. Ni TI ni cumplimiento pueden responder con certeza quién usa
 qué recurso de IA, cuánto cuesta internamente y qué riesgos arrastra.
 
-RongQi responde con un plano de control unificado: una identidad, un modelo de permisos, una medición
+YuanBingKe responde con un plano de control unificado: una identidad, un modelo de permisos, una medición
 de uso transparente y una traza de auditoría continua para todos los activos de IA. Cada cambio sigue
 etapas definidas de revisión y aprobación (borrador → validación → canary → despliegue general), y
 cada acción queda registrada de forma verificable. Al ser autoalojada, la plataforma permanece dentro
@@ -68,7 +68,7 @@ del perímetro informático de la empresa.
 
 ## Modelo comercial
 
-RongQi se ofrece bajo el modelo **"equipo + activos de dominio"**: la fijación de precios depende del
+YuanBingKe se ofrece bajo el modelo **"equipo + activos de dominio"**: la fijación de precios depende del
 número de equipos activados y de los paquetes de activos de dominio elegidos (paquetes sectoriales,
 paquetes de escenarios), y no de una licencia global de plataforma. Para la industria manufacturera
 está disponible una **entrega privada on-premises en formato de proyecto**.

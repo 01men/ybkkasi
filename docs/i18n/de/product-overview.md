@@ -1,12 +1,12 @@
 > **German edition (Tier-2 overview)** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source baseline: 2026-10-15 · Glossary: [../GLOSSARY.md](../GLOSSARY.md) · Governance: [../README.md](../README.md)
 
-# RongQi (ybkk-AIOS) — Enterprise-Plattform für KI-Ressourcenmanagement
+# YuanBingKe (ybkk-AIOS) — Enterprise-Plattform für KI-Ressourcenmanagement
 
 **Positionierung:** Eine Enterprise-Plattform für KI-Ressourcenmanagement auf Basis der dsh-Architektur
 „Everything is a plugin“ („Alles ist ein Plugin“).
 
-RongQi (chinesischer Originalmarkenname: 元冰可, Produktcode ybkk-AIOS) ist eine self-hosted
+YuanBingKe (chinesischer Originalmarkenname: 元冰可, Produktcode ybkk-AIOS) ist eine self-hosted
 Enterprise-Plattform zur zentralen Verwaltung von KI-Ressourcen. Sie basiert auf der Architektur von
 dsh (DeepSeek Harness). Sechs Asset-Typen werden unter einer einzigen Identität (IAM/OIDC-SSO), einem
 Berechtigungssystem, einer Nutzungsmessung und einem Audit geführt.
@@ -18,7 +18,7 @@ dezentral betrieben — mit getrennten Konten, ungeklärten Berechtigungen, intr
 und ohne belastbare Audit-Spuren. Für IT-Leitung und Compliance ist weder nachvollziehbar, wer welche
 KI-Ressource nutzt, noch was sie intern kostet und welche Risiken sie birgt.
 
-RongQi beantwortet das mit einer einheitlichen Control-Plane: eine Identität, ein Berechtigungsmodell,
+YuanBingKe beantwortet das mit einer einheitlichen Control-Plane: eine Identität, ein Berechtigungsmodell,
 eine transparente Nutzungsmessung und ein durchgängiger Audit-Trail für alle KI-Assets. Änderungen
 durchlaufen definierte Freigabe- und Genehmigungsstufen (Entwurf → Prüfung → Canary → Rollout), und
 jede Aktion wird revisionssicher protokolliert. Als self-hosted Plattform bleibt alles innerhalb der
@@ -64,7 +64,7 @@ IT-Grenze des Unternehmens.
 
 ## Kommerzielles Modell
 
-RongQi wird nach dem Prinzip **„Team + Domänen-Assets“** angeboten: Die Preisbildung richtet sich nach
+YuanBingKe wird nach dem Prinzip **„Team + Domänen-Assets“** angeboten: Die Preisbildung richtet sich nach
 der Zahl der aktivierten Teams und den gewählten Domänen-Asset-Paketen (zum Beispiel
 Branchen-Wissenspakete oder Szenariopakete) — bewusst nicht als starre Plattform-Pauschale. Für
 Unternehmen der Fertigungsindustrie steht eine **private Auslieferung on-premises im Projektmodus**

@@ -5,7 +5,7 @@
 
 > Scope note: per i18n governance, the per-batch Chinese release notes remain **internal engineering assets** and are not translated in full. This page is the consolidated external-facing summary for international readers. Each row links the authoritative Chinese original.
 
-For 元冰可 (RongQi / ybkk-AIOS), the Enterprise AI Resource Management Platform.
+For 元冰可 (YuanBingKe / ybkk-AIOS), the Enterprise AI Resource Management Platform.
 
 ## Interface language note
 

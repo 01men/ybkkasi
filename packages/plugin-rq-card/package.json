@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "元冰可会话侧注入插件（WP-06）：四态执行卡片 + 👍/👎 反馈条，dsh.client 双面插件（浏览器半经 /plugins/<id>/client.js 下发）",
+  "description": "元冰可会话侧注入插件（WP-06，experimental）：四态执行卡片 + 👍/👎 反馈条，dsh.client 双面插件（浏览器半经 /plugins/<id>/client.js 下发；W5 起宿主耦合面经 host-port.ts 窄端口收敛，dsh 升级只需重跑 npm run test:contracts）",
   "exports": {
     ".": "./src/index.ts",
     "./client": {

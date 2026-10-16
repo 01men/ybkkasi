@@ -10,7 +10,10 @@
  *   - JSON 后端单写延迟 = 内存 Map 写入 + 防抖标记（落盘异步在后台发生，不计入单写延迟）；
  *   - SQLite 后端单写延迟 = 完整事务提交（WAL + synchronous=FULL，含 fsync）——
  *     这是「写入即持久」的代价，也是「返回 200 即落盘」的收益。
- *   - 验收线（ADR-0001 §八）：SQLite 10k 并发写入 P99 < 50ms；常驻内存不随写入量线性增长。
+ *   - 验收线（ADR-0001 §八）：SQLite 串行 10k 写 P99 < 50ms；常驻内存不随写入量线性增长。
+ *     口径为「串行」而非并发：node:sqlite 是同步 API、单进程单写者，本基准的写入循环
+ *     即串行发射；「10k 并发写入」在本后端形态下不构成可真并发的口径（正式改口径
+ *     见 ADR-0001 §五/§八，2026-10-16 批次；不做多进程压测——单进程单写者是其部署形态上限）。
  */
 import { Context } from '@deepseek-ai/cordis'
 import { StorageService } from '../packages/platform-core/src/storage.ts'
@@ -90,6 +93,6 @@ if (ONLY === 'both' || ONLY === 'sqlite') results.push(await benchBackend('sqlit
 const sqlite = results.find((r) => r.kind === 'sqlite')
 if (sqlite) {
   const pass = sqlite.p99 < 50
-  console.log(`\nADR-0001 验收线：SQLite 写入 P99 < 50ms → ${pass ? '✔ 通过' : `✘ 未过（${sqlite.p99.toFixed(2)}ms）`}`)
+  console.log(`\nADR-0001 验收线：SQLite 串行写入 P99 < 50ms（串行口径，见文件头说明）→ ${pass ? '✔ 通过' : `✘ 未过（${sqlite.p99.toFixed(2)}ms）`}`)
   if (!pass) process.exitCode = 1
 }

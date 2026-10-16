@@ -30,6 +30,11 @@
  *   WebRoute = { kind:'exact'|'prefix', path, handler(req,res) }，handler 拥有完整响应生命周期。
  * 硬约束：`/api` 前缀与全站 fallback 席位均已被 dsh 占用（重复注册 throw），
  * 元冰可数据面必须整体走独立前缀（/rq）。
+ *
+ * 【W5 耦合面收窄】对 webServer 的全部触点经 platform-core 宿主桥窄端口
+ * （HostWebPort，adapter = createHostWebPort）完成；端口登记器 ctx.hostBridge
+ * 探测或直挂（轻量 ctx 静默跳过）。inject 键与对外路由/端点行为不变——
+ * dsh 升级 API 漂移时只改 adapter + 重跑契约测试（tests/host-bridge.contract.mjs）。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
@@ -39,15 +44,13 @@ import { join } from 'node:path'
 import { Service } from '@deepseek-ai/cordis'
 import { t } from '../../platform-i18n/src/index.ts'
 import type { HttpServerService } from '../../platform-core/src/index.ts'
-
-/** dsh webServer 的最小结构类型（不依赖 dsh 包，仅消费 register 契约）。 */
-interface DshWebServerLike {
-  register(route: {
-    kind: 'exact' | 'prefix'
-    path: string
-    handler: (req: IncomingMessage, res: ServerResponse) => void
-  }): unknown
-}
+// W5 宿主桥窄端口：webServer 触点全部经端口类型 + adapter（createHostWebPort），
+// 本文件不再直接感知 dsh webServer 的具体形状；dsh 升级只需改 adapter + 重跑
+// 契约测试（packages/plugin-dsh-bridge/tests/host-bridge.contract.mjs）。
+import {
+  HostBridgeRegistry, createHostWebPort,
+  type HostWebPort, type HostWebServerLike,
+} from '../../platform-core/src/host-bridge.ts'
 
 export interface DshBridgeConfig {
   /** 元冰可数据面对外前缀（默认 /rq；须为以 / 开头的非根路径）。 */
@@ -300,7 +303,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
   if (!mountPath.startsWith('/') || mountPath === '/') {
     throw new Error(t('dsh-bridge mountPath 非法：{value}（须为以 / 开头的非根路径）', { value: JSON.stringify(config.mountPath) }))
   }
-  const webServer = (ctx as unknown as { webServer?: DshWebServerLike }).webServer
+  const webServer = (ctx as unknown as { webServer?: HostWebServerLike }).webServer
   const httpServer = (ctx as unknown as { httpServer?: HttpServerService }).httpServer
   if (!webServer || typeof webServer.register !== 'function') {
     throw new Error(t('dsh-bridge 需要 ctx.webServer（仅在完整 dsh web 宿主下装配本插件）'))
@@ -309,8 +312,26 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
     throw new Error(t('dsh-bridge 需要 ctx.httpServer（platform-core 必须先于本插件装配）'))
   }
 
+  // ---- W5 宿主桥窄端口：webServer → HostWebPort（adapter 收窄）----------------
+  // 业务代码（下方全部路由注册与 tapIndex）只依赖端口，不感知宿主实现。
+  // 能力面分级（见 platform-core/src/host-bridge.ts 头注）：
+  //   必须 register（上方已校验）；可选 tapIndex（缺席 = 免登脚本通道降级，
+  //   selftest 伪造 webServer 不带它也须照常工作——adapter 按存在性收窄）。
+  const hostWeb: HostWebPort = createHostWebPort(webServer)
+  // 端口登记（尽力而为）：真实 cordis 树上「探测或直挂」ctx.hostBridge（对齐
+  // 上方 IdentityBindingService 的自提供规避法；W5 边界内 platform-core apply
+  // 不装配登记器）。轻量 ctx（selftest 服务视图）无 cordis reflect 面，构造
+  // 会抛——登记跳过，端口本地直用，挂载半/身份半对外行为分毫不变。
+  try {
+    const existing = softRead(ctx, 'hostBridge') as HostBridgeRegistry | undefined
+    const registry = existing && typeof existing.registerWebPort === 'function' ? existing : new HostBridgeRegistry(ctx)
+    registry.registerWebPort(hostWeb)
+  } catch {
+    // 无 reflect 面（plain-object ctx）或登记失败：仅跨方取用缺席，不影响本插件
+  }
+
   // ---- 挂载半：元冰可数据面 → /rq 前缀 ----------------------------------------
-  webServer.register({
+  hostWeb.register({
     kind: 'prefix',
     path: mountPath,
     handler(req, res) {
@@ -370,7 +391,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
     `${config.cookieName ?? DEFAULT_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`
 
   // 自然免登通道：控制台/门户「打开交互界面」以 ?entry_ticket= 跳转（query 版契约）
-  webServer.register({
+  hostWeb.register({
     kind: 'exact',
     path: '/auth/entry',
     handler(req, res) {
@@ -393,7 +414,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
   })
 
   // 浏览器半插件/引导脚本的同源绑定面（原生 req/res：可读 Cookie、可 Set-Cookie）
-  webServer.register({
+  hostWeb.register({
     kind: 'prefix',
     path: '/dsh-bridge',
     handler(req, res) {
@@ -509,7 +530,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
       if (parsed?.oidc?.clientId) oidcClient = { clientId: parsed.oidc.clientId, clientSecret: parsed.oidc.clientSecret }
     } catch { /* 凭证文件缺失/损坏：OIDC 通道降级为不可用，entry-ticket 通道不受影响 */ }
     if (oidcClient) {
-      webServer.register({
+      hostWeb.register({
         kind: 'exact',
         path: '/auth/oidc/start',
         handler(req, res) {
@@ -533,7 +554,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
           res.writeHead(302, { location: authorize.toString() }).end()
         },
       })
-      webServer.register({
+      hostWeb.register({
         kind: 'exact',
         path: '/auth/oidc/callback',
         handler(req, res) {
@@ -595,9 +616,10 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
   // ---- 免登引导脚本（tapIndex）：承接 #entry_ticket= fragment 既有契约 ----------------
   // fragment 不进服务端日志（优于 query）；同源 POST 天然通过 dsh 信任围栏。
   // 控制台 openAgentEntry 跳转 <entryUrl>#entry_ticket=<ticket> → 本脚本兑换 → 清 hash → 刷新。
-  const tapIndex = (webServer as { tapIndex?: (transform: (html: string) => string) => () => void }).tapIndex
+  // 可选能力 tapIndex：端口上缺席（宿主未提供）= 降级 warn，通道收敛到 /auth/entry query 版
+  const tapIndex = hostWeb.tapIndex
   if (typeof tapIndex === 'function') {
-    tapIndex.call(webServer, (html: string) => {
+    tapIndex((html: string) => {
       const script = `<script>(function(){try{var m=(location.hash||'').match(/[#&]entry_ticket=([^&]+)/);if(!m)return;` +
         `fetch('/dsh-bridge/redeem',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ticket:decodeURIComponent(m[1])})})` +
         `.then(function(r){return r.json()}).then(function(j){` +

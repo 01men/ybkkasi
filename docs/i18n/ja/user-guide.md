@@ -1,9 +1,9 @@
-# RongQi（ybkk-AIOS）機能使用ガイド（日本語版）
+# YuanBingKe（ybkk-AIOS）機能使用ガイド（日本語版）
 
 > **日本語版** — 機械翻訳支援＋i18n PM による統一校正。**中文原文が正式版です（齟齬時は中文が優先）。**
 > 原典: `README.md` · `llms.txt` · `docs/deploy-enterprise.md` · `docs/app-sso-integration.md` · `docs/nas-authz.md` · `docs/connector-integration.md` · `docs/app-rbac-guide.md` · `docs/panel-implementation.md` · `docs/entry-switching.md` · `docs/internal/a0-a3-autonomy-ladder-review.md` · `docs/host-features-ops-notes.md` ほか · 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
 
-RongQi（ybkk-AIOS）は、DeepSeek Harness（dsh）の「すべてはプラグイン」アーキテクチャ上に構築された、
+YuanBingKe（ybkk-AIOS）は、DeepSeek Harness（dsh）の「すべてはプラグイン」アーキテクチャ上に構築された、
 エンタープライズ AI リソース管理プラットフォームです。MCP サービス、スキル、エージェント、AI アプリケーション、
 モデルルート、NAS ファイルストレージの 6 種類のアセットを、1 つのアイデンティティ（IAM／OIDC SSO）、
 1 つの権限体系、1 つの利用量計測、1 つの監査で一元管理します。
@@ -458,7 +458,7 @@ RongQi（ybkk-AIOS）は、DeepSeek Harness（dsh）の「すべてはプラグ�
 
 ## 13. コネクタ
 
-- **アーキテクチャ**：RongQi＝治理コントロールプレーン、**open-connector v1.4.0 sidecar**＝データプレーン＋
+- **アーキテクチャ**：YuanBingKe＝治理コントロールプレーン、**open-connector v1.4.0 sidecar**＝データプレーン＋
   **クレデンシャルボールト**（AES-256-GCM）。1,000+ Provider／10,000+ Action のディレクトリ、
   **OAuth プロキシ**（全フロー）、oct_ ランタイムトークンを sidecar が担い、プラットフォームは
   ディレクトリ・OAuth・キーストアを自前実装しません。

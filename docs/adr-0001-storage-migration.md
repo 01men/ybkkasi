@@ -141,7 +141,10 @@ StorageService
 | `panel:messages` · `panel:tasks`              | 会话与任务,高频写            |
 | `usage:projection~*`                          | 已有 SQLite 同源数据,迁顺理成章 |
 
-**验收:压测 10k 并发写入下 P99 < 50ms,内存占用不随写入线性增长。**
+**验收:压测串行 10k 写入下 P99 < 50ms,内存占用不随写入线性增长。**
+（口径 2026-10-16 批次正式修订:「10k 并发写入」改为「串行 10k 写」——`node:sqlite` 是同步 API、
+单进程单写者,并发写在本后端形态下会被序列化,不构成可真并发的口径;也不做多进程压测重写 bench,
+因为「单进程单写者」本就是 SQLite 形态的部署上限,多进程扩展属 Postgres 二期范畴。）
 
 ### 第 2 批:治理型(一致性敏感,需谨慎)
 
@@ -154,12 +157,20 @@ StorageService
 
 **验收:selftest 中 auth-identity 全批次攻击演练(state/code/refresh 重放、一人一号)全绿。**
 
-### 第 3 批:低频配置型(可长期保留 JSON)
+### 第 3 批:低频配置型(默认保留 JSON)
 
 `resource:dependencies` · `update:state` · `oidc-keys` · `market~*` · `platform:bootstrap`
 · 各插件的 `migrations` / `snapshot` 集合
 
 这批读多写少、体积小,**保留 JSON 完全合理**。不建议为「一致性」统一迁——那是没有收益的工程债。
+
+> **落地修订(2026-10-16 W4 批次)**:本批不是「建议保留」,而是 sqlite 后端下的**默认行为**——
+> `PLATFORM_STORAGE_JSON_KEEP` 未设置时,内置默认名单 `DEFAULT_JSON_KEEP`
+> (`packages/platform-core/src/storage.ts` 导出常量,与本文同名可查)自动生效,覆盖上述集合
+> (代码内集合名用 `:`、文件名转义为 `~`;名单按注册点真实集合名书写:
+> `resource:dependencies` · `update:state` · `oidc-keys` · `market:*` · `platform:bootstrap`
+> · `agent:migrations` · `app:migrations` · `iam:migrations` · `iam:groupSnapshots`)。
+> 环境变量显式设置时完全覆盖默认名单(显式给空串 = 一个都不豁免)。
 
 ---
 
@@ -175,8 +186,14 @@ StorageService
 5. 清理   观察期结束后移除该集合的 JSON 写路径
 ```
 
-**每批独立开关**:`PLATFORM_STORAGE_MIGRATED=iam,mcp,audit,usage`。
-可任意组合,出问题把某个名字从列表去掉即刻回退到 JSON。
+**~~每批独立开关~~**:`~~PLATFORM_STORAGE_MIGRATED=iam,mcp,audit,usage~~`
+~~可任意组合,出问题把某个名字从列表去掉即刻回退到 JSON。~~
+
+> **已废止(2026-10-16 W4 批次)**:`PLATFORM_STORAGE_MIGRATED` 零实现,且实际落地路径
+> (整后端切换 + 原子回填,见 §十偏差说明)不需要逐集合开关。回滚诉求由既有机制覆盖:
+> **后端级开关**(`PLATFORM_STORAGE=json|sqlite`)+ **JSON_KEEP 豁免名单**(`DEFAULT_JSON_KEEP`
+> 默认名单 + 环境变量完全覆盖)——任一批集合出问题,把集合名加进
+> `PLATFORM_STORAGE_JSON_KEEP` 重启即回退 JSON,无需新增开关面。
 
 ---
 
@@ -190,18 +207,22 @@ StorageService
 | node:sqlite Experimental | 锁定 Node 版本;提供 `better-sqlite3` 备选实现            |
 | 迁移期双写不一致                 | 影子读期设对账任务,每日比对两边条数与内容哈希                        |
 
-**回滚**:任一批次移除 `PLATFORM_STORAGE_MIGRATED` 中对应名字,即回到 JSON 读路径。
+**回滚**:任一批集合出问题,把集合名(或其 `前缀:*` 模式)加入 `PLATFORM_STORAGE_JSON_KEEP`
+重启即回到 JSON 路径(未设置环境变量时 `DEFAULT_JSON_KEEP` 默认名单持续兜底,
+见 §五第 3 批落地修订;`PLATFORM_STORAGE_MIGRATED` 逐批开关已废止,见 §六)。
 第 5 步(清理)之前,JSON 文件始终是完整可用的回滚源。
 
 ---
 
 ## 八、验收标准(全部可自动化)
 
-- [x] `npm run selftest` **1450 项全绿**(含 IAM 攻击演练、计量幂等、执行锁 CAS;2026-10-16 实测)
+- [x] `npm run selftest` **1467 项全绿**(含 IAM 攻击演练、计量幂等、执行锁 CAS;2026-10-16 实测)
 - [x] `uniqueOn` 全部映射为真实 UNIQUE 索引(`collection_uniques` 引擎级主键),
       且 selftest 断言「绕过先查后插的重复键写入被引擎拒绝」「update 抢键被拒」
 - [x] 10k 写入压测:P99 < 50ms(**实测 P99 = 0.077ms**,NVMe 本地盘;
-      `scripts/storage-bench.mjs` 可复跑),常驻内存不随写入量线性增长(压测期 RSS 平稳)
+      `scripts/storage-bench.mjs` 可复跑),常驻内存不随写入量线性增长(压测期 RSS 平稳)。
+      口径 2026-10-16 W4 批次修订为**串行 10k 写**(node:sqlite 同步 API、单进程单写者,
+      「并发写入」不可真并发,见 §五第 1 批口径修订;bench 不重写为多进程)
 - [x] 进程 `kill -9` 后重启数据零丢失(`synchronous=FULL` 验证——selftest 平台级子实例断言:
       崩溃前创建的账号可登录、回填数据完整)
 - [x] 全部业务插件代码零改动(存储迁移相关 diff 仅 `platform-core`;`plugin-console` 的
@@ -229,7 +250,7 @@ StorageService
 | `storage.ts` 改造 | `StorageConfig.backend` + `PLATFORM_STORAGE` / `PLATFORM_STORAGE_JSON_KEEP` 环境变量;`restore()`/`restoreAll()` 双后端分支;`flushNow`/`flushDurable` 跳过 sqlite 集合(写入即事务,无防抖窗口) |
 | `scripts/storage-bench.mjs` | 双后端基准(写入吞吐/P50/P95/P99/max、点读、全表扫描、RSS) |
 | `scripts/storage-export.mjs` | SQLite → JSON 导出(回滚工具;旧回滚源先挪开绝不无痕覆盖) |
-| selftest 新节「存储 SQLite 后端契约(ADR-0001)」 | 23 项断言:双后端同序列对拍(含错误文案逐字一致)、引擎级唯一、回填幂等/DB 为准/回滚源保留、环境开关、平台级 kill -9 零丢失 |
+| selftest 新节「存储 SQLite 后端契约(ADR-0001)」 | 23 项断言:双后端同序列对拍(含错误文案逐字一致)、引擎级唯一、回填幂等/DB 为准/回滚源保留、环境开关、平台级 kill -9 零丢失;W4 批次追加 11 项(默认 JSON_KEEP 名单 + iam 一人一号 sqlite 攻击演练,见下方收尾修订),合计 34 项 |
 
 ### 与 §六 的偏差:双写阶段被「原子回填」替代(有意决策)
 
@@ -253,3 +274,27 @@ StorageService
 - Postgres 集合后端(多节点 HA)——`SqliteCollectionBackend` 的接口面已按可替换设计;
 - 复合写路径的事务包裹审计(§4.4)——JSON 双写兜底已不存在,列为二期专项;
 - `node:sqlite` 跨 Node 大版本升级验证项(每次升级 Node 跑 `npm run selftest` + `storage-bench`)。
+
+### W4 收尾修订(2026-10-16 QA 验收批次)
+
+第一期落地后 QA 复核出五个缺口,本轮全部收口,按「双侧回写」原则代码与本文同步修订:
+
+1. **默认 JSON_KEEP 名单(缺口①)**:§五第 3 批原只是「建议保留 JSON」,代码却默认把
+   低频配置集合也迁入 sqlite,与结论相悖。修复:`storage.ts` 导出 `DEFAULT_JSON_KEEP`
+   (内容见 §五第 3 批落地修订,按全仓注册点真实集合名核对),`PLATFORM_STORAGE_JSON_KEEP`
+   未设置时自动生效;显式设置(含空串)完全覆盖默认。
+2. **回填对账断言(缺口②)**:首启 JSON→SQL 回填在**导入事务内、标记 `backfilled_at` 前**
+   增加对账——逐集合比较 JSON 源条数与 SQL 落库条数 + 每条记录按「键递归排序的规范化
+   序列化」算 SHA-256 哈希逐条比对(`storage.ts` `assertBackfillParity`);不一致即抛错,
+   错误消息含集合名与差异数,整个回填事务回滚(导入与标记一并撤销),下次启动重试并再次
+   响亮失败——带病数据永远不会拿到 `backfilled_at` 标记,崩溃安全语义不变。
+3. **sqlite 后端 iam 一人一号攻击演练(缺口③)**:selftest「存储 SQLite 后端契约」节内新增
+   子块,进程内以 sqlite 后端装配 platform-core + iam + authn,演练:同
+   `provider+providerUserId+corpId` 二次绑定被引擎拒绝、同 tick `Promise.all` 连发 6 次重复
+   插入恰一条成功(其余被真实 UNIQUE INDEX 拒绝)、绕过服务层直插集合同键记录被拒、
+   跨 corpId 放行(唯一键含 corpId 维度)、authn refresh 轮转经 onChange 维护 refreshIndex、
+   吊销广播(带 `revokedAt` 的 update 事件)在 sqlite 事务提交后仍逐条送达且 refresh 即刻失效。
+4. **压测口径正式改口径(缺口④)**:「10k 并发写入 P99<50ms」→「串行 10k 写 P99<50ms」
+   (理由见 §五第 1 批口径修订;`scripts/storage-bench.mjs` 文案同步,bench 不重写为多进程)。
+5. **`PLATFORM_STORAGE_MIGRATED` 正式废止(缺口⑤)**:代码零实现,且后端级开关 +
+   JSON_KEEP 豁免名单已覆盖回滚诉求(见 §六废止注记、§七回滚修订),不补实现。

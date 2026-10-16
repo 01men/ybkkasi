@@ -127,8 +127,13 @@ const PLUGINS = [
   },
   {
     dir: 'mcp', id: 'dsh-plugin-mcp', label: 'MCP 部署服务',
-    depends: ['dsh-plugin-platform-core', 'dsh-plugin-iam', 'dsh-plugin-audit'], permissions: ['mcp.service.read', 'mcp.service.write', 'mcp.service.deploy', 'mcp.service.offline', 'mcp.permgroup.write', 'mcp.invoke'],
-    services: [['mcpRegistry', 'ctx.mcpRegistry', '服务注册/版本/灰度/回滚 + 健康探活熔断 + 权限组 + 调用网关 + 监控']],
+    depends: ['dsh-plugin-platform-core', 'dsh-plugin-iam', 'dsh-plugin-audit'], permissions: ['mcp.service.read', 'mcp.service.write', 'mcp.service.deploy', 'mcp.service.offline', 'mcp.permgroup.write', 'mcp.invoke', 'mcp.risk.admin'],
+    permissionComments: { 'mcp.risk.admin': 'W 批次 W1（V11 根治）：MCP 工具风险登记审批（登记/两级审批/重审清单/退场）' },
+    permissionCommentsManifest: { 'mcp.risk.admin': 'W 批次 W1（V11 根治）：MCP 工具可信风险登记审批面——登记/两级审批/重审清单/退场' },
+    services: [
+      ['mcpRegistry', 'ctx.mcpRegistry', '服务注册/版本/灰度/回滚 + 健康探活熔断 + 权限组 + 调用网关 + 监控'],
+      ['mcpToolRisks', 'ctx.mcpToolRisks', 'W1/V11 工具可信风险登记（submit/decide 两级审批/list/reviewList 重审清单/retire 退场；effectiveRisk 为网关闸门唯一风险来源）'],
+    ],
     events: [
       ['mcp.deployed / mcp.offlined', 'emit', '部署与下线'],
       ['mcp.unhealthy', 'emit', '熔断告警（audit 订阅）'],
@@ -142,7 +147,8 @@ const PLUGINS = [
       'POST /api/mcp/services/:id/verify|deploy|rollback|offline|health · POST /api/mcp/services/:id/final-review（两级审批终审）',
       'GET /api/mcp/services/:id/metrics · GET /api/mcp/calls',
       'GET/POST /api/mcp/perm-groups · PATCH/DELETE /api/mcp/perm-groups/:id',
-      'POST /api/mcp/invoke（网关统一鉴权/限流/审计）',
+      'POST /api/mcp/invoke（网关统一鉴权/限流/审计；body.work 仅 permitId/runId/stepKey 索引透传）',
+      'POST/GET /api/mcp/risk-registry · POST /api/mcp/risk-registry/:id/decide|retire · GET /api/mcp/risk-registry/review-list（W1/V11 工具风险登记：两级审批+全量重审，mcp.risk.admin）',
     ],
     tools: ['mcp_service_list', 'mcp_deploy', 'mcp_offline', 'mcp_metrics', 'mcp_invoke', 'mcp_health_check'],
     ui: { routes: ['#/mcp'], menus: [{ group: 'AI 资源', items: ['MCP 服务'] }] },
@@ -304,7 +310,7 @@ const PLUGINS = [
     ],
     api: [
       'POST /api/tools/execute（工具桥：与 dsh ToolRuntime 同一契约）',
-      'GET/POST/DELETE /mcp（平台即 MCP Server：Streamable HTTP，initialize/tools/list/tools/call，Bearer 鉴权 + 工具级权限点；GET=SSE 流、DELETE=会话终结） · GET /docs（控制台文档页）',
+      'GET/POST/DELETE /mcp（平台即 MCP Server：Streamable HTTP，initialize/tools/list/tools/call，Bearer 鉴权 + 工具级权限点；GET=SSE 流、DELETE=会话终结） · GET /docs（控制台文档页） · GET /locales/:locale（UI 全球化词典合并端点，2026-10-16：platform-i18n 服务端文案 + 控制台/面板 SPA 词典三层合并，公开静态文案无鉴权面）',
       'GET /api/health（存活探针） · GET /api/tools/schemas（工具 schema 目录） · GET /api/platform/route-matrix（路由矩阵自检）',
       'GET /api/platform/bootstrap（公开；首启状态：仅回 initialPasswordPending 布尔，登录页部署提示用） · GET /api/platform/bootstrap/detail（authenticated；首启状态全量：mode/orgName/seededAt/口令文件路径）',
       'GET /api/finops/overview?month=YYYY-MM&window=分钟（usage.read；M2 CFO 视图：成本穿透 org×model+环比 + 空转检测一次取全）',
@@ -534,7 +540,7 @@ provides:
   services:
 ${plugin.services.map(([key]) => `    - ${key}`).join('\n') || '    []'}
 permissions:
-${plugin.permissions.map((p) => `  - ${p}`).join('\n') || '  []'}
+${plugin.permissions.map((p) => `${plugin.permissionComments?.[p] ? `  # ${plugin.permissionComments[p]}\n` : ''}  - ${p}`).join('\n') || '  []'}
 `)
 
   write(join(manifestDir, 'api.yaml'), `
@@ -553,7 +559,7 @@ ${plugin.services.map(([key, prop, desc]) => `  - key: ${key}\n    access: ${pro
 # 权限点声明（注册进统一 RBAC，控制台/CLI/工具共用）
 plugin: ${plugin.id}
 points:
-${plugin.permissions.map((p) => `  - ${p}`).join('\n') || '  []'}
+${plugin.permissions.map((p) => `${plugin.permissionCommentsManifest?.[p] ? `  # ${plugin.permissionCommentsManifest[p]}\n` : ''}  - ${p}`).join('\n') || '  []'}
 `)
 
   write(join(manifestDir, 'events.yaml'), `

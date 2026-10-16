@@ -94,14 +94,20 @@ export class SqliteCollectionBackend {
    * JSON → SQLite 回填：仅在集合当前为空时导入（幂等防重），导入完成与标记
    * backfilled_at 在同一事务内原子生效。集合非空（如导入事务已提交但标记读取前的
    * 极端窗口）同样补记标记，避免下次启动重复探测 JSON。
+   *
+   * 回填对账（ADR-0001 缺口②）：verify 回调插在导入之后、标记 backfilled_at 之前——
+   * 条数与关键字段哈希对账失败即抛错，整个事务回滚（导入与标记一并撤销，meta 恢复
+   * NULL），下次启动重试并再次响亮失败，杜绝「带病标记 + 静默不一致」。
    */
-  backfill(name: string, records: RecordBase[]): void {
+  backfill(name: string, records: RecordBase[], verify?: (rows: Array<{ id: string; doc: string }>) => void): void {
     this.txn(() => {
       const count = Number((this.db.prepare('SELECT COUNT(*) AS n FROM collection_docs WHERE name = ?').get(name) as { n: number }).n)
       if (count === 0) {
         const ins = this.db.prepare('INSERT INTO collection_docs (name, id, doc) VALUES (?, ?, ?)')
         for (const record of records) ins.run(name, record.id, JSON.stringify(record))
       }
+      // 对账读的是同一事务内的未提交数据：失败即 ROLLBACK，崩溃安全语义不变
+      if (verify) verify(this.db.prepare('SELECT id, doc FROM collection_docs WHERE name = ? ORDER BY id').all(name) as Array<{ id: string; doc: string }>)
       this.db.prepare('UPDATE collection_meta SET backfilled_at = ? WHERE name = ?').run(new Date().toISOString(), name)
     })
   }

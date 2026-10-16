@@ -1,12 +1,12 @@
 > **English edition** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source: `README.md`, `llms.txt` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
 
-# RongQi (ybkk-AIOS) — Enterprise AI Resource Management Platform
+# YuanBingKe (ybkk-AIOS) — Enterprise AI Resource Management Platform
 
 
-## 1. What is RongQi?
+## 1. What is YuanBingKe?
 
-**RongQi** (original Chinese brand: 元冰可; product code name **ybkk-AIOS**) is a self-hosted, enterprise-grade AI resource management platform built on the **DeepSeek Harness (dsh)** "Everything is a plugin" architecture. It brings six classes of AI assets under one governance plane:
+**YuanBingKe** (original Chinese brand: 元冰可; product code name **ybkk-AIOS**) is a self-hosted, enterprise-grade AI resource management platform built on the **DeepSeek Harness (dsh)** "Everything is a plugin" architecture. It brings six classes of AI assets under one governance plane:
 
 - one identity system (Identity & Access Management, IAM, with OIDC SSO),
 - one permission model (permission points registered in a unified RBAC),
@@ -32,7 +32,7 @@ The latest batches closed the digital-worker loop and a round of review hardenin
 
 ## 2. At a glance
 
-RongQi's surface area is easiest to absorb in three tables: the six asset types it manages, the platform services wrapped around them, and the mapping from the original design scheme to shipped implementation.
+YuanBingKe's surface area is easiest to absorb in three tables: the six asset types it manages, the platform services wrapped around them, and the mapping from the original design scheme to shipped implementation.
 
 ### 2.1 Six managed asset types
 
@@ -120,7 +120,7 @@ The `/docs` path publishes a whitelist of documentation files over HTTP — for 
 
 ## 4. Architecture: "Everything is a plugin"
 
-A running RongQi instance is a **cordis plugin tree** (the same plugin framework as dsh, `@deepseek-ai/cordis`). Every business domain is one plugin package that independently declares its dependencies, permission points, and events, and can be started and stopped independently.
+A running YuanBingKe instance is a **cordis plugin tree** (the same plugin framework as dsh, `@deepseek-ai/cordis`). Every business domain is one plugin package that independently declares its dependencies, permission points, and events, and can be started and stopped independently.
 
 **Plugin collaboration rule:** every state change emits an event; cross-plugin integration happens only through the event bus or extension points (`ctx.platformBus`) — plugins never reach into each other's data. Examples: `iam.user.frozen` → authn revokes all tokens; `agent.offlined` → credentials revoked + bound users notified; `skill.deprecated` → referencing agents alerted; `mcp.unhealthy` → circuit breaking + audit.
 
@@ -131,7 +131,7 @@ Package names are code identifiers and are preserved verbatim; descriptions are 
 ```text
 Access layer
   dsh-plugin-console          REST gateway + Console SPA + tool bridge + seed data
-  dsh-plugin-dsh-bridge       Host bridge: mounts the RongQi data plane (REST / Console SPA /
+  dsh-plugin-dsh-bridge       Host bridge: mounts the YuanBingKe data plane (REST / Console SPA /
                               docs / MCP) into the dsh webServer under the /rq prefix —
                               the dsh web port becomes the single entry point
   dsh-plugin-panel-core       Department Agent workbench Panel (面板): /panel SPA + /api/panel/* REST + SSE
@@ -190,10 +190,10 @@ A bundle installation into dsh mounts all **25 plugin entries** in one command; 
 | Form | Process | Entry point | Typical use |
 |---|---|---|---|
 | A. Independent host (default) | `node src/main.ts` (i.e. `npm start`) | platform's own port, default 7300 | minimal enterprise production; human operators in the Console |
-| B. Independent host + dsh runtime | Form A + `dsh web --patch cordis.yml` (same `data/` directory) | both ports | agent-driven operations: operations tools surface in dsh's native ToolRuntime and become callable by models in natural language |
+| B. Independent host + dsh runtime | Form A + `dsh web --patch cordis.yml` (same `data/` directory) | both ports | agent-driven operations: operations tools surface in dsh's native ToolRuntime and become callable by models in natural language. Form A (standalone host) is the default, SLA-committed form; this form (full dsh runtime) is **experimental** |
 | C. Remote dsh access | Form A host + remote computers install the bundle from the plugin marketplace | remote dsh + one-time enrollment code | multi-site teams operating one platform without source checkouts or shared data directories |
 
-In form B, the `dsh-plugin-dsh-bridge` host bridge mounts the RongQi data plane (REST / Console SPA / docs / MCP) under the **`/rq` prefix** of the dsh webServer, so the dsh web port becomes the single entry; the platform's own HTTP port can be turned off with `startHttp: false`. Ecosystem mechanics (plugin anatomy, marketplace, single-cordis-instance constraint) are covered in [DSH ecosystem](dsh-ecosystem.md); deployment runbooks are in the internal Chinese doc `docs/deploy-enterprise.md`.
+In form B, the `dsh-plugin-dsh-bridge` host bridge mounts the YuanBingKe data plane (REST / Console SPA / docs / MCP) under the **`/rq` prefix** of the dsh webServer, so the dsh web port becomes the single entry; the platform's own HTTP port can be turned off with `startHttp: false`. Ecosystem mechanics (plugin anatomy, marketplace, single-cordis-instance constraint) are covered in [DSH ecosystem](dsh-ecosystem.md); deployment runbooks are in the internal Chinese doc `docs/deploy-enterprise.md`.
 
 ### 4.3 Console interaction principles
 
@@ -215,7 +215,7 @@ The Console（控制台）follows a Feishu-style interaction model:
 
 ### 4.5 Remote dsh access, in short
 
-Form C deserves one paragraph here because it changes the operating model: any computer running dsh can install the RongQi bundle from the plugin marketplace and enroll to your host with a **one-time enrollment code** (hashed storage, single use, configurable TTL, per-IP failure lockout). Its operations tools are then proxied to the host under a permission template (`readonly` / `operator` / `full`), heartbeats keep the host's **Platform Access（平台接入）** page informed, and disabling a client revokes all of its machine tokens immediately. No source checkout, no shared data directory, and machine credentials never leave the remote machine (stored with `0600` permissions). The full flow is in [dsh-ecosystem.md §3.4](dsh-ecosystem.md) and the internal runbook `docs/deploy-enterprise.md`.
+Form C deserves one paragraph here because it changes the operating model: any computer running dsh can install the YuanBingKe bundle from the plugin marketplace and enroll to your host with a **one-time enrollment code** (hashed storage, single use, configurable TTL, per-IP failure lockout). Its operations tools are then proxied to the host under a permission template (`readonly` / `operator` / `full`), heartbeats keep the host's **Platform Access（平台接入）** page informed, and disabling a client revokes all of its machine tokens immediately. No source checkout, no shared data directory, and machine credentials never leave the remote machine (stored with `0600` permissions). The full flow is in [dsh-ecosystem.md §3.4](dsh-ecosystem.md) and the internal runbook `docs/deploy-enterprise.md`.
 
 ## 5. Usage transparency and the M0 compliance posture
 
@@ -268,7 +268,7 @@ All monetary fields in these reports are the internal procurement cost reference
 
 ## 6. Commercial model
 
-RongQi is **priced by "team + domain assets"**, not as a platform-level bundle: pricing follows the size of the activated team and the selected domain asset packs (industry knowledge-graph packs / scenario packs). Manufacturing customers can alternatively adopt **on-premises (private) delivery as a project-based engagement**.
+YuanBingKe is **priced by "team + domain assets"**, not as a platform-level bundle: pricing follows the size of the activated team and the selected domain asset packs (industry knowledge-graph packs / scenario packs). Manufacturing customers can alternatively adopt **on-premises (private) delivery as a project-based engagement**.
 
 Commercial terms are a matter of your agreement with the vendor. Inside the product there are no monetary settlement semantics (see [Section 5](#5-usage-transparency-and-the-m0-compliance-posture)); usage and internal-cost reporting remain the only in-product money-adjacent surfaces, and cost figures are internal procurement references in CNY.
 

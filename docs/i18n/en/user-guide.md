@@ -1,4 +1,4 @@
-# RongQi (ybkk-AIOS) — Functional User Guide
+# YuanBingKe (ybkk-AIOS) — Functional User Guide
 
 > **English edition** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source: root README.md + docs/* (see Governance) · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
@@ -9,7 +9,7 @@
 
 ### 0.1 What this guide covers
 
-**RongQi**（元冰可, product code `ybkk-AIOS`）is a self-hosted Enterprise AI Resource Management Platform built on the DeepSeek Harness (DSH) "Everything is a plugin" architecture. It brings six asset types — MCP services, Skills, Agents, AI applications, model routes, and NAS file storage — under one identity system (IAM / OIDC SSO), one permission model, one usage-metering pipeline, and one audit trail.
+**YuanBingKe**（元冰可, product code `ybkk-AIOS`）is a self-hosted Enterprise AI Resource Management Platform built on the DeepSeek Harness (DSH) "Everything is a plugin" architecture. It brings six asset types — MCP services, Skills, Agents, AI applications, model routes, and NAS file storage — under one identity system (IAM / OIDC SSO), one permission model, one usage-metering pipeline, and one audit trail.
 
 This is the comprehensive functional usage guide: it explains, domain by domain, what the platform does today, which roles operate it, and how to drive it through the web interfaces, the REST API, and the CLI (`node cli/dshctl.mjs`). Commercial positioning (pricing by "team + domain assets"; private project-based delivery for manufacturing customers) is out of scope here; see the product introduction for that.
 
@@ -552,7 +552,7 @@ The Console **Data Permissions（数据权限）** page `#/nas-authz` exposes th
 
 ### 13.1 Architecture: governance control plane + SaaS data plane
 
-RongQi does not rebuild a provider catalog, OAuth, or a secret store. The **open-connector sidecar** (v1.4.0, pinned) runs alongside as the **SaaS data plane（数据面）**: 1,000+ provider / 10,000+ action catalog, full OAuth flows, and an AES-256-GCM **credential vault（凭证保险库）**. The platform is the **governance control plane（治理控制面）**: identity, authorization, approvals, metering, audit.
+YuanBingKe does not rebuild a provider catalog, OAuth, or a secret store. The **open-connector sidecar** (v1.4.0, pinned) runs alongside as the **SaaS data plane（数据面）**: 1,000+ provider / 10,000+ action catalog, full OAuth flows, and an AES-256-GCM **credential vault（凭证保险库）**. The platform is the **governance control plane（治理控制面）**: identity, authorization, approvals, metering, audit.
 
 Three red lines hold on every path:
 

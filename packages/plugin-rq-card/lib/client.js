@@ -22,11 +22,41 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var index_exports = {};
 __export(index_exports, {
   apply: () => apply,
+  applyViaPort: () => applyViaPort,
   deriveExecutionState: () => deriveExecutionState,
   inject: () => inject
 });
 module.exports = __toCommonJS(index_exports);
 var import_react2 = require("react");
+
+// src/client/host-port.ts
+function createClientHostPort(ctx) {
+  const slots = ctx.slots;
+  const locale = ctx.locale;
+  const root = ctx;
+  const port = {
+    slots: {
+      inject: (slot, factory) => slots.inject(slot, factory),
+      register: (spec, component) => slots.register(spec, component)
+    },
+    locale: {
+      register: (namespace, dictionaries) => locale.register(namespace, dictionaries)
+    },
+    effect: (action, name) => root.effect(action, name)
+  };
+  if (typeof slots.specDynamic === "function") {
+    const specDynamic = slots.specDynamic.bind(ctx.slots);
+    port.slots.specDynamic = (name) => {
+      try {
+        const spec = specDynamic(name);
+        return typeof spec === "object" && spec !== null ? spec : void 0;
+      } catch {
+        return void 0;
+      }
+    };
+  }
+  return port;
+}
 
 // src/client/state.ts
 function blocked(reason) {
@@ -556,29 +586,27 @@ function safely(what, action) {
     markDegraded(what, error);
   }
 }
-function probeSpec(ctx, slot) {
-  try {
-    const spec = ctx.slots.specDynamic?.(slot);
-    return typeof spec === "object" && spec !== null ? spec : void 0;
-  } catch {
-    return void 0;
-  }
+function probeSpec(host, slot) {
+  return host.slots.specDynamic?.(slot);
 }
 var inject = ["slots", "locale"];
 function apply(ctx) {
+  applyViaPort(createClientHostPort(ctx));
+}
+function applyViaPort(host) {
   safely("styles", () => {
     ensureStyles();
   });
   safely("locale", () => {
-    ctx.effect(() => ctx.locale.register(NS, { zh, en, ja }), "rq-card: dictionaries");
+    host.effect(() => host.locale.register(NS, { zh, en, ja }), "rq-card: dictionaries");
   });
-  const toolviewSpec = probeSpec(ctx, SLOT_TOOLVIEW);
+  const toolviewSpec = probeSpec(host, SLOT_TOOLVIEW);
   if (toolviewSpec?.kind !== "keyed") {
     markDegraded(`${SLOT_TOOLVIEW} spec missing or not keyed`, toolviewSpec);
   } else {
     for (const tool of RQ_TOOL_NAMES) {
       safely(`toolview:${tool}`, () => {
-        ctx.slots.inject(SLOT_TOOLVIEW, () => ctx.slots.register({
+        host.slots.inject(SLOT_TOOLVIEW, () => host.slots.register({
           name: SLOT_TOOLVIEW,
           key: tool,
           id: `${TOOLVIEW_ENTRY_PREFIX}${tool}`,
@@ -591,12 +619,12 @@ function apply(ctx) {
       });
     }
   }
-  const actionsSpec = probeSpec(ctx, SLOT_ASSISTANT_ACTIONS);
+  const actionsSpec = probeSpec(host, SLOT_ASSISTANT_ACTIONS);
   if (actionsSpec?.kind !== "list") {
     markDegraded(`${SLOT_ASSISTANT_ACTIONS} spec missing or not list`, actionsSpec);
   } else {
     safely("assistant-actions", () => {
-      ctx.slots.inject(SLOT_ASSISTANT_ACTIONS, () => {
+      host.slots.inject(SLOT_ASSISTANT_ACTIONS, () => {
         const controllers = /* @__PURE__ */ new Map();
         const controllerFor = (sessionId) => {
           let controller = controllers.get(sessionId);
@@ -606,7 +634,7 @@ function apply(ctx) {
           }
           return controller;
         };
-        const dispose = ctx.slots.register({
+        const dispose = host.slots.register({
           name: SLOT_ASSISTANT_ACTIONS,
           id: FEEDBACK_ENTRY_ID,
           order: 20,
@@ -627,10 +655,10 @@ function apply(ctx) {
     });
   }
   if (DEGRADED.length > 0) {
-    const overlaySpec = probeSpec(ctx, SLOT_OVERLAY);
+    const overlaySpec = probeSpec(host, SLOT_OVERLAY);
     if (overlaySpec?.kind === "list") {
       safely("overlay-badge", () => {
-        ctx.slots.inject(SLOT_OVERLAY, () => ctx.slots.register({
+        host.slots.inject(SLOT_OVERLAY, () => host.slots.register({
           name: SLOT_OVERLAY,
           id: DEGRADED_BADGE_ID,
           order: 90,

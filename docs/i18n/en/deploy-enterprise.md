@@ -3,7 +3,7 @@
 > **English edition** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source: `docs/deploy-enterprise.md` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
 
-> Audience: engineers deploying 元冰可 (RongQi / ybkk-AIOS), the Enterprise AI Resource Management Platform, for an enterprise on top of **DeepSeek Harness (dsh)** — and users who want to hand the deployment/onboarding work **directly to the dsh built-in Agent** to be completed autonomously.
+> Audience: engineers deploying 元冰可 (YuanBingKe / ybkk-AIOS), the Enterprise AI Resource Management Platform, for an enterprise on top of **DeepSeek Harness (dsh)** — and users who want to hand the deployment/onboarding work **directly to the dsh built-in Agent** to be completed autonomously.
 > For day-to-day operations (non-deployment) Agent guidance, see `skills/dsh-ops-admin/SKILL.md` (master index).
 
 ## Interface language note
@@ -17,7 +17,7 @@ As of the 2026-10-16 release, the runtime interface — Console, Panel, Portal, 
 | Shape | Processes | Description | Best for |
 |---|---|---|---|
 | A. Standalone host (default) | `node src/main.ts` | One process provides the REST gateway + Console SPA + a bridge of 41 operations tools (including 4 access-management tools) | Minimal production form; human operation via the Console |
-| B. Standalone host + dsh runtime | Shape A process + `dsh web --patch cordis.yml` | The dsh plugin tree exposes all operations tools to models; Agents can operate the platform in natural language. The two processes **share the same `data/` directory** | Enterprises that want Agent-driven operations |
+| B. Standalone host + dsh runtime | Shape A process + `dsh web --patch cordis.yml` | The dsh plugin tree exposes all operations tools to models; Agents can operate the platform in natural language. The two processes **share the same `data/` directory**. Form A (standalone host) is the default, SLA-committed form; this form (full dsh runtime) is **experimental** | Enterprises that want Agent-driven operations |
 | C. Remote dsh access | Host (A) + `dsh plugin add` on a remote computer | The remote computer installs the platform from the plugin marketplace and applies for a machine credential from the host with a **one-time access code**; all operations tools are proxied remotely to the host for execution (no source code, no shared `data/` needed) | Multiple sites / multiple operators managing the same platform with dsh |
 
 > Key fact: `cordis.yml` does **not** mount the console plugin — the Console SPA and REST are always served by the standalone host process; the dsh side only mounts business plugins (`provideToolRuntime: false`, using dsh's native ToolRuntime).
@@ -52,7 +52,7 @@ npm start -- --port 7300 --data ./data
 ```
 
 - [ ] The log shows「平台基线初始化完成」("platform baseline initialization complete") plus the "go-live three steps" guidance box (first start only)
-- [ ] The log shows「榕器|企业AI资源管理平台已启动」("RongQi | Enterprise AI Resource Management Platform started") and the Console address `http://0.0.0.0:7300`
+- [ ] The log shows「元冰可|企业AI资源管理平台已启动」("YuanBingKe | Enterprise AI Resource Management Platform started") and the Console address `http://0.0.0.0:7300`
 - [ ] `curl -s http://127.0.0.1:7300/api/health` → `{"status":"ok",...}`
 - [ ] (If `ADMIN_PASSWORD` was not set) confirm `data/admin-initial-password.txt` exists, read it, and **move straight to Step 4 to change the password**
 
@@ -195,7 +195,7 @@ Permission templates (= the remote client's permission boundary after onboarding
 > In production, a human should first confirm the placeholders and password strength; the instructions carry built-in guardrails (no demo data, never overwrite an existing data directory, high-risk operations go through approval).
 
 ```text
-[TASK] Deploy "Heng · Unified Enterprise AI Resource Management Platform" (衡 · 企业 AI 资源统一管理平台)
+[TASK] Deploy "YuanBingKe Unified Enterprise AI Resource Management Platform" (元冰可 · 企业 AI 资源统一管理平台)
 on <target server, e.g. 10.0.0.5 or this machine> and complete verification.
 Repository: <git clone URL, e.g. git@github.com:01men/ybkkasi.git>; deploy directory: <e.g. /opt/ops-platform>;
 listen port: <7300>; admin password: <ADMIN_PASSWORD strong password>; attach dsh runtime after deployment: <yes/no>.

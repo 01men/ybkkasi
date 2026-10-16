@@ -1,10 +1,10 @@
 > **English edition** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source: `README.md`, `docs/deploy-enterprise.md` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
 
-# RongQi (ybkk-AIOS) — Getting Started
+# YuanBingKe (ybkk-AIOS) — Getting Started
 
 
-This guide takes you from zero to a running, verified RongQi instance: prerequisites, both install forms, first-boot baseline initialization, the first login, demo mode, quality gates, CLI first steps, and self-update basics. Production hardening (systemd units, TLS reverse proxy, supply-chain signing, remote dsh access) is summarized in Section 10 and documented fully in the internal Chinese runbook `docs/deploy-enterprise.md`.
+This guide takes you from zero to a running, verified YuanBingKe instance: prerequisites, both install forms, first-boot baseline initialization, the first login, demo mode, quality gates, CLI first steps, and self-update basics. Production hardening (systemd units, TLS reverse proxy, supply-chain signing, remote dsh access) is summarized in Section 10 and documented fully in the internal Chinese runbook `docs/deploy-enterprise.md`.
 
 **Interface language note:** as of the 2026-10-16 release, the runtime UI — Console（控制台）, login page, CLI output, notifications, error messages — ships with a built-in language switcher: Simplified Chinese (default), English (US), and Japanese. Switch via the top-bar selector; the preference is stored in the browser (`rq_lang`); the CLI follows `--lang` or `DSHCTL_LANG`; any string not yet covered by a dictionary gracefully falls back to Chinese. UI locations below are annotated bilingually on first mention, e.g. **Organization & Accounts（组织与账号）** — the bilingual 'English（中文原文）' annotations remain useful for navigating screenshots, on-prem deployments pinned to Chinese, and protocol-adjacent labels; browser page translation also still works. Platform logs carry server-local timestamps — convert time zones when correlating events.
 
@@ -22,7 +22,7 @@ This guide takes you from zero to a running, verified RongQi instance: prerequis
 | Form | Command | Entry point | Choose when |
 |---|---|---|---|
 | **A. Independent process** (default) | `npm install && npm start` | `http://127.0.0.1:7300` (platform's own port) | you want the standalone platform: Console + REST API + tools bridge |
-| **B. dsh bundle mount** | `dsh plugin --profile web add github:01men/ybkkasi` | the dsh web port becomes the **single entry**; the RongQi data plane (REST / Console SPA / docs / MCP) is mounted under the **`/rq` prefix** | you already run a dsh (DeepSeek Harness) host and want the platform mounted into it, with operations tools visible to models |
+| **B. dsh bundle mount** | `dsh plugin --profile web add github:01men/ybkkasi` | the dsh web port becomes the **single entry**; the YuanBingKe data plane (REST / Console SPA / docs / MCP) is mounted under the **`/rq` prefix** | you already run a dsh (DeepSeek Harness) host and want the platform mounted into it, with operations tools visible to models |
 
 Form B installs all 25 plugin entries in one command. Verify the mount with:
 

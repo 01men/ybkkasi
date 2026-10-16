@@ -27,6 +27,7 @@ export * from './ids.ts'
 export * from './sensitive.ts'
 export * from './sqlite.ts'
 export * from './workforce-port.ts'
+export * from './host-bridge.ts'
 export * from './yaml.ts'
 export * from './zip.ts'
 export * from './plugin-ctx.ts'
@@ -34,6 +35,7 @@ export * from './version.ts'
 export * from './behavior.ts'
 export * from './scenegraph.ts'
 export * from './signature.ts'
+export * from './boot-probe.ts'
 
 export interface PlatformCoreConfig {
   dataDir?: string

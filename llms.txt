@@ -2,7 +2,7 @@
 
 > 元冰可是基于 dsh/cordis「一切皆插件」架构的企业级 AI 资源统一管理平台：把 MCP 服务、Skill、Agent、AI 应用、模型路由、NAS 文件存储六类资产纳入一套身份（IAM/OIDC SSO）、一套权限、一套用量计量、一套审计；按「团队 + 领域资产」定价（制造业客户可走私有化交付项目制），对外只呈现用量透明与内部成本穿透，不含任何金额结算语义。
 
-RongQi (ybkk-AIOS) is a self-hosted enterprise AI resource management platform: unified identity (IAM / OIDC SSO), permissions, usage metering and audit for six asset types — MCP services, skills, agents, AI apps, model routes and NAS file storage — priced by team and domain assets (private project-based delivery available for manufacturing).
+YuanBingKe (ybkk-AIOS) is a self-hosted enterprise AI resource management platform: unified identity (IAM / OIDC SSO), permissions, usage metering and audit for six asset types — MCP services, skills, agents, AI apps, model routes and NAS file storage — priced by team and domain assets (private project-based delivery available for manufacturing).
 
 ## 核心能力（均为已实现功能）
 

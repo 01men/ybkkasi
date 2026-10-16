@@ -5,7 +5,7 @@
 
 ## 0. The M0 framing — read this first
 
-Since the M0 compliance convergence (2026-09-09), 元冰可 (RongQi / ybkk-AIOS) carries **no billing, settlement, wallet, recharge or revenue-share semantics of any kind**. The former wallet/ledger subsystem (plugin-billing) has been retired and archived; usage-based charging, resale and profit sharing were terminated.
+Since the M0 compliance convergence (2026-09-09), 元冰可 (YuanBingKe / ybkk-AIOS) carries **no billing, settlement, wallet, recharge or revenue-share semantics of any kind**. The former wallet/ledger subsystem (plugin-billing) has been retired and archived; usage-based charging, resale and profit sharing were terminated.
 
 The platform's entire money-adjacent surface is:
 

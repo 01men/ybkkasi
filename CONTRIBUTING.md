@@ -7,6 +7,11 @@
 - **Node ≥ 22.6**（原生 TypeScript 运行，无构建步骤；`node:sqlite` 为内置能力）
 - `npm install`（workspace 安装全部 packages）
 
+已验证版本：**v24.21.0 实测全绿**（selftest + 全部 lint 门禁）。`engines` 的 `>=22.6`
+是「零构建、原生跑 TypeScript」硬约束给出的宽声明，建议贡献者用 **v22.6+ 或 v24**
+等实测过的版本线。`node:sqlite` 在 Node 22 / 24 下仍打印 Experimental 警告，属上游
+正常状态，无害。
+
 ## 开发闭环
 
 ```bash

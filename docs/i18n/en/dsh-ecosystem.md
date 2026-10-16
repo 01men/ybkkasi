@@ -1,22 +1,22 @@
 > **English edition** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source: `README.md` (§二/§三), `docs/internal/ecosystem-design-v1.2.md` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
 
-# RongQi (ybkk-AIOS) — The DSH Ecosystem
+# YuanBingKe (ybkk-AIOS) — The DSH Ecosystem
 
 
-This document explains the ecosystem RongQi lives in: the dsh (DeepSeek Harness) host, the cordis plugin framework, how RongQi mounts into dsh, what a plugin looks like, how the plugin marketplace works, who does what in the ecosystem, and how protocol keys are governed. For the product-level overview see [README.md](README.md); for installation commands see [getting-started.md](getting-started.md).
+This document explains the ecosystem YuanBingKe lives in: the dsh (DeepSeek Harness) host, the cordis plugin framework, how YuanBingKe mounts into dsh, what a plugin looks like, how the plugin marketplace works, who does what in the ecosystem, and how protocol keys are governed. For the product-level overview see [README.md](README.md); for installation commands see [getting-started.md](getting-started.md).
 
-**Interface language note:** as of the 2026-10-16 release, the runtime interfaces of both RongQi and dsh ship with a built-in language switcher — Simplified Chinese (default), English (US), and Japanese (top-bar selector, `rq_lang` preference; CLI via `--lang` / `DSHCTL_LANG`; strings not yet covered by a dictionary fall back to Chinese). UI locations are annotated bilingually on first mention; protocol keys are ASCII and never translated (Section 7).
+**Interface language note:** as of the 2026-10-16 release, the runtime interfaces of both YuanBingKe and dsh ship with a built-in language switcher — Simplified Chinese (default), English (US), and Japanese (top-bar selector, `rq_lang` preference; CLI via `--lang` / `DSHCTL_LANG`; strings not yet covered by a dictionary fall back to Chinese). UI locations are annotated bilingually on first mention; protocol keys are ASCII and never translated (Section 7).
 
 ## 1. What are dsh and cordis?
 
 **dsh (DeepSeek Harness)** is an agent runtime: it hosts agent sessions behind a web service (`dsh web`), exposes tools to models through its native ToolRuntime, and loads domain skill manuals from `.dsh/skills` directories. Capabilities are added to dsh by installing **plugins** into a profile (for example the `web` profile) — there is no fork-and-patch path.
 
-**cordis** (`@deepseek-ai/cordis`) is the plugin framework underneath dsh. A cordis plugin declares its dependencies and lifecycle; at runtime each plugin receives a context (`ctx`) through which it registers services, routes, and tools. RongQi is built on the **same framework**, which is what makes the "Everything is a plugin" architecture portable between hosts (Section 3).
+**cordis** (`@deepseek-ai/cordis`) is the plugin framework underneath dsh. A cordis plugin declares its dependencies and lifecycle; at runtime each plugin receives a context (`ctx`) through which it registers services, routes, and tools. YuanBingKe is built on the **same framework**, which is what makes the "Everything is a plugin" architecture portable between hosts (Section 3).
 
 Two precision points, stated honestly:
 
-- RongQi's cross-plugin event bus (`ctx.platformBus`) is a platform-owned in-memory pub/sub with persistence, retry, dead-letter handling, and source validation — it is not the cordis event system. Third-party code may only emit events namespaced `plugin:<id>:` (Section 7).
+- YuanBingKe's cross-plugin event bus (`ctx.platformBus`) is a platform-owned in-memory pub/sub with persistence, retry, dead-letter handling, and source validation — it is not the cordis event system. Third-party code may only emit events namespaced `plugin:<id>:` (Section 7).
 - A bundle installation resolves plugins to the **host's own cordis instance**; the repository keeps `@deepseek-ai/cordis` in `devDependencies` only. Two cordis instances in one process cause `ctx.plugin(...)` registrations to silently no-op and the whole service chain (iam → usage → audit ...) to hang in pending — the ecosystem's best-known failure mode.
 
 Ecosystem vocabulary, for readers new to dsh:
@@ -26,12 +26,12 @@ Ecosystem vocabulary, for readers new to dsh:
 | Host (宿主) | the process that loads the plugin tree — here, the platform's own process or a dsh `web` process |
 | Profile | a dsh-side plugin installation root (`--profile web`); installs resolve along the profile's `node_modules` closure |
 | Patch / overlay | a YAML file (`cordis.yml` for source checkouts, `cordis.patch.yml` for bundle installs) that mounts plugin entries into a dsh process at start |
-| Mount (挂载) | attaching the RongQi data plane into the dsh webServer under the `/rq` prefix |
+| Mount (挂载) | attaching the YuanBingKe data plane into the dsh webServer under the `/rq` prefix |
 | Enrollment code | one-time host-issued credential (`enr_...`) a remote dsh client exchanges for machine credentials |
 
 ## 2. "Everything is a plugin"
 
-RongQi's architecture slogan is literal: every business domain is one plugin package. Each plugin independently declares its dependencies, permission points, and events, and can be started and stopped independently. A running platform is a **plugin tree**; a bundle install mounts **25 plugin entries** into a dsh profile in one command.
+YuanBingKe's architecture slogan is literal: every business domain is one plugin package. Each plugin independently declares its dependencies, permission points, and events, and can be started and stopped independently. A running platform is a **plugin tree**; a bundle install mounts **25 plugin entries** into a dsh profile in one command.
 
 Plugins collaborate only through events and extension points — a state change must emit an event, and plugins never read each other's storage directly:
 
@@ -44,15 +44,15 @@ Plugins collaborate only through events and extension points — a state change 
 
 The full tree with per-plugin descriptions is in [README.md §4](README.md).
 
-## 3. How RongQi mounts into dsh
+## 3. How YuanBingKe mounts into dsh
 
 | Form | What runs where | Entry point | Notes |
 |---|---|---|---|
 | Independent host | `node src/main.ts` serves REST + Console SPA + tools bridge | platform port (default 7300) | no dsh required; baseline for all other forms |
 | Full dsh runtime (source checkout) | same plugin tree patched into `dsh web --patch cordis.yml`, sharing the `data/` directory | both ports | operations tools surface in dsh's native ToolRuntime and become model-callable |
-| Bundle mount (recommended for use) | `dsh plugin --profile web add github:01men/ybkkasi` | **dsh web port is the single entry** | the host bridge mounts the RongQi data plane under the `/rq` prefix |
+| Bundle mount (recommended for use) | `dsh plugin --profile web add github:01men/ybkkasi` | **dsh web port is the single entry** | the host bridge mounts the YuanBingKe data plane under the `/rq` prefix |
 
-The key piece is **`dsh-plugin-dsh-bridge` (the host bridge)**: it mounts RongQi's data plane — REST, the Console SPA, static docs, and the `/mcp` endpoint — into the dsh webServer under the **`/rq` prefix**, so users and agents reach everything through one port; the platform's own HTTP listener can be turned off with `startHttp: false`. Companion access-layer plugins complete the in-session experience: `dsh-plugin-panel-core` (department Agent workbench Panel（面板）: `/panel` SPA + `/api/panel/*` REST + SSE), `dsh-plugin-rq-card` (four-state execution cards with a thumbs-up / thumbs-down feedback bar injected into dsh conversations — a `dsh.client` dual-sided plugin), and `dsh-plugin-dingtalk-bridge` (DingTalk group bridge, outbound delivery, approval push, alert channels).
+The key piece is **`dsh-plugin-dsh-bridge` (the host bridge)**: it mounts YuanBingKe's data plane — REST, the Console SPA, static docs, and the `/mcp` endpoint — into the dsh webServer under the **`/rq` prefix**, so users and agents reach everything through one port; the platform's own HTTP listener can be turned off with `startHttp: false`. Companion access-layer plugins complete the in-session experience: `dsh-plugin-panel-core` (department Agent workbench Panel（面板）: `/panel` SPA + `/api/panel/*` REST + SSE), `dsh-plugin-rq-card` (four-state execution cards with a thumbs-up / thumbs-down feedback bar injected into dsh conversations — a `dsh.client` dual-sided plugin), and `dsh-plugin-dingtalk-bridge` (DingTalk group bridge, outbound delivery, approval push, alert channels).
 
 Once mounted, the platform's registered **operations tools enter dsh's native ToolRuntime** (the plugins declare `provideToolRuntime: false`, reusing the host runtime instead of the built-in lite one). Models can then operate the whole platform in natural language — "list all MCP services and their health" triggers `mcp_service_list`; "what can be installed from the Skill Marketplace" triggers `skill_search`. The operations tool set counted 37+ tools as of the latest releases; counts evolve release to release, and the different surfaces (dsh ToolRuntime, the REST tools bridge, `/mcp`) expose slightly different supersets — the manifests are the source of truth.
 
@@ -61,11 +61,11 @@ Once mounted, the platform's registered **operations tools enter dsh's native To
 Two load-bearing implementation details matter to anyone embedding plugins into dsh:
 
 - The `tools` service key is **deliberately shared**: under the independent host it is provided by ToolRuntime-lite; under dsh it is provided by the native ToolRuntime. All operations tools flow through whichever host supplies it.
-- RongQi's JSON storage service key is `opsStorage`, **not** `storage` — the dsh host ships its own `storage` service, and sharing the name caused plugins to receive the wrong service at construction. New ecosystem plugins should follow the same namespacing discipline.
+- YuanBingKe's JSON storage service key is `opsStorage`, **not** `storage` — the dsh host ships its own `storage` service, and sharing the name caused plugins to receive the wrong service at construction. New ecosystem plugins should follow the same namespacing discipline.
 
 ### 3.2 Source-checkout mode (local development)
 
-Developers pointing a dsh source checkout at a RongQi checkout must satisfy two hard requirements:
+Developers pointing a dsh source checkout at a YuanBingKe checkout must satisfy two hard requirements:
 
 1. In `cordis.yml`, replace `<PROJECT_ROOT>` with an absolute `file:///` URL (bare Windows drive-letter paths fail ESM resolution with `ERR_UNSUPPORTED_ESM_URL_SCHEME`);
 2. Link `node_modules/@deepseek-ai/cordis` to the dsh source tree's `vendor/cordis` (a junction on Windows), so plugins and host load **the same cordis instance**.
@@ -167,8 +167,8 @@ Where you meet the marketplace in practice: developers work in the CLI (`dshctl 
 
 | Role | What they can do |
 |---|---|
-| **dsh host operators** | Run `dsh web`, install/update plugins into profiles (`dsh plugin --profile web add ...`), mount RongQi via the host bridge, distribute `.dsh/skills` manuals, and operate the platform through agents in session or through `dshctl` |
-| **Platform admins** (RongQi side) | Own baseline initialization, RBAC and permission points, L4 approvals, marketplace admission (approving third-party publishes and installs), connector configuration, self-update, and client revocation on the **Platform Access（平台接入）** page |
+| **dsh host operators** | Run `dsh web`, install/update plugins into profiles (`dsh plugin --profile web add ...`), mount YuanBingKe via the host bridge, distribute `.dsh/skills` manuals, and operate the platform through agents in session or through `dshctl` |
+| **Platform admins** (YuanBingKe side) | Own baseline initialization, RBAC and permission points, L4 approvals, marketplace admission (approving third-party publishes and installs), connector configuration, self-update, and client revocation on the **Platform Access（平台接入）** page |
 | **Third-party plugin / skill developers** | Register a developer identity, sign the five-face contract with Ed25519, submit versioned releases through the CLI, and publish declarative (L0) content — always subject to scanning, approval, event namespacing, scoped tokens, and capability reconciliation |
 
 ## 7. Protocol governance
@@ -182,7 +182,7 @@ The ecosystem is multilingual in documentation but **monolingual in protocol**: 
 5. browser storage keys and HTTP headers (`X-On-Behalf-User`);
 6. commands, paths, code blocks, and package names (`@deepseek-ai/cordis`, `cli/dshctl.mjs`, `dsh plugin --profile web add github:01men/ybkkasi`).
 
-RongQi additionally enforces **event-source discipline** on its own bus: platform namespaces (`iam.*`, `authn.*`, `mcp.*`, `audit.*`, `platform.*`, ...) accept only internal emitters, while third-party emitters are forced to the `plugin:<id>:` prefix with a matching validated source. The authoritative per-key Chinese glossary is the internal table `docs/协议键中文对照总表.md` (280 keys, R10); English documents may paraphrase meanings but the keys themselves are never rewritten, and any new externally visible protocol key must be added to that table.
+YuanBingKe additionally enforces **event-source discipline** on its own bus: platform namespaces (`iam.*`, `authn.*`, `mcp.*`, `audit.*`, `platform.*`, ...) accept only internal emitters, while third-party emitters are forced to the `plugin:<id>:` prefix with a matching validated source. The authoritative per-key Chinese glossary is the internal table `docs/协议键中文对照总表.md` (280 keys, R10); English documents may paraphrase meanings but the keys themselves are never rewritten, and any new externally visible protocol key must be added to that table.
 
 ## 8. How the ecosystem evolves
 

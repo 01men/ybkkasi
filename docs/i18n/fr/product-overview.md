@@ -1,12 +1,12 @@
 > **French edition (Tier-2 overview)** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
 > Source baseline: 2026-10-15 · Glossary: [../GLOSSARY.md](../GLOSSARY.md) · Governance: [../README.md](../README.md)
 
-# RongQi (ybkk-AIOS) — gestion des ressources d'IA d'entreprise
+# YuanBingKe (ybkk-AIOS) — gestion des ressources d'IA d'entreprise
 
 **Positionnement :** une plateforme de gestion des ressources d'IA pour l'entreprise, bâtie sur
 l'architecture dsh « Everything is a plugin » (tout est plugin).
 
-RongQi (nom de marque chinois d'origine : 元冰可, code produit ybkk-AIOS) est une plateforme
+YuanBingKe (nom de marque chinois d'origine : 元冰可, code produit ybkk-AIOS) est une plateforme
 d'entreprise auto-hébergée (self-hosted) de gestion centralisée des ressources d'IA. Elle repose sur
 l'architecture de dsh (DeepSeek Harness). Six types d'actifs y sont gérés sous une identité unique
 (IAM/OIDC SSO), un jeu de permissions unique, une mesure d'utilisation unique et un audit unique.
@@ -18,7 +18,7 @@ applications d'IA sont exploités en silos — comptes dispersés, droits flous,
 et aucune piste d'audit exploitable. La direction informatique comme la conformité ne savent ni qui
 utilise quelle ressource d'IA, ni ce qu'elle coûte réellement, ni quels risques elle fait courir.
 
-RongQi répond par un plan de contrôle unifié : une identité, un modèle de permissions, une mesure
+YuanBingKe répond par un plan de contrôle unifié : une identité, un modèle de permissions, une mesure
 d'utilisation transparente et une piste d'audit continue pour l'ensemble des actifs d'IA. Toute
 modification suit des étapes définies de validation et d'approbation (brouillon → vérification →
 canari → déploiement général), et chaque action laisse une trace vérifiable. Auto-hébergée, la
@@ -67,7 +67,7 @@ plateforme reste dans le périmètre informatique de l'entreprise.
 
 ## Modèle commercial
 
-RongQi est proposé selon le modèle **« équipe + actifs métier »** : la tarification dépend du nombre
+YuanBingKe est proposé selon le modèle **« équipe + actifs métier »** : la tarification dépend du nombre
 d'équipes activées et des packs d'actifs métier retenus (packs sectoriels, packs de scénarios), et
 non d'une licence plateforme forfaitaire. Pour l'industrie manufacturière, une **livraison privée
 on-premises au format projet** est disponible.

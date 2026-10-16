@@ -10,7 +10,7 @@
 
 | 中文 | English | 日本語 | 备注 |
 |---|---|---|---|
-| 元冰可 | **RongQi** | RongQi（表记用拉丁字，不加注音） | 官方英文品牌名，沿用 llms.txt 既有口径；拼音 Yuanbingke 不作对外品牌 |
+| 元冰可 | **YuanBingKe** | YuanBingKe（表记用拉丁字，不加注音） | 官方英文品牌名（2026-10-16 品牌重塑定稿，llms.txt 与运行时词典同口径）；旧拉丁表记已废弃，不再对外使用 |
 | ybkk-AIOS | ybkk-AIOS | ybkk-AIOS | 产品代号 / 仓库名，保留不译 |
 | 企业 AI 资源管理平台 | Enterprise AI Resource Management Platform | エンタープライズ AI リソース管理プラットフォーム | 产品定位一句话 |
 | DSH（DeepSeek Harness） | DSH (DeepSeek Harness) | DSH（DeepSeek Harness） | 缩写保留；首次出现给全称 |

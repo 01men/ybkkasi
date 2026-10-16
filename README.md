@@ -35,7 +35,7 @@ PLATFORM_STORAGE=sqlite npm start # 业务集合切换 SQLite 后端(WAL + 事�
 ```
 
 ```bash
-npm run selftest                  # 1450 项端到端断言(隔离实例,全绿;含 SQLite 后端契约节)
+npm run selftest                  # 1467 项端到端断言(隔离实例,全绿;含 SQLite 后端契约节)
 npm run lint:manifests            # 插件清单五面 YAML 校验
 ```
 
@@ -179,7 +179,7 @@ sync / conflict / help         三方同步 / 组织冲突 / 帮助
 ## 开发
 
 ```bash
-npm run selftest              # 1450 项端到端断言(含 P95 尾延迟闸门 + 故障注入 + SQLite 后端契约)
+npm run selftest              # 1467 项端到端断言(含 P95 尾延迟闸门 + 故障注入 + SQLite 后端契约)
 npm run lint:manifests        # 插件清单校验
 npm run lint:boot-order       # 插件装配顺序
 npm run lint:cjk              # 中文残留门禁
