@@ -1,6 +1,6 @@
 # 发布说明：QA-20260912 测试报告修复批次（2026-09-12）
 
-> 对应测试报告：`docs/qa-report-20260912-overview.md`（P1×7 / P2×14 / P3 约 20）。
+> 对应测试报告：`docs/internal/qa-report-20260912-overview.md`（P1×7 / P2×14 / P3 约 20）。
 > 本批次落地：**P1 全部 7 项 + P2 共 12 项 + 工具链 G-01**，另附报告口径修正。
 > 验证：selftest **1118/1118 全绿**（基线 1103，净增 15 条回归断言）、lint-manifests 0 红、
 > check-docs-consistency 64/64、bus.test.mjs 8/8、odd.test.mjs 全绿。

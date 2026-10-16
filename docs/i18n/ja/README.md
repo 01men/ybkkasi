@@ -316,7 +316,7 @@ curl -s http://localhost:7300/docs/app-sso-integration.md   # ホワイトリス
 - [docs/app-sso-integration.md](../../app-sso-integration.md)（中文・内部寄り）: App SSO 接続ガイド
 - [docs/contract-j4-usage-report.md](../../contract-j4-usage-report.md)（中文・内部）: 利用レポート J4 契約
 - [docs/协议键中文对照总表.md](../../协议键中文对照总表.md)（中文・内部）: プロトコルキーの中文権威対照表（280 キー）
-- [docs/release-notes-2026-09-09-m0.md](../../release-notes-2026-09-09-m0.md)（中文・内部）: M0 商用モデル口径の原典
+- [docs/internal/release-notes-2026-09-09-m0.md](../../internal/release-notes-2026-09-09-m0.md)（中文・内部）: M0 商用モデル口径の原典
 
 ## 9. ガバナンスと境界
 
@@ -358,7 +358,7 @@ curl -s http://localhost:7300/docs/app-sso-integration.md   # ホワイトリス
 | 追加 UI 言語 | 韓国語・インドネシア語・アラビア語（RTL 対応）等の Tier 2 概覧版。〔2026-10-16 リリースで zh-CN／en-US／ja-JP の UI 言語切替と `dshctl` の `--lang`／`DSHCTL_LANG` は提供済み〕 |
 | コンプライアンス強化パック | GDPR の DPA テンプレート、SOC 2 監査準備、日本の APPI 対応（いずれも未取得・未提供） |
 | ドキュメントポータル | 言語別ルーティング（/en/ /ja/ …） |
-| エコシステム拡張 | KBaaS／コネクタマーケット／L1 コード実行サンドボックス（中文 [docs/roadmap-9-10.md](../../roadmap-9-10.md)〔内部〕に構想） |
+| エコシステム拡張 | KBaaS／コネクタマーケット／L1 コード実行サンドボックス（中文 [docs/internal/roadmap-9-10.md](../../internal/roadmap-9-10.md)〔内部〕に構想） |
 
 ### 9.6 動作の境界（抜粋）
 
@@ -378,12 +378,12 @@ curl -s http://localhost:7300/docs/app-sso-integration.md   # ホワイトリス
 
 | 時期 | マイルストン（要約） | 中文参照 |
 |---|---|---|
-| 2026-09-09 | **M0 合規収束**: 従量課金・転売・分配を廃止。利用透明化＋内部コスト透過へ収束。plugin-billing のオフライン封存 | [release-notes-2026-09-09-m0.md](../../release-notes-2026-09-09-m0.md) |
+| 2026-09-09 | **M0 合規収束**: 従量課金・転売・分配を廃止。利用透明化＋内部コスト透過へ収束。plugin-billing のオフライン封存 | [release-notes-2026-09-09-m0.md](../../internal/release-notes-2026-09-09-m0.md) |
 | 2026-09-11 | M1-1 契約フリーズ v1（J1〜J4）＋ IAW ギャップバッチ（flow-core／データ資産ドメイン／モデルチャネルガバナンス／A0-A3・A2A） | 同ディレクトリの release-notes-2026-09-11-* |
-| 2026-09-16 | **M2**: FinOps レポート v1、初回起動体験の製品化、Ed25519 署名基盤のプラットフォーム化 | [release-notes-2026-09-16-m2.md](../../release-notes-2026-09-16-m2.md) |
+| 2026-09-16 | **M2**: FinOps レポート v1、初回起動体験の製品化、Ed25519 署名基盤のプラットフォーム化 | [release-notes-2026-09-16-m2.md](../../internal/release-notes-2026-09-16-m2.md) |
 | 2026-10-13 | グローバルリファクタ REFACTOR-2026-10-13（7 項目収斂。R10 プロトコルキー中文対照総表 280 キー等）。**全中文単言語製品の口径確定** | docs 内重构基线-阶段* 文書群 |
 | 2026-10-14 | 実行ハブ（plugin-exec-hub）全体納品＋ 6 大能力のガバナンス収斂（R2-R12） | qa-report-20261014-execution-hub-delivery.md |
-| 2026-10-15 | 審査フィードバックへの一括是正（組織隔離 fail-closed、MCP ツール権限最小化 82/82、/docs ホワイトリスト公開、CSP 等）＋ デジタルワーカー第 2 期 W バッチ（MCP ツール信頼リスク登録等）。検証: lint 全件合格・selftest ≥ 1,380・drill ≥ 37（いずれも直近実行時点） | [release-notes-20261015-audit-remediation.md](../../release-notes-20261015-audit-remediation.md) |
+| 2026-10-15 | 審査フィードバックへの一括是正（組織隔離 fail-closed、MCP ツール権限最小化 82/82、/docs ホワイトリスト公開、CSP 等）＋ デジタルワーカー第 2 期 W バッチ（MCP ツール信頼リスク登録等）。検証: lint 全件合格・selftest ≥ 1,380・drill ≥ 37（いずれも直近実行時点） | [release-notes-20261015-audit-remediation.md](../../internal/release-notes-20261015-audit-remediation.md) |
 
 ---
 

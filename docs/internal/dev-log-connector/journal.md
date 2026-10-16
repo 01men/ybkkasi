@@ -8,9 +8,9 @@
 ## [2026-08-27] lead-agent —— 项目启动 + 进度体系建立
 
 - 通读《dev-plan-connector.md》（C:\Users\Administrator\Downloads\dev-plan-connector.md），确认仓库 `D:\DSH-07\ybkk-AIOS` 与计划落点对应（17 个插件包、cordis 双装载面、scripts 三脚本齐全）。
-- 建立 `docs/dev-log-connector/{PROGRESS.md,journal.md}` 协作体系（协议/状态表/冲突地图/占用登记/T 进度）。
+- 建立 `docs/internal/dev-log-connector/{PROGRESS.md,journal.md}` 协作体系（协议/状态表/冲突地图/占用登记/T 进度）。
 - 教训记录：第一版 PROGRESS.md 误把规划状态写成了已完成态，已重写为真实 todo 态——**后续任何 Agent 禁止预写未来状态**。
-- 下一步：复制计划书到 `docs/dev-plan-connector.md`；创建 pre-M0 快照；开始精读参考代码（plugin-modelgw 骨架 / plugin-mcp 权限组与 invoke / console guarded 区 / boot-all 装载）后开工 #2。
+- 下一步：复制计划书到 `docs/internal/dev-plan-connector.md`；创建 pre-M0 快照；开始精读参考代码（plugin-modelgw 骨架 / plugin-mcp 权限组与 invoke / console guarded 区 / boot-all 装载）后开工 #2。
 - 遗留风险：本环境无 docker/sidecar 运行时，M0(#1) 的真实桥接联调只能交付文档+compose 文件，部署验证留给真实环境；selftest 以进程内 stub 承载 T-01~T-25/T-28/T-29。
 
 ## [2026-08-27] lead-agent —— 参考代码精读完成 + 认领 #2~#6
@@ -96,7 +96,7 @@
 - **前置核验**：通读 dev-plan-connector §〇/§2.2/§2.9/§2.11/§三#1 + PROGRESS/journal；对照真实代码逐条核验 M0 链路——`POST /api/mcp/import`（console L1279-1293，body `{config: string|object, autoDeploy?}`，root org，perm `mcp.service.write`）、`importServices()`（plugin-mcp L350-418，mcpServers 三形态解析、stdio 拒绝、`x-bridged-from`→`bridgeFrom` 打标、autoDeploy 缺省 true、不可达保草稿清工具）、`sync-tools`（L339-348，仅 external+real）、`authorize/invoke`（L699-727/L731+，权限组+限流+熔断 30s×3）、`McpImportResult`/`InvokeResult` 响应形状、登录端点 `/api/auth/login`、`/api/iam/groups`。
 - **重要发现（并发与重叠）**：开工时发现 `docs/connector-integration.md` 已存在一份 lead-agent 随 #14 顺带产出的草稿（PROGRESS #1 当时仍 todo、无人按 #1 认领）。本版在其基础上按 #1 交付要求重构补全，并保留其中经代码核验属实的内容（M1+ CLI 手册、fail-closed 对照表含 `?assumeEnv=` 预演、dshctl 命令组）。**两处事实更正**：①草稿 M0 示例 headers 用「管理口令」调 `/mcp`——数据面应为 oct_ 运行时令牌（对齐计划书 §2.11「headers 携带 bootstrap/oct_ 令牌」）；②草稿 invoke 示例 tool 名 `hackernews_get_top_stories` 证据不足——应为 `execute_action` + actionId 参数，且工具名/参数以 tools/list 发现的 inputSchema 为准。
 - **指南 v0.2 章节**：一定位与红线 → 二部署拓扑（ASCII，管理面/数据面标注）→ 三 sidecar 部署（compose pin v1.4.0 完整内容 + `${VAR:?}` 编排层 fail-closed、node 直跑、强制 env 表 + 双强制项缺失平台侧 fail-closed 文案、assumeEnv 预演）→ 四 OAuth 回调两拓扑 runbook（直连/反代各自 DNS·端口·配置步骤·取舍 + 速查表 + 自备 App 四步）→ 五 M0 step-by-step（探活→铸 oct_→登录→import 真实请求/响应示例→工具同步→权限组→execute_action 冒烟→回收）→ 六治理降级声明（P2 修正⑬ 五点 + bridgeFrom 徽章）→ 七 M1+ CLI 速览 → 八生产验证清单（A sidecar/B M0 桥接 T-25/C 三类 provider 全谱系/D fail-closed 逃生）→ 九升级与边界 + 故障排查 → 十撰写说明。
-- **涉及文件**：`docs/connector-integration.md`（重构补全，v0.1→v0.2）；`docs/dev-log-connector/{journal.md,PROGRESS.md}`（协议回写）。未触碰任何代码文件，未运行 npm 命令。
+- **涉及文件**：`docs/connector-integration.md`（重构补全，v0.1→v0.2）；`docs/internal/dev-log-connector/{journal.md,PROGRESS.md}`（协议回写）。未触碰任何代码文件，未运行 npm 命令。
 - **遗留风险**：①真实环境桥接联调缺口（#1 partial 的唯一缺口）——执行人按指南 §八 清单勾选回填，完成后 #14 完稿；②指南 §5.6 的 execute_action 参数名以 tools/list inputSchema 为准的口径需在真实联调时确认（open-connector `/mcp` 工具 schema 属上游文档未细载项）；③「桥接过渡」徽章 UI（#/mcp 已随 #9 落地 mcp.js 渲染，#/connectors 侧徽章 hover 文案以 §六 声明为准）。
 
 ## [2026-08-27] lead-agent —— 验收意见四项处理 + 上游 v1.4.0 源码实证

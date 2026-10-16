@@ -48,7 +48,7 @@ import { renderAccess } from './pages/access.js'
 import { renderOauthAuthorize, renderOauthError, renderOauthLogout } from './pages/oauth.js'
 import { mountUpdateBadge, openUpdateDrawer } from './update.js'
 
-// 导航分组（Kimi CIO 仪表盘设计适配，2026-10-14 · docs/design-adaptation-spec-20261014.md §4）：
+// 导航分组（Kimi CIO 仪表盘设计适配，2026-10-14 · docs/internal/design-adaptation-spec-20261014.md §4）：
 // 主干四组「总览 / 资源 / 治理 / 企业」对齐设计稿信息架构；全部既有功能页保留入组。
 const NAV = [
   { section: '总览', items: [

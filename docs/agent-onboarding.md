@@ -2,7 +2,7 @@
 
 > 面向对象：以机器身份接入平台的企业 Agent（注册 → 机器凭证 → 接入验证 → 计量对齐）。
 > 适用版本：2026-08-26 接入加固落地后（Agent 凭证默认含 usage.write；计量键错误明确报 400 并给出期望键；
-> 凭证支持轮换；机器身份访问 Agent 台账记审计 agent.verify）。加固清单见 `docs/dev-plan-access-hardening.md`。
+> 凭证支持轮换；机器身份访问 Agent 台账记审计 agent.verify）。加固清单见 `docs/internal/dev-plan-access-hardening.md`。
 > 2026-08-30 NAS 数据权限上线：新增 4.5 节（文件网关接入、X-On-Behalf-User 身份红线、
 > 越权/分享审批/降级语义），需文件能力的 Agent 必读。设计全文见 `docs/nas-authz.md`。
 > 本文档随服务发布，可直接访问 `http://<平台地址>/docs/agent-onboarding.md`。

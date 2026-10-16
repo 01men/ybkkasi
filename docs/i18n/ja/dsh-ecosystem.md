@@ -1,5 +1,5 @@
 > **日本語版** — 機械翻訳支援＋i18n PM による統一校正。**中文原文が正式版です（齟齬時は中文が優先）。**
-> 原典: `docs/ecosystem-design-v1.2.md`（補助原典 `README.md`）· 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
+> 原典: `docs/internal/ecosystem-design-v1.2.md`（補助原典 `README.md`）· 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
 
 # DSH エコシステムガイド — RongQi（ybkk-AIOS）
 
@@ -181,17 +181,17 @@ dsh-plugin-<name>/
 
 ## 9. エコシステムの進化と設計文書の位置づけ
 
-- [docs/ecosystem-design-v1.2.md](../../ecosystem-design-v1.2.md)（中文・内部）は、エコシステムプラットフォームの
+- [docs/internal/ecosystem-design-v1.2.md](../../internal/ecosystem-design-v1.2.md)（中文・内部）は、エコシステムプラットフォームの
   設計基盤（2026-08 時点）を記録した**中文内部設計基線**です。**注意**: 同文書のうち
   ウォレット／複式分配／転売価格設定／サブスクリプション代収／資金経路に関する商用化設計は、
   **M0（2026-09-09）で廃止済み**です。現行の商用口径は「チーム＋ドメイン資産」の価格設定と
   利用量の透明化のみです（[README.md](README.md)「商用モデル」）。
 - 同文書のうち**計測パイプラインとマーケット契約**の部分は引き続き有効な参照であり、
   現在の実装（schema v1 計測イベント・冪等キー・外部システム照合・契約の 5 面）の思想源です。
-- 今後の拡張（KBaaS／コネクタマーケット／L1 コード実行サンドボックス等）は中文の [docs/roadmap-9-10.md](../../roadmap-9-10.md)
+- 今後の拡張（KBaaS／コネクタマーケット／L1 コード実行サンドボックス等）は中文の [docs/internal/roadmap-9-10.md](../../internal/roadmap-9-10.md)
   （中文・内部）に構想として記録されており、いずれも**ロードマップ（計画中）**です。
 
-M0（2026-09-09）で廃止された主な面（詳細は中文 [docs/release-notes-2026-09-09-m0.md](../../release-notes-2026-09-09-m0.md)〔内部〕）:
+M0（2026-09-09）で廃止された主な面（詳細は中文 [docs/internal/release-notes-2026-09-09-m0.md](../../internal/release-notes-2026-09-09-m0.md)〔内部〕）:
 
 - **API**: `/api/billing/*`（ウォレット・チャージ・ジャーナル・検証・予算・決済・台帳）と
   `/api/market/subscriptions` を廃止。modelgw 応答からは `chargeCents` / `balanceAfterCents` を削除し、
@@ -209,7 +209,7 @@ M0（2026-09-09）で廃止された主な面（詳細は中文 [docs/release-no
 - クイックスタート（導入・デモモード）: [getting-started.md](getting-started.md)
 - 位置づけ一回読み資料: [product-introduction.md](product-introduction.md)
 - 用語契約: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
-- 中文原典（内部）: [docs/ecosystem-design-v1.2.md](../../ecosystem-design-v1.2.md)、ルート `README.md`
+- 中文原典（内部）: [docs/internal/ecosystem-design-v1.2.md](../../internal/ecosystem-design-v1.2.md)、ルート `README.md`
 - 運用スキルハンドブック（同梱）: `skills/dsh-ops-*/SKILL.md`（総合索引 `dsh-ops-admin`）
 
 ## 11. 画面言語について

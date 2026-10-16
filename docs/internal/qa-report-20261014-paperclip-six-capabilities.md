@@ -3,7 +3,7 @@
 日期：2026-10-14。执行：项目负责人带队（缺陷处置组 / 源码测绘组 / 线上实测组）。
 对象：外部团队《整体功能测试报告-20261014》 + Paperclip 式六大能力深入验证。
 线上：https://ybkkasi.com/（本机 launchd `com.ybkk.ops-platform` · 端口 7300 · Cloudflare Tunnel 回源）。
-证据：`docs/evidence/2026-10-14-paperclip/results.json`（第一轮 50 项）、`results-fix2.json`（第二轮 26 项）。
+证据：`docs/internal/evidence/2026-10-14-paperclip/results.json`（第一轮 50 项）、`results-fix2.json`（第二轮 26 项）。
 
 ## 一、验收结论
 

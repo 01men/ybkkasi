@@ -1,6 +1,6 @@
 # DSH 部门 Agent 工作台面板——实施记录（review-dsh-agent-panel-v2 落地）
 
-> 依据：`docs/review-dsh-agent-panel-v2.md`（六大领域差距分析 + 四阶段计划）
+> 依据：`docs/internal/review-dsh-agent-panel-v2.md`（六大领域差距分析 + 四阶段计划）
 > 物料：`dsh-agent-panel-design/`（DESIGN.md + index.html 878 行可交互原型）
 > 分支：`custom/dsh-rq`；门禁：`npm run selftest`（871/871）+ `npm run lint:manifests`（85 清单 + 5 卡片包 + 2 图谱包）全绿。
 

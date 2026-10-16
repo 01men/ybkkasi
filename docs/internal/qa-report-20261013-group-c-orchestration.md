@@ -3,7 +3,7 @@
 > 测试对象：platform-core 事件总线 / plugin-flow-core / plugin-connector(ODD) / plugin-connect / console routes/ops.ts 总线死信域
 > 实例：http://127.0.0.1:7343（DEMO_SEED=1，data-qa-gc，v1.1.0，18 插件；已做一次 kill+重启用于回放测试）
 > 方法：黑盒 API 实测 + 真实源码行为探针（临时目录，未改任何仓库文件）+ 随包单测复跑
-> 上轮对照：docs/qa-report-20260912-group-c-orchestration.md + release-notes-2026-09-12/13-qa-fixes.md
+> 上轮对照：docs/internal/qa-report-20260912-group-c-orchestration.md + release-notes-2026-09-12/13-qa-fixes.md
 
 ---
 

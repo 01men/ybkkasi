@@ -1,4 +1,4 @@
-/** 用量与成本（#/usage · WE 治理域，规格 docs/design-adaptation-spec-20261014.md §5.5）：
+/** 用量与成本（#/usage · WE 治理域，规格 docs/internal/design-adaptation-spec-20261014.md §5.5）：
  *  tokens / 成本双维度切换 + 28 天面积趋势 + Top 资产横条 + 部门分摊表（占比条 + 环比）+ 单位 DAU 成本条 + 导出 CSV。
  *  数据源：GET /api/usage/report?days=28&dim=tokens|cost（WB 实现，真实 usage 事件聚合；空数据空态，零演示数据）。
  *  导出：以已加载的 28 天报表在前端组 CSV（BOM + a[download] Blob 下载，不开新窗）；

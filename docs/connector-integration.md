@@ -1,7 +1,7 @@
 # open-connector 集成指南（M0 桥接 + M1+ 原生纳管）
 
 > 版本：v0.2（2026-08-27）· 工作单：#1（M0 桥接验证 + 集成指南初稿）
-> 关联：`docs/dev-plan-connector.md` v1.0（设计全文）· 落点插件 `packages/plugin-connector`
+> 关联：`docs/internal/dev-plan-connector.md` v1.0（设计全文）· 落点插件 `packages/plugin-connector`
 > 依据与代码基线：平台端点与参数已对照真实代码核验（console/src/index.ts、plugin-mcp/src/index.ts、plugin-connector/src/index.ts、cli/dshctl.mjs，行号见文内标注）。
 > 适用对象：平台运维 / 集成工程师。§二~§六为 M0 桥接（零代码）所需；§七为 M1+ 原生纳管速览。
 > **本环境无 docker/sidecar 运行时**：本指南交付部署拓扑、compose 内容与操作步骤；真实桥接联调留给生产环境执行（§八 验证清单）。
@@ -514,4 +514,4 @@ OAuth 连接（原生链路）：`POST /api/connector/connections/oauth` 得 `{a
 
 ## 十、撰写说明
 
-本指南由 **cto-doc-agent**（2026-08-27，工作单 #1）依据 `docs/dev-plan-connector.md` v1.0 与当前代码撰写；撰写时发现仓库已有一份随 M1 实现顺带产出的运维向草稿，本版在其基础上按 #1 交付要求重构补全（部署拓扑数据面/管理面标注、OAuth 两拓扑 runbook、M0 step-by-step 真实请求/响应示例、治理降级声明、生产验证清单），并对草稿中与计划书不符的 M0 调用示例作了更正（sidecar `/mcp` 数据面应携带 oct_ 运行时令牌而非管理口令；工具名以 `tools/list` 发现结果为准）。平台侧端点、参数、响应形状均经真实代码核验；open-connector 侧契约以其 v1.4.0 官方文档为准（计划书 §〇 核验表）。**真实桥接联调待生产环境执行**（本环境无 docker/sidecar 运行时），执行结果回填 §八 清单后本指南转正式版（工作单 #14 完稿）。
+本指南由 **cto-doc-agent**（2026-08-27，工作单 #1）依据 `docs/internal/dev-plan-connector.md` v1.0 与当前代码撰写；撰写时发现仓库已有一份随 M1 实现顺带产出的运维向草稿，本版在其基础上按 #1 交付要求重构补全（部署拓扑数据面/管理面标注、OAuth 两拓扑 runbook、M0 step-by-step 真实请求/响应示例、治理降级声明、生产验证清单），并对草稿中与计划书不符的 M0 调用示例作了更正（sidecar `/mcp` 数据面应携带 oct_ 运行时令牌而非管理口令；工具名以 `tools/list` 发现结果为准）。平台侧端点、参数、响应形状均经真实代码核验；open-connector 侧契约以其 v1.4.0 官方文档为准（计划书 §〇 核验表）。**真实桥接联调待生产环境执行**（本环境无 docker/sidecar 运行时），执行结果回填 §八 清单后本指南转正式版（工作单 #14 完稿）。

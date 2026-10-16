@@ -74,7 +74,7 @@
 第 7 步  L0 声明式插件上架 + 第三方市场 beta（含平台自营首批供给 3 个标杆）+ L3 订阅代收
 第 8 步  联合运维推广（灰度/熔断自愈/告警路由/SLO 报告——全部基于真实计量数据）+
           复式分账 ledger（账期汇总结转、红字冲正、费率版本）
-第 9 步  知识库即服务 / 连接器市场 / 安全合规门户（设计见 docs/roadmap-9-10.md）
+第 9 步  知识库即服务 / 连接器市场 / 安全合规门户（设计见 docs/internal/roadmap-9-10.md）
 第 10 步 L1 有码 JS 沙箱（自研模块加载器 PoC 与第 7–9 步并行预研，
           交付信号=平台自营 L0 付费转化 ≥ 3 单 或 waitlist ≥ 20）
 ````
@@ -276,7 +276,7 @@ third-party-plugin/
 | 6 | OIDC Provider RS256/JWKS | ✅ 已实现（v1.4 App SSO 迭代升级：浏览器授权流 + Basic/Post 双认证 + token_use + refresh/end_session/revoke + JWKS 数组轮换 + 应用签发与上线门禁，见 docs/app-sso-integration.md） | selftest §step6 + §AppSSO/§OIDC 会话补全（含 openid-client 冒烟） |
 | 7 | L0 市场 beta（上架/安装/自营供给） | ✅ 已实现 | selftest §step7 |
 | 8 | 复式分账 ledger（账期结转/红字冲正） | ✅ 已实现 | selftest §step8（试算平衡） |
-| 9 | KBaaS / 连接器市场 / 合规门户 | 📐 设计完成 | docs/roadmap-9-10.md |
-| 10 | L1 有码 JS 沙箱（模块加载器） | 📐 设计完成 + 预研 PoC 说明 | docs/roadmap-9-10.md |
+| 9 | KBaaS / 连接器市场 / 合规门户 | 📐 设计完成 | docs/internal/roadmap-9-10.md |
+| 10 | L1 有码 JS 沙箱（模块加载器） | 📐 设计完成 + 预研 PoC 说明 | docs/internal/roadmap-9-10.md |
 
 > 验收原则：每步断言进入 `scripts/selftest.mjs`（E2E 黑盒，隔离实例 + 真实 HTTP），`npm run selftest` 全绿 = 交付门槛。

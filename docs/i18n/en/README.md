@@ -24,7 +24,7 @@ The six managed asset types are: **MCP deployment services, skills, agents, AI a
 
 ### 1.2 Design lineage
 
-The platform implements the internal design scheme "Enterprise Service Resource Unified Management Scheme V1.0" and its technical implementation plan (Chinese, internal). The ecosystem evolution baseline is `docs/ecosystem-design-v1.2.md` (internal Chinese archive) — **its wallet / resale / revenue-share commercialization chapters were deprecated by M0 (2026-09-09)** and must not be quoted as active plans; see [Section 5](#5-usage-transparency-and-the-m0-compliance-posture). This English overview is a restructured edition of the repository root `README.md`; the Chinese original governs.
+The platform implements the internal design scheme "Enterprise Service Resource Unified Management Scheme V1.0" and its technical implementation plan (Chinese, internal). The ecosystem evolution baseline is `docs/internal/ecosystem-design-v1.2.md` (internal Chinese archive) — **its wallet / resale / revenue-share commercialization chapters were deprecated by M0 (2026-09-09)** and must not be quoted as active plans; see [Section 5](#5-usage-transparency-and-the-m0-compliance-posture). This English overview is a restructured edition of the repository root `README.md`; the Chinese original governs.
 
 ### 1.3 State of the current baseline (2026-10-15)
 
@@ -299,11 +299,11 @@ These are the governing sources. If any English page conflicts with them, the Ch
 | [README.md](../../../README.md) (repo root) | current | product panorama, plugin architecture, capability mapping (Chinese) |
 | [llms.txt](../../../llms.txt) | current | machine-readable capability digest (bilingual lead-in) |
 | `docs/协议键中文对照总表.md` | current | authoritative Chinese gloss for every ASCII protocol key (R10, 280 keys) |
-| `docs/release-notes-2026-09-09-m0.md` | current for M0 scope | M0 compliance reset: contract change list, decommissioned wallet/billing APIs |
-| `docs/release-notes-2026-09-16-m2.md` | current for M2 scope | FinOps report v1, first-boot experience, contract additions |
+| `docs/internal/release-notes-2026-09-09-m0.md` | current for M0 scope | M0 compliance reset: contract change list, decommissioned wallet/billing APIs |
+| `docs/internal/release-notes-2026-09-16-m2.md` | current for M2 scope | FinOps report v1, first-boot experience, contract additions |
 | `docs/deploy-enterprise.md` | current | enterprise deployment runbook and dsh onboarding (Chinese) |
 | `docs/app-sso-integration.md` | current | AI application SSO onboarding guide (Chinese) |
-| `docs/ecosystem-design-v1.2.md` | **archive** | ecosystem design baseline; its wallet / resale / revenue-share chapters are **deprecated by M0** (see its warning banner) and must not be quoted as active plans |
+| `docs/internal/ecosystem-design-v1.2.md` | **archive** | ecosystem design baseline; its wallet / resale / revenue-share chapters are **deprecated by M0** (see its warning banner) and must not be quoted as active plans |
 
 ### 7.3 Suggested reading paths
 

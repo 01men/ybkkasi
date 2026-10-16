@@ -1,5 +1,5 @@
 /**
- * 资产详情抽屉（六类统一 · 规格 docs/design-adaptation-spec-20261014.md §5.2）：
+ * 资产详情抽屉（六类统一 · 规格 docs/internal/design-adaptation-spec-20261014.md §5.2）：
  * openAssetDrawer(asset) —— 台账行点击后弹出的 wide 抽屉，六 tab（概览/监控/权限/拓扑/审计/生命周期）。
  * 权限/拓扑按 asset.type 复用各域既有详情端点（agents/apps/mcp/nas/skills/modelgw），403/404 时空态。
  *

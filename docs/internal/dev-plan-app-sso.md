@@ -221,7 +221,7 @@
    - FAQ：本地调试（localhost redirect）、多环境 issuer、id_token vs userinfo 取身份的取舍。
 2. **最小示例**（文档内嵌）：Node/Express 完整可跑片段（发起授权 → 回调换 token → userinfo → 本地 session →
    登出联动）+ curl 手动走流。不新建 examples/ 目录，随文档演进。
-3. README「能力清单」与 `docs/ecosystem-design*.md` 交付状态表同步；`skills/dsh-ops-authn/SKILL.md` 补运维场景
+3. README「能力清单」与 `docs/internal/ecosystem-design*.md` 交付状态表同步；`skills/dsh-ops-authn/SKILL.md` 补运维场景
    （客户端签发/轮换/禁用、密钥轮换 runbook）。
 
 ---

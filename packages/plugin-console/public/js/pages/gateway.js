@@ -1,4 +1,4 @@
-/** 模型网关（#/gateway · WE 治理域，规格 docs/design-adaptation-spec-20261014.md §5.4）：
+/** 模型网关（#/gateway · WE 治理域，规格 docs/internal/design-adaptation-spec-20261014.md §5.4）：
  *  分级路由卡列表（模型 × 渠道降级链 主→备1→备2）+ 30d 用量/占比 + 预算熔断进度条 + 渠道探测；
  *  管理员治理（模型目录登记/上下线/删除、渠道组编辑、预算增删改）自 finops 页 #modelgw-card 迁入，
  *  API 动作逐字保留（POST/DELETE /api/modelgw/models、PUT /api/modelgw/channel-groups、PUT/DELETE /api/modelgw/budgets）。

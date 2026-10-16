@@ -1,7 +1,7 @@
 # 开发计划与进度管理 —— dsh-zcode 生态平台 v1.2 实施
 
 > 本文是**唯一的进度事实源**，供跨会话开发接手使用。每完成一项就更新对应行。
-> 实施依据：`docs/ecosystem-design-v1.2.md`（满足评审 6 条最低修订的 v1.2 实施版）
+> 实施依据：`docs/internal/ecosystem-design-v1.2.md`（满足评审 6 条最低修订的 v1.2 实施版）
 > 验收口径：`npm run selftest` 全绿（E2E 黑盒，隔离实例 + 真实 HTTP/真实 stub）。
 > 更新时间：2026-08-21（本会话末尾）
 
@@ -20,8 +20,8 @@
 | 6 | OIDC Provider（RS256/JWKS） | ✅ 完成且验证通过 | selftest 第 6 步段全绿（冻结后解冻重登，避免吊销 dev 令牌波及后续段） |
 | 7 | L0 市场 beta（自营供给/订阅代收/卸载） | ✅ 完成且验证通过 | selftest 第 7 步段全绿（本轮修复：自营种子移入服务构造器；订阅登记 tenantId 未定义） |
 | 8 | 复式分账 ledger（结转/试算平衡/红字冲正） | ✅ 完成且验证通过 | selftest 第 8 步段全绿 |
-| 9 | KBaaS/连接器市场/合规门户 设计 | ✅ 设计完成 | `docs/roadmap-9-10.md` |
-| 10 | L1 有码沙箱 设计 | ✅ 设计完成（含立项触发条件与门禁切换点） | `docs/roadmap-9-10.md` |
+| 9 | KBaaS/连接器市场/合规门户 设计 | ✅ 设计完成 | `docs/internal/roadmap-9-10.md` |
+| 10 | L1 有码沙箱 设计 | ✅ 设计完成（含立项触发条件与门禁切换点） | `docs/internal/roadmap-9-10.md` |
 | — | lint:manifests 脚本 | ✅ 50/50 通过 | yaml.ts 已补「- 独占一行」与空流式集合 `[]`/`{}` |
 | — | README/交付报告、cordis.yml 同步、git 提交 | ✅ 完成 | README §三A v1.2 交付说明；cordis.yml 补 usage/billing/market/modelgw |
 
@@ -82,7 +82,7 @@
 | Boot 顺序（14 插件） | `src/boot-all.ts`：platformCore → resourceCore → iam → authn → usage → billing → audit → market → mcp → skillhub → agent → app → modelgw → console |
 
 ### 第 9/10 步
-`docs/roadmap-9-10.md`：KBaaS/连接器市场/合规门户设计 + L1 沙箱技术路线（模块加载器、三层防线、资源限额、门禁切换点、立项触发条件）。
+`docs/internal/roadmap-9-10.md`：KBaaS/连接器市场/合规门户设计 + L1 沙箱技术路线（模块加载器、三层防线、资源限额、门禁切换点、立项触发条件）。
 
 ---
 

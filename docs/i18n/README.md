@@ -14,7 +14,7 @@
 
 **范围边界（与仓库「语言口径」的关系，2026-10-16 更新）**：
 
-- **运行时表现层已多语言**（2026-10-16 批次，发布说明 [../release-notes-20261016-ui-i18n.md](../release-notes-20261016-ui-i18n.md)）：
+- **运行时表现层已多语言**（2026-10-16 批次，发布说明 [../internal/release-notes-20261016-ui-i18n.md](../internal/release-notes-20261016-ui-i18n.md)）：
   i18n 内核 `packages/platform-i18n`（t() 以中文原文为键、词典增量补齐、AsyncLocalStorage 请求级 locale）、
   请求级协商（`?lang=` > Cookie `rq_lang` > Accept-Language > `PLATFORM_LOCALE`）、Web 顶栏切换器、
   CLI `--lang`/`DSHCTL_LANG`、企业定制覆盖层 `I18N_EXTRA_DIR`。默认 zh-CN 输出逐字节不变。
@@ -102,7 +102,7 @@ docs/i18n/
 - [x] en/ 全量 9 份 + ja/ 全量 9 份 + de/fr/es/pt/hi 一页纸 5 份
 - [x] 根 README「语言口径」更新 + 「〇、国际化文档」入口节 + llms.txt 国际化索引
 
-**2026-10-16（功能层全球化，发布说明见 [../release-notes-20261016-ui-i18n.md](../release-notes-20261016-ui-i18n.md)）**
+**2026-10-16（功能层全球化，发布说明见 [../internal/release-notes-20261016-ui-i18n.md](../internal/release-notes-20261016-ui-i18n.md)）**
 - [x] i18n 内核 `packages/platform-i18n` + HTTP 分发层接入 + `/locales/:locale` 合并端点
 - [x] 控制台/面板前端运行时（DOM 翻译引擎 + 顶栏语言切换器 + `rq_lang` 偏好）
 - [x] 全平台字符串接入：约 2,700 处 `t()`、en/ja 词典各约 5,150 词条（三层合并）、审校 147 键统一裁决

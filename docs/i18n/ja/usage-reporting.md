@@ -1,7 +1,7 @@
 # 利用量の透明化と FinOps レポート（J4）（日本語版）
 
 > **日本語版** — 機械翻訳支援＋i18n PM による統一校正。**中文原文が正式版です（齟齬時は中文が優先）。**
-> 原典: `docs/contract-j4-usage-report.md` · `docs/release-notes-2026-09-16-m2.md`（FinOps v1） · 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
+> 原典: `docs/contract-j4-usage-report.md` · `docs/internal/release-notes-2026-09-16-m2.md`（FinOps v1） · 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
 
 ## 0. M0 フレーミング（最初にお読みください）
 

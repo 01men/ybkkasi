@@ -1,7 +1,7 @@
 # 执行中枢与治理收口 —— 整体性开发交付报告
 
 日期：2026-10-14。执行：研发负责人带队（执行中枢组 / 治理后端组 / Agent 插件组 / 前端组，攻坚中断后由负责人接管收尾）。
-输入：`docs/qa-report-20261014-paperclip-six-capabilities.md` 路线图 R2-R12 + ybkk-MATRIX 开发计划（目标四 E1-E7 / G3）+ execution-hub 技术设计详稿。
+输入：`docs/internal/qa-report-20261014-paperclip-six-capabilities.md` 路线图 R2-R12 + ybkk-MATRIX 开发计划（目标四 E1-E7 / G3）+ execution-hub 技术设计详稿。
 回归基线：selftest **1257/1257**（1210 → 1257，净增 47 条断言）；exec-hub 纯决策层单测 13/13；DOM 冒烟 14/15+1 跳过（持平）；lint:manifests / lint:boot-order / lint:cjk 全绿（0 红）。
 
 ## 一、交付总览

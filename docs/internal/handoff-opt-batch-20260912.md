@@ -22,7 +22,7 @@
 | P2-04 三家五面清单 + schema 强校验 | ✅ | market/modelgw/usage 进生成器；output.schema 非空对象根强制 | 清单 105/105；工具 83/83 |
 | P3-01 P95 闸门 + 故障注入 | ✅ | 4 类故障注入 + P95 阈值键（P95_GATE_*）+ 分布输出 | 实测登录 P95=133ms / invoke=16ms |
 | P3-02 定时器治理 | ✅ | 13 处构造期定时器全 unref + `lint-timers.mjs` 卫生扫描（违规即红） | 扫描 13/13 合规 |
-| P3-03 A0–A3 评审 | ✅ 仅文档 | `docs/a0-a3-autonomy-ladder-review.md`（模型/不变式/证据工件/触发条件） | 按方案不编码，评审通过 |
+| P3-03 A0–A3 评审 | ✅ 仅文档 | `docs/internal/a0-a3-autonomy-ladder-review.md`（模型/不变式/证据工件/触发条件） | 按方案不编码，评审通过 |
 
 ## 二、质量闸门现状
 

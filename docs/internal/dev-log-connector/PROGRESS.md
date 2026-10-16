@@ -1,6 +1,6 @@
 # 连接器纳管（open-connector 融合）开发进度板
 
-> 依据：`docs/dev-plan-connector.md`（v1.0，2026-08-27；源件在 C:\Users\Administrator\Downloads\dev-plan-connector.md）
+> 依据：`docs/internal/dev-plan-connector.md`（v1.0，2026-08-27；源件在 C:\Users\Administrator\Downloads\dev-plan-connector.md）
 > 本文件 = 多 Agent 协作唯一的进度事实源。**任何 Agent 开工前必须读本文件，收工前必须回写本文件。**
 > 状态只反映已验证完成的工作；**禁止把"计划要做"写成"已完成"**。
 
@@ -42,7 +42,7 @@
 | 11 | M2 | runs 对账（cursor 增量去重 cap4000）+ 绕行 critical 告警 + error_rate 记分评估；DEMO 种子扩展（env 门禁 OOMOL_CONNECT_DEMO_SEED=1） | plugin-connector reconcile 段 + console seed.ts | #5,#7 | done 2026-08-27 |
 | 12 | M3 | 连接器型 L0 插件市场化（manifest connector 声明/install 二次确认/manual-settlement 挂账/L3 分成/市场 UI） | plugin-market/billing/console | #7,#11 | todo（**业务触发启动：首个外部开发者提交连接器型插件上架申请前不动工**，P0 修正③锁定） |
 | 13 | 收尾 | OC_STUB 进程内服务（v1.4.0 契约面）+ T-01~T-25/T-28/T-29 断言组全绿 | scripts/selftest.mjs + seed.ts | #1–#11 | done 2026-08-27（selftest 521/521 exit=0） |
-| 14 | 收尾 | 文档：README 三G 段/集成指南完稿/skills/dsh-ops-connector/dev-plan 已入仓定稿 | README/docs/skills/docs/dev-plan-connector.md | #13 | done 2026-08-27 |
+| 14 | 收尾 | 文档：README 三G 段/集成指南完稿/skills/dsh-ops-connector/dev-plan 已入仓定稿 | README/docs/skills/docs/internal/dev-plan-connector.md | #13 | done 2026-08-27 |
 
 ## 三、文件所有权 / 冲突地图
 
@@ -62,7 +62,7 @@
 | `cli/dshctl.mjs` | #10 | 低 |
 | `packages/plugin-market/**`、`plugin-billing/**` | #12（未启动） | 高（未来） |
 | `scripts/selftest.mjs` | #13 + #1(T-25) | 高 |
-| `docs/connector-integration.md`、`README.md`、`skills/dsh-ops-connector/`、`docs/dev-plan-connector.md` | #1,#14 | 低 |
+| `docs/connector-integration.md`、`README.md`、`skills/dsh-ops-connector/`、`docs/internal/dev-plan-connector.md` | #1,#14 | 低 |
 
 ## 四、当前占用（活跃 claim）
 

@@ -1,5 +1,5 @@
 /**
- * AI 市场（规格 docs/design-adaptation-spec-20261014.md §5.3，布局照设计稿 Market.tsx）：
+ * AI 市场（规格 docs/internal/design-adaptation-spec-20261014.md §5.3，布局照设计稿 Market.tsx）：
  * 卡片网格（名称+验签盾+状态+发布者+简介+30 天热力条+版本/安装数/风险徽标）+ 分类/搜索/排序
  * + 详情抽屉（状态/验签/版本/描述/热力大图/版本审批时间线/安装与审批动作）。
  * 数据：既有 /api/skills/*（列表/详情/安装/审批/提交）；热力 = /api/skills/usage-heatmap（真实计量）。

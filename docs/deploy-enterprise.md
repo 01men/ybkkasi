@@ -48,9 +48,31 @@ npm start -- --port 7300 --data ./data
 ```
 
 - [ ] 日志出现「平台基线初始化完成」+ 「上线三步走」引导框（首启一次性）
-- [ ] 日志出现「榕器|企业AI资源管理平台已启动」与「控制台地址：http://0.0.0.0:7300」
+- [ ] 日志出现「元冰可|企业AI资源管理平台已启动」与「控制台地址：http://0.0.0.0:7300」
 - [ ] `curl -s http://127.0.0.1:7300/api/health` → `{"status":"ok",...}`
 - [ ] （若未设 ADMIN_PASSWORD）确认 `data/admin-initial-password.txt` 已生成，**读完立即转到步骤 4 改密**
+
+### 步骤 2 补充：存储后端选型（默认 JSON · 企业单节点推荐 SQLite）
+
+业务集合存储双形态，**默认 `json` 零配置可跑**；企业单节点建议显式开启 SQLite 后端
+（写入即事务、引擎级唯一约束、常驻内存不随记录数增长，决策记录见
+`docs/adr-0001-storage-migration.md`）：
+
+```bash
+PLATFORM_STORAGE=sqlite npm start -- --port 7300 --data ./data
+```
+
+行为要点：
+
+- **首启自动回填**：数据目录已有的 JSON 集合文件（`data/*.json`）整表导入
+  `data/collections.db`，JSON 文件保留为回滚源；此后 SQLite 为准，旧文件不再回灌。
+- **回退**：`node scripts/storage-export.mjs --data ./data` 把最新数据导出为 JSON
+  集合文件，去掉 `PLATFORM_STORAGE` 以默认后端重启即完成回退。
+- **例外名单**：`PLATFORM_STORAGE_JSON_KEEP=name1,前缀*` 可让个别集合继续走 JSON
+  （一般无需设置）。
+- 计量与事务数据（`data/txnstore.db`）与 `oidc-keys.json` 密钥文件不受本开关影响，
+  行为与历史版本一致。
+- 两种形态都是**单进程**；多节点 HA 需 Postgres 集合后端（二期，见 ADR-0001）。
 
 ### 步骤 3：功能验证
 

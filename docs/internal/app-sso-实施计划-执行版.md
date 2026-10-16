@@ -96,7 +96,7 @@
 
 1. `docs/app-sso-integration.md`（控制台 SSO tab 直链）：接入五步、端点与 discovery（`OIDC_ISSUER` 与内网/HTTPS 反代）、claims 契约（`sub` 稳定关联键、org/roles/tenant 语义）、安全清单（state/PKCE/secret 保管/HTTPS/登出联动/冻结即时失效）、**双 TTL 说明**（平台会话 access 30min vs OIDC access 默认 2h 的折中理由）、**BFF / public 客户端指引**（依 D-a 决策）、secret/密钥轮换 runbook、FAQ（localhost 调试、多环境 issuer、id_token vs userinfo）。
 2. 最小示例：直接复用 P1 的 openid-client 冒烟脚本 + curl 手动走流。
-3. README「四、核心能力对照」与 `docs/ecosystem-design*.md` 交付状态同步；`skills/dsh-ops-authn/SKILL.md` 补运维场景。
+3. README「四、核心能力对照」与 `docs/internal/ecosystem-design*.md` 交付状态同步；`skills/dsh-ops-authn/SKILL.md` 补运维场景。
 4. 「外部接入总览」tab（只读聚合视图：机器凭证按 refType 分组 + OIDC 客户端含 refApp + connect 已接入客户端，跳转对应管理页）；「认证与令牌」与「平台接入」页互加跳转链接。
 
 ---

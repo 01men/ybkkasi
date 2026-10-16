@@ -2,7 +2,7 @@
 
 > 回执对象：`D:\DSH-RQ\docs\handoff-iaw-gaps-to-main.md`（定制轨 → main，2026-09-11）
 > 结论：**19/20 项本批次落地**（含一项「数据就绪」），1 项（7-2）契约挂靠完成、实现面诚实缺席。
-> 详细端点/权限/事件登记见 `docs/release-notes-2026-09-11-iaw-batch.md`；结构变更契约冻结三份：
+> 详细端点/权限/事件登记见 `docs/internal/release-notes-2026-09-11-iaw-batch.md`；结构变更契约冻结三份：
 > `contract-c1-modelgw-channel-governance.md` / `contract-c2-flow-tf.md` / `contract-c3-agent-a2a.md`。
 
 ## 一、定制侧接线指引（面板占位 → 真实绑定）

@@ -25,7 +25,7 @@
  *   - plugin-nas 出站注入：ctx.identityBinding 存在时按会话/回落解析真实用户 →
  *     X-On-Behalf-User（P0-2 红线：身份只走请求头）；独立形态无此服务，行为不变。
  *
- * 设计依据：docs/dev-plan-agent-host-unification.md §三/§五/§六。
+ * 设计依据：docs/internal/dev-plan-agent-host-unification.md §三/§五/§六。
  * dsh 侧挂载契约（deepseek-harness packages/host/webserver/src/index.ts:94-101）：
  *   WebRoute = { kind:'exact'|'prefix', path, handler(req,res) }，handler 拥有完整响应生命周期。
  * 硬约束：`/api` 前缀与全站 fallback 席位均已被 dsh 占用（重复注册 throw），

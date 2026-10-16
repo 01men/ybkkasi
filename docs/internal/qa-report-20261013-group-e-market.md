@@ -3,7 +3,7 @@
 > 测试对象：plugin-market / plugin-update / console routes 拆分域（apps/audit/usage/ops/bridge）/ 契约闸门
 > 实例：http://127.0.0.1:7344（DEMO_SEED=1，data-qa-ge，独占）｜基线：REFACTOR-2026-10-13 后，selftest 1201/1201
 > 纪律：全程零真实升级（未跑带 pin 的 dryRun/apply）、零外呼（本地 stub 端口 21441）、未修改仓库文件；自建资源均 `geqa*` 前缀并已退场（插件卸载、权限组删除、网关走 L4 审批下线）。
-> 上轮报告：docs/qa-report-20260912-group-e-market.md（E-01 P1 / E-02~E-06 P2~P3）；修复说明：docs/release-notes-2026-09-12-qa-fixes.md、release-notes-2026-09-13-qa-fixes.md。
+> 上轮报告：docs/internal/qa-report-20260912-group-e-market.md（E-01 P1 / E-02~E-06 P2~P3）；修复说明：docs/internal/release-notes-2026-09-12-qa-fixes.md、release-notes-2026-09-13-qa-fixes.md。
 
 ---
 

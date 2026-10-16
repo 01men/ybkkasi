@@ -1,7 +1,7 @@
 # Usage Transparency & FinOps Reporting Guide
 
 > **English edition** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
-> Source: `docs/contract-j4-usage-report.md` (frozen v1) · `README.md` · `llms.txt` · `docs/release-notes-2026-09-11-optimization.md` · `docs/release-notes-2026-09-16-m2.md` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
+> Source: `docs/contract-j4-usage-report.md` (frozen v1) · `README.md` · `llms.txt` · `docs/internal/release-notes-2026-09-11-optimization.md` · `docs/internal/release-notes-2026-09-16-m2.md` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
 
 ## 0. The M0 framing — read this first
 

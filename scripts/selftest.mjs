@@ -7510,6 +7510,176 @@ try {
   check(`T-24 数据目录 ${dataFiles.length} 个文件全部扫描`, dataFiles.length > 5, `files=${dataFiles.length}`)
   check('T-24 凭证原文零命中（API Key / OAuth client secret / 每个一次性 oct_ 值）',
     bannedHits.length === 0 && ocMintedValues.length >= 3, JSON.stringify(bannedHits))
+
+  // ================================================================ 存储 SQLite 后端契约（ADR-0001 第一期）
+  // 主实例全程跑默认 json 后端；本节单独验证 sqlite 后端：与 json 的契约对拍、
+  // 引擎级唯一索引、JSON 回填幂等、后端开关环境变量、平台级 kill -9 零丢失。
+  section('存储 SQLite 后端契约（ADR-0001）')
+  {
+    const storageJsonDir = `${DATA_DIR}-storage-json`
+    const storageSqliteDir = `${DATA_DIR}-storage-sqlite`
+    const priorStorage = process.env.PLATFORM_STORAGE
+    const priorKeep = process.env.PLATFORM_STORAGE_JSON_KEEP
+
+    // ---- 1. 双后端同序列对拍：Collection<T> 契约一致性（插件零感知的硬保证）----
+    const runContract = async (backend) => {
+      const dir = backend === 'json' ? storageJsonDir : storageSqliteDir
+      await rm(dir, { recursive: true, force: true })
+      const svc = new platformCore.StorageService(new Context(), { dataDir: dir, backend })
+      const col = svc.collection('ct:items')
+      const out = { events: [] }
+      const off = col.onChange((change) => out.events.push(`${change.kind}:${change.record?.id ?? ''}`))
+      out.insert = col.insert({ id: 'x1', kind: 'a', tag: 'T', createdAt: '2026-01-01T00:00:00.000Z' })
+      out.dupIdError = (() => { try { col.insert({ id: 'x1', kind: 'a' }); return '' } catch (error) { return error.message } })()
+      col.uniqueOn('tag', (record) => record.tag ?? '')
+      out.uniqueError = (() => { try { col.insert({ id: 'x2', kind: 'a', tag: 'T' }); return '' } catch (error) { return error.message } })()
+      out.update = col.update('x1', { kind: 'b' })
+      col.insert({ id: 'x3', kind: 'c', tag: 'X' })
+      out.removed = col.remove('x3')
+      out.countAfterRemove = col.count()
+      out.findLen = col.find((record) => record.kind === 'b').length
+      out.getKind = col.get('x1').kind
+      col.replaceAll([{ id: 'r1', kind: 'z', tag: 'R', createdAt: '2026-02-02T00:00:00.000Z', updatedAt: '2026-02-02T00:00:00.000Z' }])
+      out.countAfterReplace = col.count()
+      off()
+      await svc.flushNow()
+      return out
+    }
+    const jsonOut = await runContract('json')
+    const sqliteOut = await runContract('sqlite')
+    check('双后端对拍：insert 返回一致（自定义 createdAt 保留 + updatedAt 注入）',
+      sqliteOut.insert.createdAt === jsonOut.insert.createdAt && Boolean(sqliteOut.insert.updatedAt) === Boolean(jsonOut.insert.updatedAt))
+    check('双后端对拍：重复 id 抛错文案逐字一致', sqliteOut.dupIdError === jsonOut.dupIdError && jsonOut.dupIdError.includes('已存在'), JSON.stringify({ json: jsonOut.dupIdError, sqlite: sqliteOut.dupIdError }))
+    check('双后端对拍：uniqueOn 冲突抛错文案逐字一致', sqliteOut.uniqueError === jsonOut.uniqueError && jsonOut.uniqueError.includes('唯一约束冲突'))
+    check('双后端对拍：update 字段合并 + createdAt 保持', sqliteOut.update.kind === 'b' && sqliteOut.update.createdAt === '2026-01-01T00:00:00.000Z')
+    check('双后端对拍：remove/count/find/get/replaceAll 结果一致',
+      sqliteOut.removed === jsonOut.removed && sqliteOut.countAfterRemove === jsonOut.countAfterRemove
+      && sqliteOut.findLen === jsonOut.findLen && sqliteOut.getKind === jsonOut.getKind
+      && sqliteOut.countAfterReplace === jsonOut.countAfterReplace,
+      JSON.stringify({ json: { c: jsonOut.countAfterRemove, f: jsonOut.findLen, r: jsonOut.countAfterReplace }, sqlite: { c: sqliteOut.countAfterRemove, f: sqliteOut.findLen, r: sqliteOut.countAfterReplace } }))
+    check('双后端对拍：onChange 事件序列一致（authn:tokens 吊销广播语义不变的前提）',
+      sqliteOut.events.join('|') === jsonOut.events.join('|') && sqliteOut.events.length === 5, JSON.stringify({ json: jsonOut.events, sqlite: sqliteOut.events }))
+
+    // ---- 2. sqlite 引擎级唯一索引（「一人一号」红线的执行方式：非应用层扫描）----
+    const engineDir = `${DATA_DIR}-storage-engine`
+    await rm(engineDir, { recursive: true, force: true })
+    {
+      const svc = new platformCore.StorageService(new Context(), { dataDir: engineDir, backend: 'sqlite' })
+      const col = svc.collection('ct:uniq')
+      col.insert({ id: 'a1', tag: 'K' })
+      col.uniqueOn('tag', (record) => record.tag ?? '')
+      let engineRejected = false
+      try { col.insert({ id: 'a2', tag: 'K' }) } catch { engineRejected = true }
+      check('引擎级唯一：绕过「先查后插」的重复键写入被索引拒绝', engineRejected)
+      col.insert({ id: 'a3', tag: 'K3' })
+      let stealRejected = false
+      try { col.update('a3', { tag: 'K' }) } catch { stealRejected = true }
+      check('引擎级唯一：update 抢占他人键被拒（自身键除外）', stealRejected)
+    }
+    {
+      const svc2 = new platformCore.StorageService(new Context(), { dataDir: engineDir, backend: 'sqlite' })
+      await svc2.restoreAll()
+      check('sqlite 事务提交后重启恢复（已提交写入零丢失）', svc2.collection('ct:uniq').count() === 2, `count=${svc2.collection('ct:uniq').count()}`)
+    }
+
+    // ---- 3. JSON → SQLite 首启自动回填（幂等 + DB 为准 + JSON 保留为回滚源）----
+    {
+      const dir = `${DATA_DIR}-storage-backfill`
+      await rm(dir, { recursive: true, force: true })
+      await mkdir(dir, { recursive: true })
+      const legacy = [
+        { id: 'l1', name: '旧一', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'l2', name: '旧二', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+      ]
+      writeFileSync(join(dir, 'ct~legacy.json'), JSON.stringify(legacy))
+      const svc = new platformCore.StorageService(new Context(), { dataDir: dir, backend: 'sqlite' })
+      await svc.restoreAll()
+      check('首启回填：同名 JSON 集合文件自动导入 SQLite', svc.collection('ct:legacy').count() === 2 && svc.collection('ct:legacy').get('l2').name === '旧二')
+      svc.collection('ct:legacy').update('l1', { name: 'DB新值' })
+      const svc2 = new platformCore.StorageService(new Context(), { dataDir: dir, backend: 'sqlite' })
+      await svc2.restoreAll()
+      check('二次启动：DB 为准（修改后记录不被旧 JSON 回灌）', svc2.collection('ct:legacy').get('l1').name === 'DB新值' && svc2.collection('ct:legacy').count() === 2)
+      check('回滚源保留：JSON 文件内容未被删除或改写', JSON.parse(readFileSync(join(dir, 'ct~legacy.json'), 'utf8'))[0].name === '旧一')
+      await rm(dir, { recursive: true, force: true })
+    }
+
+    // ---- 4. 后端开关与环境变量（默认 json 向后兼容）----
+    {
+      const dir = `${DATA_DIR}-storage-env`
+      await rm(dir, { recursive: true, force: true })
+      process.env.PLATFORM_STORAGE = 'sqlite'
+      process.env.PLATFORM_STORAGE_JSON_KEEP = 'ct:keep*'
+      const svc = new platformCore.StorageService(new Context(), { dataDir: dir })
+      check('PLATFORM_STORAGE=sqlite：常规集合走 SqliteCollectionImpl', svc.collection('ct:direct').constructor.name === 'SqliteCollectionImpl')
+      check('PLATFORM_STORAGE_JSON_KEEP：例外名单集合保留 JSON 实现', svc.collection('ct:keepme').constructor.name === 'CollectionImpl')
+      process.env.PLATFORM_STORAGE = 'not-a-backend'
+      check('未知 PLATFORM_STORAGE 值：告警回退 json 不崩', new platformCore.StorageService(new Context(), { dataDir: dir }).backend === 'json')
+      delete process.env.PLATFORM_STORAGE
+      check('默认（未设置）：backend=json 向后兼容', new platformCore.StorageService(new Context(), { dataDir: dir }).backend === 'json')
+      if (priorStorage === undefined) delete process.env.PLATFORM_STORAGE; else process.env.PLATFORM_STORAGE = priorStorage
+      if (priorKeep === undefined) delete process.env.PLATFORM_STORAGE_JSON_KEEP; else process.env.PLATFORM_STORAGE_JSON_KEEP = priorKeep
+      await rm(dir, { recursive: true, force: true })
+    }
+
+    // ---- 5. 平台级 kill -9 零丢失（隔离子实例 · PLATFORM_STORAGE=sqlite）----
+    {
+      const dir = `${DATA_DIR}-storage-platform`
+      const port = 7322
+      const base = `http://127.0.0.1:${port}`
+      await rm(dir, { recursive: true, force: true })
+      await mkdir(dir, { recursive: true })
+      // 预置遗留 JSON 集合：同时验证「回填 → 插件读取 → REST API」全链路
+      writeFileSync(join(dir, 'iam~roles.json'), JSON.stringify([
+        { id: 'role_legacy1', code: 'legacy_one', name: '遗留角色一', permissions: ['iam.user.read'], builtin: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'role_legacy2', code: 'legacy_two', name: '遗留角色二', permissions: ['iam.user.read'], builtin: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+      ]))
+      const childEnv = { ...process.env, PLATFORM_STORAGE: 'sqlite', ADMIN_PASSWORD: 'Ybk@2026' }
+      const spawnInstance = () => spawn(process.execPath, ['src/main.ts', '--port', String(port), '--data', dir], { stdio: ['ignore', 'pipe', 'pipe'], env: childEnv })
+      const waitReady = async () => {
+        for (let i = 0; i < 60; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          try {
+            const res = await fetch(`${base}/api/overview`)
+            if (res.status === 401 || res.status === 200) return true
+          } catch { /* 未就绪 */ }
+        }
+        return false
+      }
+      const login = async (username, password) => {
+        const res = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password }) }).then((r) => r.json())
+        return res.ok ? res.data.token : ''
+      }
+      let child = spawnInstance()
+      check('SQLite 子实例启动（PLATFORM_STORAGE=sqlite 透传到 main.ts）', await waitReady())
+      const token = await login('admin', 'Ybk@2026')
+      check('SQLite 子实例 admin 登录', Boolean(token))
+      const auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
+      const rolesBefore = await fetch(`${base}/api/iam/roles`, { headers: { authorization: auth.authorization } }).then((r) => r.json())
+      check('遗留 JSON 角色回填后 API 可见（回填 → 插件 → REST 全链路）',
+        rolesBefore.ok && rolesBefore.data.roles.filter((role) => String(role.id).startsWith('role_legacy')).length === 2,
+        JSON.stringify(rolesBefore.data?.roles?.map((role) => role.id)))
+      const orgs = await fetch(`${base}/api/iam/orgs`, { headers: { authorization: auth.authorization } }).then((r) => r.json())
+      const orgId = Array.isArray(orgs.data) ? orgs.data[0]?.id : orgs.data?.orgs?.[0]?.id
+      const created = await fetch(`${base}/api/iam/users`, { method: 'POST', headers: auth, body: JSON.stringify({ username: 'sqlitekill9', displayName: 'kill9 持久化验证', orgId }) }).then((r) => r.json())
+      check('SQLite 后端创建账号成功（写入即事务提交）', created.ok && typeof created.data.initialPassword === 'string', JSON.stringify(created.error))
+
+      child.kill('SIGKILL') // 模拟断电级死亡：无 flushNow、无优雅退出
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      child = spawnInstance()
+      check('kill -9 后子实例重启', await waitReady())
+      const token2 = await login('admin', 'Ybk@2026')
+      const relogin = await login('sqlitekill9', created.data.initialPassword)
+      check('kill -9 零丢失：崩溃前创建的账号可登录（凭证哈希完整）', Boolean(token2) && Boolean(relogin))
+      const rolesAfter = await fetch(`${base}/api/iam/roles`, { headers: { authorization: `Bearer ${token2}` } }).then((r) => r.json())
+      check('kill -9 零丢失：回填的角色数据完整', rolesAfter.ok && rolesAfter.data.roles.filter((role) => String(role.id).startsWith('role_legacy')).length === 2)
+      child.kill('SIGKILL')
+      await rm(dir, { recursive: true, force: true }).catch(() => {})
+    }
+
+    await rm(storageJsonDir, { recursive: true, force: true })
+    await rm(storageSqliteDir, { recursive: true, force: true })
+    await rm(engineDir, { recursive: true, force: true })
+  }
 } finally {
   // ---------------------------------------------------------------- 收尾
   console.log('\n\x1b[90m» 停止测试实例…\x1b[0m')

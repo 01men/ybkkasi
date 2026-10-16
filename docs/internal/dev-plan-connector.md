@@ -308,7 +308,7 @@ connector gateway get | gateway set --base-url= --admin-token-env=OOMOL_CONNECT_
 | # | 里程碑 | 工作单 | 落点（具体文件） | 依赖 | 验收标准 | 并行轨道 |
 |---|---|---|---|---|---|---|
 | 13 | M2 后 | 演示种子 + selftest 新 section（§四 全量断言） | `packages/plugin-console/src/seed.ts`（连接/权限组演示种子，先例 L206-228）；`scripts/selftest.mjs`（新 section + 进程内 open-connector stub） | #1–#11（业务触发的 M3 #12 不阻塞收尾） | §四 T-01~T-25、T-28、T-29 全绿（T-26/27 由 #12 自身验收与 M3 DoD 兜住） | — |
-| 14 | 收尾 | 文档：README 连接器段、集成指南完稿、skills/dsh-ops-connector、本文档定稿 | `README.md`、`docs/connector-integration.md`、`skills/dsh-ops-connector/SKILL.md`（结构对齐现有 8 个：何时使用/工具映射/操作手册/护栏）、`docs/dev-plan-connector.md` | #13 | `npm run lint:manifests` + `npm run selftest` 全绿（总门禁） | — |
+| 14 | 收尾 | 文档：README 连接器段、集成指南完稿、skills/dsh-ops-connector、本文档定稿 | `README.md`、`docs/connector-integration.md`、`skills/dsh-ops-connector/SKILL.md`（结构对齐现有 8 个：何时使用/工具映射/操作手册/护栏）、`docs/internal/dev-plan-connector.md` | #13 | `npm run lint:manifests` + `npm run selftest` 全绿（总门禁） | — |
 
 **依赖无环自查**：#1∥#2 起步；#3/#4←#2；#5←#2,#3；#6←#2；#8←#4,#5；#9∥#10←#8；#7←#4,#5；#11←#5,#7；#12←#7,#11；#13←#1–#11；#14←#13。无回边，无环。
 

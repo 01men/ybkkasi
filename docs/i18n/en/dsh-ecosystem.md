@@ -1,5 +1,5 @@
 > **English edition** — machine-assisted translation, unified by the i18n PM. **The Chinese original governs.**
-> Source: `README.md` (§二/§三), `docs/ecosystem-design-v1.2.md` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
+> Source: `README.md` (§二/§三), `docs/internal/ecosystem-design-v1.2.md` · Source baseline: 2026-10-15 · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
 
 # RongQi (ybkk-AIOS) — The DSH Ecosystem
 
@@ -186,7 +186,7 @@ RongQi additionally enforces **event-source discipline** on its own bus: platfor
 
 ## 8. How the ecosystem evolves
 
-The internal Chinese design baseline is `docs/ecosystem-design-v1.2.md`. Read it with two flags:
+The internal Chinese design baseline is `docs/internal/ecosystem-design-v1.2.md`. Read it with two flags:
 
 | Plan step | Status |
 |---|---|
@@ -204,7 +204,7 @@ The internal Chinese design baseline is `docs/ecosystem-design-v1.2.md`. Read it
 
 **Deprecated by M0 — do not quote as active plans.** The document's commercialization chapters (wallet, double-entry revenue share, model resale, subscription collection, funding-channel dependencies) were **abolished by M0 (2026-09-09)**; the document itself carries a warning banner. The surviving external posture is transparent usage metering + internal cost pass-through, and the marketplace registers all metering at zero price.
 
-Ecosystem direction is set in the internal Chinese docs (`docs/ecosystem-design-v1.2.md`, repo root `README.md`, and the batch release notes); this English set tracks them at the current baseline (2026-10-15) and flags anything that is roadmap rather than shipped.
+Ecosystem direction is set in the internal Chinese docs (`docs/internal/ecosystem-design-v1.2.md`, repo root `README.md`, and the batch release notes); this English set tracks them at the current baseline (2026-10-15) and flags anything that is roadmap rather than shipped.
 
 ## 9. Related documents
 
@@ -213,4 +213,4 @@ Ecosystem direction is set in the internal Chinese docs (`docs/ecosystem-design-
 - [deploy-enterprise.md](deploy-enterprise.md) — enterprise deployment and dsh onboarding runbook
 - [product-introduction.md](product-introduction.md) — positioning one-pager
 - [release-notes-summary.md](release-notes-summary.md) — release history
-- Internal Chinese originals (governing): `docs/ecosystem-design-v1.2.md` (ecosystem baseline; commercialization deprecated by M0), `docs/deploy-enterprise.md` (host-bridge and remote-access runbooks), `docs/协议键中文对照总表.md` (protocol key glossary)
+- Internal Chinese originals (governing): `docs/internal/ecosystem-design-v1.2.md` (ecosystem baseline; commercialization deprecated by M0), `docs/deploy-enterprise.md` (host-bridge and remote-access runbooks), `docs/协议键中文对照总表.md` (protocol key glossary)

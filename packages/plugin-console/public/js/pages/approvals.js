@@ -1,4 +1,4 @@
-/** 审批中心（#/approvals · WE 治理域，规格 docs/design-adaptation-spec-20261014.md §5.6）：
+/** 审批中心（#/approvals · WE 治理域，规格 docs/internal/design-adaptation-spec-20261014.md §5.6）：
  *  左列表（风险 risk-pill + 标题 + 申请人/组织/时间 + 已决徽标）右详情（申请负载 dry-run 影响面 mono 列表
  *  + 审批时间线 tl-item + 底部操作条）。
  *  既有动作与状态流转一行不改逻辑只换壳：GET /api/approvals、GET /api/approvals/sla、

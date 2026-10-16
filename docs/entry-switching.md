@@ -2,7 +2,7 @@
 
 > 回答一个问题：**dsh 宿主端，管理员和业务员各自用哪个界面、怎么互切？**
 > 本文件定版切换规则，并记录本次优化的修复清单与测试位置。
-> 关联：`docs/dev-plan-agent-host-unification.md`（单进程单入口）、`docs/panel-implementation.md`（部门面板）、`docs/action-plan-dsh-frontend.md`（WP-02 票据免登）。
+> 关联：`docs/internal/dev-plan-agent-host-unification.md`（单进程单入口）、`docs/panel-implementation.md`（部门面板）、`docs/internal/action-plan-dsh-frontend.md`（WP-02 票据免登）。
 
 ---
 

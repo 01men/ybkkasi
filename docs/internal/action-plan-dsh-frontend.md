@@ -24,7 +24,7 @@
 
 ## 一、Agent 团队执行规范（每个工作包开工前生效）
 
-1. **上下文引导**：领包 Agent 必读——`AGENTS.md`（同步铁律）、`docs/dev-plan-agent-host-unification.md`、`docs/nas-authz.md` §二、本文件全文、以及所领 WP 列出的触碰文件。
+1. **上下文引导**：领包 Agent 必读——`AGENTS.md`（同步铁律）、`docs/internal/dev-plan-agent-host-unification.md`、`docs/nas-authz.md` §二、本文件全文、以及所领 WP 列出的触碰文件。
 2. **契约先行**：每个 WP 先产出接口契约（manifest/api.yaml 增量、事件 schema、JSON schema），lint 通过后方可写实现。契约变更必须回写本文件对应小节。
 3. **文件所有权**：多 Agent 并行时按 §三/§四 的「触碰文件」声明所有权；共享文件（`api.js`、`index.html`、`platform-core` 挂载注册点）只允许指定 WP 修改，后合并者负责适配。禁止跨包「顺手修」。
 4. **机器可验验收**：每个 WP 的 DoD 必须落到以下之一，否则不得合并——selftest 断言节名、lint 规则名、可脚本化检查（curl/grep/diff 脚本）。「页面看着正常」不构成验收。
@@ -44,7 +44,7 @@
   - **档次 A**：消息级挂载点存在——能在会话消息流注入 DOM 节点且在一轮流式更新后仍存活，且能订阅工具调用生命周期事件 → WP-06 实现会话内完整执行卡片+四态+反馈条；
   - **档次 B**：仅启动图/侧栏级挂载 → 会话内最小注入集（反馈条 + 结果卡片外链），四态完整版放工作台/资产页；
   - **档次 C**：无可用挂载点 → 会话保持纯文本+链接，卡片体验全部收进工作台与钉钉；P1 主路径（一句话问答）不受影响。
-- **产出**：`docs/spike-dsh-client-capability.md`（含档次判定与证据截图/日志）；档次判定写入 §六 决策记录。
+- **产出**：`docs/internal/spike-dsh-client-capability.md`（含档次判定与证据截图/日志）；档次判定写入 §六 决策记录。
 - **降级保底**：若必须 DOM 探测，集中封装 + 上游版本探测，升级时自动降级为纯文本（不白屏）。验收不变量：**dsh web 源码 diff = 0**。
 
 ### WP-02 控制台票据免登接线 【阻塞 WP-04】
@@ -176,7 +176,7 @@
 | D2 | 非计费事件统一零价快照（charge_cents=0，rate 标 nonbillable） | **默认采纳，直接执行** | 不采纳则 usage.record 录不进反馈/知识事件 |
 | D3 | 行为事件独立 `behavior.recorded`，不混入 usage 计量管道 | **默认采纳，直接执行** | 避免污染计费口径 |
 | D4 | L4 终审由平台管理员承接 + audit 留痕 + 钉钉审批卡 48h 超时升级老板 | **默认采纳** | 替代 V2.0 §12 待决项，避免审批瓶颈绑在老板日历 |
-| D5 | dsh.client 实现档次（A/B/C） | **已判定：档次 A（2026-09-02，spike 实测）** | 证据与实现建议见 `docs/spike-dsh-client-capability.md`：消息流 slot（`tool.call.toolview`/`conversation.chat.assistant-actions`）流式增量存活 + `ctx.conversationEvents` 可订阅工具生命周期；新约束——cordis.yml 客户端条目必须写包名（require.resolve 解析），`lib/client.js` 必须在 `dsh web` 启动前构建，否则宿主启动失败（降级预案见 spike 文档 §5） |
+| D5 | dsh.client 实现档次（A/B/C） | **已判定：档次 A（2026-09-02，spike 实测）** | 证据与实现建议见 `docs/internal/spike-dsh-client-capability.md`：消息流 slot（`tool.call.toolview`/`conversation.chat.assistant-actions`）流式增量存活 + `ctx.conversationEvents` 可订阅工具生命周期；新约束——cordis.yml 客户端条目必须写包名（require.resolve 解析），`lib/client.js` 必须在 `dsh web` 启动前构建，否则宿主启动失败（降级预案见 spike 文档 §5） |
 | D6 | behavior 端点归属 platform-core | **默认采纳（已按此落地 + 一处惯例微调）** | behavior.ts/cardpacks.ts 均落 platform-core（钦定）；REST 路由注册：behavior 端点在 behavior.ts 自带（双层 fail-closed 鉴权），card-packs 端点按仓库惯例由 console 聚合（角色×平台×ref 存活性三维过滤需要 iam/资源注册表），已在两文件头注释留痕 |
 | D7 | 会话侧新增兜底原因码 `invoke-error`（WP-06 报备） | **已采纳（2026-09-02）** | 工具结果 isError 且无平台侧六码时，会话卡呈现 blocked + invoke-error 兜底文案；已计入 errors.js 文案完整性枚举（selftest 断言） |
 

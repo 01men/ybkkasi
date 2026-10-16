@@ -2,7 +2,7 @@
 
 > 实例 http://127.0.0.1:7342（DEMO_SEED=1，data-qa-gb，独占）｜ 基线 dsh-enterprise-ops v1.1.0 + REFACTOR-2026-10-13
 > 方法：黑盒 curl/node fetch 实测 + 底层事件手算对账 + 只读源码定位；自建资源一律 qa-b- 前缀（测试后已停用/删除，stub 19341/19342 已终止）
-> 上轮缺陷基线：docs/qa-report-20260912-group-b-metering.md（B-01..B-08）+ release-notes-2026-09-12/13-qa-fixes.md
+> 上轮缺陷基线：docs/internal/qa-report-20260912-group-b-metering.md（B-01..B-08）+ release-notes-2026-09-12/13-qa-fixes.md
 
 ## 一、结论总览
 

@@ -1,5 +1,5 @@
 /** 工作台（CIO 五视图）：cockpit 经营驾驶舱 / goals 目标与价值 / actions 行动项目 / collab 人机协作 / ops 平台运行。
- *  设计适配（docs/design-adaptation-spec-20261014.md §5.1）：tabRow 分段标签 + ?tab= 同步；
+ *  设计适配（docs/internal/design-adaptation-spec-20261014.md §5.1）：tabRow 分段标签 + ?tab= 同步；
  *  全部经营数据来自真实 API（执行中枢 / 总览 / 审批 / 审计 / 用量），失败按链路降级，不造演示数据。
  *  权限语义保留（QA-02）：处理审批（approval.read）/ 查看 Agent（agent.read）/ 用量明细（usage.read）CTA 按权限渲染。 */
 import { api, session, bridgeStatus, BASE } from '../api.js'

@@ -281,10 +281,10 @@
 
 | 阶段 | 状态 | 出口锚点 | 基线报告 |
 |---|---|---|---|
-| 0 基线冻结与安全网 | ✔ | `refactor-stage-0`（selftest 1199/1199，R3/R11 双工具入库+构造性红测验证） | docs/重构基线-阶段0-20261013.md |
-| 1 清债（结构重构） | ✔ | `refactor-stage-1`（R5 鉴权收敛 rest-gate 单实现；R4 console 后端 4,702→300 行 15 域文件 + 前端 iam 六模块；定制轨同步演练：rebase 可行，差异仅 CRLF+4 行命名空间映射） | docs/重构基线-阶段1-20261013.md |
-| 2 汉化收敛 | ✔ | `refactor-stage-2`（R10 总表 280 键；错误映射全集断言 1201；R1 真实残留清零 + 279 条机制料豁免底册；lint:cjk 0 命中/strict 绿；全中文单语口径入 README/llms） | docs/重构基线-阶段2-20261013.md |
-| 3 paperclip 模式吸收 | ✔ | `refactor-stage-3`（R6 声明式风险目录 8 provider/43 action+生成校验链；R7 tokens.css 三端单源；R9 评审文档；R8 登记后续专项） | docs/重构基线-阶段3-20261013.md |
+| 0 基线冻结与安全网 | ✔ | `refactor-stage-0`（selftest 1199/1199，R3/R11 双工具入库+构造性红测验证） | docs/internal/重构基线-阶段0-20261013.md |
+| 1 清债（结构重构） | ✔ | `refactor-stage-1`（R5 鉴权收敛 rest-gate 单实现；R4 console 后端 4,702→300 行 15 域文件 + 前端 iam 六模块；定制轨同步演练：rebase 可行，差异仅 CRLF+4 行命名空间映射） | docs/internal/重构基线-阶段1-20261013.md |
+| 2 汉化收敛 | ✔ | `refactor-stage-2`（R10 总表 280 键；错误映射全集断言 1201；R1 真实残留清零 + 279 条机制料豁免底册；lint:cjk 0 命中/strict 绿；全中文单语口径入 README/llms） | docs/internal/重构基线-阶段2-20261013.md |
+| 3 paperclip 模式吸收 | ✔ | `refactor-stage-3`（R6 声明式风险目录 8 provider/43 action+生成校验链；R7 tokens.css 三端单源；R9 评审文档；R8 登记后续专项） | docs/internal/重构基线-阶段3-20261013.md |
 | 4 dsh 适配回归 | ✔（发布环节待确认） | 契约清单逐项打钩（bundle.patch/compatibility/profiles/依赖位置/files 闭包双 yml 一致）；独立宿主回归全绿（selftest 1201 + full-chain-drill 27/27 + morning-peak-entry 50 并发零失败）；`@ybkk/gate-01` 正式发布涉 npm publish 与 push RQ-DSH 外部动作，待所有者确认后按 scripts/release.mjs 流程执行 | 本节 |
 
 **质量门全程记录**：selftest 1199（基线）→ 1200（收编 R6 单测）→ **1201**（错误映射全集断言），零下降；lint:manifests / contract-lint / lint-timers / check-boot-order 全程 0 错误。

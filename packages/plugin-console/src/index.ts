@@ -89,8 +89,9 @@ export const PUBLIC_PATHS = new Set([
 const PUBLIC_PATH_PREFIXES = ['/api/authn/oidc/auth-requests/', '/api/exec/webhook/']
 
 /** /docs 公开白名单（默认拒绝，导出供 selftest 比对——清单变动即红）：
- *  仅收录面向外部读者的接入指引与对外口径设计文档（「本文档随服务发布，可直接访问」系列）。
- *  目录内其余文档（部署 runbook、qa-report/handoff/dev-plan/contract/重构基线等内部协作面）
+ *  仅收录面向外部读者的接入指引（「本文档随服务发布，可直接访问」系列）。
+ *  目录内其余文档（部署 runbook、契约、以及 docs/internal/ 下的内部过程物料
+ *  qa-report/handoff/dev-plan/release-notes/重构基线等）
  *  一律 404，改走仓库私有分发；扩编须经评审改此清单，宁紧勿松。 */
 export const PUBLIC_DOCS = new Set([
   'app-onboarding.md',
@@ -98,7 +99,6 @@ export const PUBLIC_DOCS = new Set([
   'app-sso-integration.md',
   'app-org-sync.md',
   'app-rbac-guide.md',
-  'ecosystem-design-v1.2.md',
 ])
 
 /** 从请求头推导对外基址（钉钉等真实 IdP 的 redirect_uri 需绝对 URL；反代场景优先 x-forwarded-*）。 */
@@ -305,8 +305,7 @@ export function apply(ctx: Context) {
           : name === 'agent-onboarding.md' ? t('（Agent 接入指引）')
           : name === 'app-sso-integration.md' ? t('（应用统一身份接入指南）')
           : name === 'app-org-sync.md' ? t('（应用组织架构同步指南）')
-          : name === 'app-rbac-guide.md' ? t('（应用内权限（RBAC）构造指南）')
-          : name === 'ecosystem-design-v1.2.md' ? t('（平台生态设计 v1.2）') : ''
+          : name === 'app-rbac-guide.md' ? t('（应用内权限（RBAC）构造指南）') : ''
         return `<li><a href="/docs/${encodeURIComponent(name)}">${escapeHtml(name)}</a>${hint}</li>`
       }).join('')
       exchange.res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })

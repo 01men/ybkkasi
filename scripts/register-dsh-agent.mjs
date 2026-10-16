@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * register-dsh-agent.mjs —— 平台自营 dsh Agent 一键资产登记（dev-plan-agent-host-unification.md M3）。
+ * register-dsh-agent.mjs —— 平台自营 dsh Agent 一键资产登记（docs/internal/dev-plan-agent-host-unification.md M3）。
  *
  * 对宿主平台执行 agent-onboarding 全流程（docs/agent-onboarding.md），幂等可重跑：
  *   ① 注册 Agent（按名称幂等：已存在则复用，不换名重复注册）

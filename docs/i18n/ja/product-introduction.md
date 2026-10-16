@@ -196,4 +196,4 @@ Bearer トークンとツール粒度の権限点のまま利用できます。
 - クイックスタート: [getting-started.md](getting-started.md)
 - DSH エコシステム: [dsh-ecosystem.md](dsh-ecosystem.md)
 - 用語契約: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
-- 中文原典（内部）: `llms.txt`、[docs/roadmap.md](../../roadmap.md)（中文・内部）
+- 中文原典（内部）: `llms.txt`、[docs/internal/roadmap.md](../../internal/roadmap.md)（中文・内部）

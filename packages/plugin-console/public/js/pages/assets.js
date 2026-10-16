@@ -1,5 +1,5 @@
 /**
- * 资产台账（规格 docs/design-adaptation-spec-20261014.md §5.2，布局照设计稿 Assets.tsx）：
+ * 资产台账（规格 docs/internal/design-adaptation-spec-20261014.md §5.2，布局照设计稿 Assets.tsx）：
  * 六类统一台账（chipRow 过滤 + 搜索 + 一键巡检 + 登记资产 + 行点击详情抽屉）
  * + 「运营报表」tab 保留旧资产运营页全部功能（inventory / report / benefit / retire-reasons）。
  * 数据源：GET /api/fleet/ledger（六类统一 schema，WB 实现）；旧功能继续走 /api/assets/*。

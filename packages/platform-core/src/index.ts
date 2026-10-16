@@ -18,6 +18,7 @@ import { BehaviorService } from './behavior.ts'
 import { ScenegraphService } from './scenegraph.ts'
 
 export * from './storage.ts'
+export * from './storage-sqlite.ts'
 export * from './bus.ts'
 export * from './tools-lite.ts'
 export * from './http.ts'

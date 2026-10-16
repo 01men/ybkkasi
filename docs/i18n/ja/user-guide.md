@@ -1,7 +1,7 @@
 # RongQi（ybkk-AIOS）機能使用ガイド（日本語版）
 
 > **日本語版** — 機械翻訳支援＋i18n PM による統一校正。**中文原文が正式版です（齟齬時は中文が優先）。**
-> 原典: `README.md` · `llms.txt` · `docs/deploy-enterprise.md` · `docs/app-sso-integration.md` · `docs/nas-authz.md` · `docs/connector-integration.md` · `docs/app-rbac-guide.md` · `docs/panel-implementation.md` · `docs/entry-switching.md` · `docs/a0-a3-autonomy-ladder-review.md` · `docs/host-features-ops-notes.md` ほか · 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
+> 原典: `README.md` · `llms.txt` · `docs/deploy-enterprise.md` · `docs/app-sso-integration.md` · `docs/nas-authz.md` · `docs/connector-integration.md` · `docs/app-rbac-guide.md` · `docs/panel-implementation.md` · `docs/entry-switching.md` · `docs/internal/a0-a3-autonomy-ladder-review.md` · `docs/host-features-ops-notes.md` ほか · 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
 
 RongQi（ybkk-AIOS）は、DeepSeek Harness（dsh）の「すべてはプラグイン」アーキテクチャ上に構築された、
 エンタープライズ AI リソース管理プラットフォームです。MCP サービス、スキル、エージェント、AI アプリケーション、
@@ -271,7 +271,7 @@ RongQi（ybkk-AIOS）は、DeepSeek Harness（dsh）の「すべてはプラグ�
 - **自律レベル（A0–A3）**：Agent 属性 `autonomy`／`runtime` と A2A 契約は実装済みです
   （A0 観測／A1 提案＝審批チャネル／A2 ODD 域内の制御付き実行／A3 有界自律）。ただし**証拠ベースの
   段階的権限昇格（evidence-driven elevation）の実装は設計レビュー済みで保留中（ロードマップ）**です
-  （中文原典 `docs/a0-a3-autonomy-ladder-review.md`、2026-09-12 レビュー結論）。
+  （中文原典 `docs/internal/a0-a3-autonomy-ladder-review.md`、2026-09-12 レビュー結論）。
 - **A2A 指名呼び出し**：`POST /api/agents/:idOrSlug/a2a/invoke`（権限点 `agent.a2a.invoke`）。
   v1 の範囲は単方向の指名呼び出し＋レベル透出です（ネゴシエーションプロトコルは升版時に別途検討）。
 - Agent の公開ゲート：`AGENT_SSO_ENFORCE`（既定有効）により、オンライン申請前に OIDC クライアント発行

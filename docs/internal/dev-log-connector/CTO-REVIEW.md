@@ -8,7 +8,7 @@
 
 ## [2026-08-27 13:48] CTO —— 第 1 次审查（基线）
 
-**进度快照**：14 个工作单全部 `todo`，无活跃 claim。journal 仅 1 条（lead-agent 项目启动）。计划书已入库（docs/dev-plan-connector.md，13:42），pre-M0.tgz 快照已建（13:42）。进度板与仓库现实**一致**（packages/plugin-connector 尚未创建，符合 todo 态）。
+**进度快照**：14 个工作单全部 `todo`，无活跃 claim。journal 仅 1 条（lead-agent 项目启动）。计划书已入库（docs/internal/dev-plan-connector.md，13:42），pre-M0.tgz 快照已建（13:42）。进度板与仓库现实**一致**（packages/plugin-connector 尚未创建，符合 todo 态）。
 
 **发现的问题**：
 
@@ -17,7 +17,7 @@
 
 **调整意见**：
 
-- 【P0】开工 #2 前，先把上述 7 个脏文件单独提交（或明确 stash），保持连接器项目的 git 变更面纯净。连接器相关新增文件（docs/dev-log-connector/、dev-plan-connector.md）也一并入库。
+- 【P0】开工 #2 前，先把上述 7 个脏文件单独提交（或明确 stash），保持连接器项目的 git 变更面纯净。连接器相关新增文件（docs/internal/dev-log-connector/、dev-plan-connector.md）也一并入库。
 - 【P0】#2 立即启动（轨道 0 奠基，无依赖）；#1（桥接验证，轨道 1）可与 #2 并行。两单互不冲突（#1 只动 docs + plugin-mcp api.yaml 补登段）。
 - 【P1】#6 涉及 iam/console/boot-all 等高冲突共享文件，安排在 #2 骨架落地后做，且严格走 §四 claim 登记。
 - 【提示】M0 桥接真实联调在本环境无 docker/sidecar 运行时（journal 已声明），#1 按"文档+compose 交付、部署验证留真实环境"验收即可，不阻塞。

@@ -2,7 +2,7 @@
 
 > 测试对象：http://127.0.0.1:7341（DEMO_SEED=1，独立数据目录 data-qa-ga，本组独占）
 > 代码基线：dsh-enterprise-ops v1.1.0（REFACTOR-2026-10-13 后，console 路由拆分至 packages/plugin-console/src/routes/ 15 域文件；selftest 1201/1201）
-> 上轮参照：docs/qa-report-20260912-group-a-security.md（BUG-A-01～A-10）+ release-notes 2026-09-12 / 09-13 / 09-15（approval-relax）
+> 上轮参照：docs/internal/qa-report-20260912-group-a-security.md（BUG-A-01～A-10）+ release-notes 2026-09-12 / 09-13 / 09-15（approval-relax）
 > 方法：黑盒 HTTP（curl/node fetch）+ 源码定位根因（只读，未改仓库任何文件）；破坏性操作全部使用自建 sec-* 账号
 
 ---

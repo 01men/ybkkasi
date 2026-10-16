@@ -3,7 +3,7 @@
 > 回答一个问题：**控制台前端如何从「只能连本机宿主」变为「可配置、可切换多个宿主服务」？**
 > 例：默认连本机宿主；要把控制台指到另一台宿主 `http://192.168.0.7:7300/`，手动配置一次，
 > 之后在连接清单里一键切换，切换后页面自动刷新生效。
-> 关联：`docs/dev-plan-agent-host-unification.md`（单进程单入口）、`docs/entry-switching.md`（入口分诊）。
+> 关联：`docs/internal/dev-plan-agent-host-unification.md`（单进程单入口）、`docs/entry-switching.md`（入口分诊）。
 
 ---
 

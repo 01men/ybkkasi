@@ -1,5 +1,5 @@
 /**
- * 平台接入（合并页，Kimi CIO 仪表盘设计适配 §5.9 · docs/design-adaptation-spec-20261014.md）：
+ * 平台接入（合并页，Kimi CIO 仪表盘设计适配 §5.9 · docs/internal/design-adaptation-spec-20261014.md）：
  *   tab=接入管理 enroll —— 原 connect 页（一次性接入码 / 已接入客户端 / 外部接入总览）全功能迁入；
  *   tab=宿主连接 hosts —— 复用 connections.js 导出的 renderConnections（非 standalone 形态）；
  *   tab=连接器目录 catalog —— connectors 摘要 + 状态 + 「完整目录」入口（#/connectors）。
