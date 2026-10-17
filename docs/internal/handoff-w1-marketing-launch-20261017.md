@@ -17,7 +17,17 @@
 | 所有写操作被拒 | ✅ 双闸门：写按钮按权限隐藏 + 直调 API 一律 405/403 |
 | Docker 一键体验 | ✅ 交付（本机无 Docker，镜像构建待有 Docker 的环境跑一次验证，见 §6） |
 | selftest / 契约 lint | ✅ 1486/1486 全绿（含新增 20 项演示态断言）；lint 0 红 10 警（警为存量豁免） |
-| GitHub 推送 | ⚠️ 本地已提交（6fc45e7），推送被凭据权限卡住——需要你或 IT 授权一次，见 §6 |
+| GitHub 推送 | ✅ 已推送（CI quality-gate **success**，线上终验通过） |
+
+---
+
+## 0.5 公网演示地址（正式对外口径）
+
+# **https://demo.ybkkasi.com**
+
+- Cloudflare Tunnel 专隧道（`ybkk-demo`）直连本机演示实例，HTTPS 证书自动托管。
+- 已验证：HTTPS 证书 ✔ / 免登录落地工作台 ✔ / 只读横幅 ✔ / 18 个导航页 ✔ / 写请求 405 ✔ / 三语 ✔。
+- 运营物料（官网、Product Hunt、社区帖、录屏）**一律引用这个地址**。
 
 ---
 
@@ -25,11 +35,12 @@
 
 | 环境 | 地址 | 是什么 | 能否对外 |
 |---|---|---|---|
-| **演示实例** | `http://127.0.0.1:7302` | 免登录只读演示，全是假数据（演示种子） | ✅ **随便发**（录屏/官网/社区帖都指向它） |
+| **演示实例** | **https://demo.ybkkasi.com**（公网，Cloudflare Tunnel） | 免登录只读演示，全是假数据（演示种子） | ✅ **随便发**（录屏/官网/社区帖都指向它） |
+| 演示实例（本机） | `http://127.0.0.1:7302` | 同上，公网域名的落地端 | 本机调试用 |
 | 生产实例 | `http://127.0.0.1:7300` | 真实系统 | ❌ 别外发 |
 | QA 实例 | `http://127.0.0.1:7301` | 10-15 的 QA 遗留实例 | ❌ 别动它 |
 
-> 演示实例目前只在本机可达。**要挂公网域名（给官网/Product Hunt 用）需要加一条内网穿透/隧道映射**——现有 Cloudflare 通道就能做，运营侧把目标域名定下来后技术侧 10 分钟配好。
+> 公网只暴露 demo.ybkkasi.com 这一个子域（隧道兜底 404，其他端口不可达）；生产实例不在任何公网链路上。
 
 ---
 
@@ -74,19 +85,22 @@
 # 重启演示实例（数据重置回初始演示种子）
 launchctl kickstart -k gui/$(id -u)/com.ybkk.ops-demo
 
-# 看演示实例日志
-tail -20 /Users/ybkk/ybkkasi/logs/demo.out.log
+# 重启公网隧道（域名打不开时先试这条）
+launchctl kickstart -k gui/$(id -u)/com.cloudflare.tunnel-demo
+
+# 看日志
+tail -20 /Users/ybkk/ybkkasi/logs/demo.out.log      # 演示实例
+tail -20 ~/Library/Logs/tunnel-demo.err.log         # 隧道
 ```
 
-演示实例定义文件：`~/Library/LaunchAgents/com.ybkk.ops-demo.plist`（端口/数据目录/环境变量都在里面）。改完 `launchctl bootout gui/$(id -u)/com.ybkk.ops-demo && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ybkk.ops-demo.plist`。
+演示实例定义：`~/Library/LaunchAgents/com.ybkk.ops-demo.plist`；隧道定义：`com.cloudflare.tunnel-demo.plist` + `~/.cloudflared/config-demo.yml`（域名→端口映射）。改完 plist 用 `launchctl bootout … && launchctl bootstrap …` 重载。
 
 ---
 
 ## 6. 遗留与依赖（按优先级）
 
-1. **GitHub 推送待授权（内部，1 分钟）**：待推的 4 个提交里含 workflow 文件变更，当前 GitHub 凭据缺 `workflow` 权限。解法：`gh auth refresh -h github.com -s workflow`（授权一次），之后 `git push origin main` 即可，push 会自动触发 quality-gate CI 作为线上终验。
-2. **演示实例公网地址（等运营输入）**：内网穿透目标域名/子域定下来即可配。定之前官网暂勿放演示链接。
-3. **官网改造 P2（等运营输入）**：文案与信息架构方向是运营的活（交接单原话）。技术侧就绪度：演示后端已上线、三语已支持、Docker 口径已写进 README。唯一缺口：`/panel/` 部门面板对免登访客仍要登录（本批次未动，需要时另行立项）。
-4. **Docker 镜像实构建验证**：找一台有 Docker 的机器跑 `docker compose up` 验一次（README 命令即测即用）。
+1. **官网改造 P2（等运营输入）**：文案与信息架构方向是运营的活（交接单原话）。技术侧就绪度：**公网演示地址已上线**、三语已支持、Docker 口径已写进 README。唯一缺口：`/panel/` 部门面板对免登访客仍要登录（本批次未动，需要时另行立项）。
+2. **Docker 镜像实构建验证**：找一台有 Docker 的机器跑 `docker compose up` 验一次（README 命令即测即用）。
+3. 演示实例对外后的常规观察项：`logs/demo.out.log` 访问量、Cloudflare 面板流量——如遇滥用（爬虫/压测），可在 Cloudflare 侧对 demo.ybkkasi.com 加速率限制（运营提出即可，技术侧 5 分钟配）。
 
 —— 技术侧 Zcode，2026-10-17
