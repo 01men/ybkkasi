@@ -21,31 +21,52 @@ try {
   }
 } catch { /* 忽略 */ }
 
-import { renderLogin } from './pages/login.js'
-import { renderHome } from './pages/home.js'
-import { renderDashboard } from './pages/dashboard.js'
-import { renderIam } from './pages/iam/index.js'
-import { renderAuthn } from './pages/authn.js'
-import { renderMcp } from './pages/mcp.js'
-import { renderNas } from './pages/nas.js'
-import { renderNasAuthz } from './pages/nas-authz.js'
-import { renderConnectors } from './pages/connectors.js'
-import { renderSkills } from './pages/skills.js'
-import { renderAgents } from './pages/agents.js'
-import { renderApps } from './pages/apps.js'
-import { renderAudit } from './pages/audit.js'
-import { renderApprovals } from './pages/approvals.js'
-import { renderAssets } from './pages/assets.js'
-import { renderFinops } from './pages/finops.js'
-import { renderExec } from './pages/exec.js'
-import { renderRegister } from './pages/register.js'
-import { renderPlatform } from './pages/platform.js'
-import { renderConnect } from './pages/connect.js'
-import { renderConnections } from './pages/connections.js'
-import { renderGateway } from './pages/gateway.js'
-import { renderUsage } from './pages/usage.js'
-import { renderAccess } from './pages/access.js'
-import { renderOauthAuthorize, renderOauthError, renderOauthLogout } from './pages/oauth.js'
+// 页面级懒加载（2026-10-18 · 首屏修复）：此前本页静态 import 全部 25 个页面模块，
+// 浏览器必须等最慢的一个下载+解析完才能执行首行代码。本机 7302 首屏 315ms，
+// 但经 Cloudflare 隧道公网单请求 RTT 约 0.9s，45 个 script 争抢并发 → 实测 9~14s
+// 「白屏观感」（加载屏只有 len=8 的暖纸底+居中小字）。根因是静态 import 的瀑布，
+// 不是应用性能、也不是深层模块串行（模块图深度仅 3 层）。
+// 改为动态 import：首屏只多 1 个请求（当前路由页），其余页面按需取。
+// 动态 import 自身有模块缓存，这里再缓存一层是为了失败后可重试（catch 里删键）。
+const pageModules = new Map()
+function lazy(spec, name) {
+  return async (...args) => {
+    let mod = pageModules.get(spec)
+    if (!mod) {
+      mod = import(spec).catch((error) => { pageModules.delete(spec); throw error })
+      pageModules.set(spec, mod)
+    }
+    return (await mod)[name](...args)
+  }
+}
+
+const renderLogin = lazy('./pages/login.js', 'renderLogin')
+const renderHome = lazy('./pages/home.js', 'renderHome')
+const renderDashboard = lazy('./pages/dashboard.js', 'renderDashboard')
+const renderIam = lazy('./pages/iam/index.js', 'renderIam')
+const renderAuthn = lazy('./pages/authn.js', 'renderAuthn')
+const renderMcp = lazy('./pages/mcp.js', 'renderMcp')
+const renderNas = lazy('./pages/nas.js', 'renderNas')
+const renderNasAuthz = lazy('./pages/nas-authz.js', 'renderNasAuthz')
+const renderConnectors = lazy('./pages/connectors.js', 'renderConnectors')
+const renderSkills = lazy('./pages/skills.js', 'renderSkills')
+const renderAgents = lazy('./pages/agents.js', 'renderAgents')
+const renderApps = lazy('./pages/apps.js', 'renderApps')
+const renderAudit = lazy('./pages/audit.js', 'renderAudit')
+const renderApprovals = lazy('./pages/approvals.js', 'renderApprovals')
+const renderAssets = lazy('./pages/assets.js', 'renderAssets')
+const renderFinops = lazy('./pages/finops.js', 'renderFinops')
+const renderExec = lazy('./pages/exec.js', 'renderExec')
+const renderRegister = lazy('./pages/register.js', 'renderRegister')
+const renderPlatform = lazy('./pages/platform.js', 'renderPlatform')
+const renderConnect = lazy('./pages/connect.js', 'renderConnect')
+const renderConnections = lazy('./pages/connections.js', 'renderConnections')
+const renderGateway = lazy('./pages/gateway.js', 'renderGateway')
+const renderUsage = lazy('./pages/usage.js', 'renderUsage')
+const renderAccess = lazy('./pages/access.js', 'renderAccess')
+const renderOauthAuthorize = lazy('./pages/oauth.js', 'renderOauthAuthorize')
+const renderOauthError = lazy('./pages/oauth.js', 'renderOauthError')
+const renderOauthLogout = lazy('./pages/oauth.js', 'renderOauthLogout')
 import { mountUpdateBadge, openUpdateDrawer } from './update.js'
 
 // 导航分组（Kimi CIO 仪表盘设计适配，2026-10-14 · docs/internal/design-adaptation-spec-20261014.md §4）：
@@ -89,6 +110,24 @@ const NAV = [
 
 const app = $('#app')
 
+// 懒加载后这些页面渲染都变成异步：加载失败不再同步抛出（那会被 hashchange 抛出到
+// window.onerror），而是变成 rejected promise——不接住就是静默白屏。故统一兜底成
+// 可重试错误卡，与 renderShell 内既有的页面级兜底保持一致口径。
+function guard(renderThunk, target) {
+  Promise.resolve()
+    .then(renderThunk)
+    .catch((error) => {
+      target.innerHTML = `
+        <div class="card card-pad" style="text-align:center;padding:44px 24px">
+          <div style="font-size:30px;margin-bottom:10px">🚫</div>
+          <div style="font-weight:600;margin-bottom:6px">页面加载失败</div>
+          <div class="fs-12 text-3" style="margin-bottom:18px">${esc(error?.message ?? '未知错误')}</div>
+          <button class="btn btn-default" id="page-retry">重试</button>
+        </div>`
+      $('#page-retry')?.addEventListener('click', () => navigate())
+    })
+}
+
 function currentHash() { return location.hash || '#/dashboard' }
 
 function navigate() {
@@ -104,7 +143,7 @@ function navigate() {
       'oauth/error': renderOauthError,
       'oauth/logout': renderOauthLogout,
     }
-    ;(oauthBuilders[page] ?? renderOauthError)(app, params)
+    guard(() => (oauthBuilders[page] ?? renderOauthError)(app, params), app)
     return
   }
 
@@ -115,14 +154,14 @@ function navigate() {
   // 营销首页仍可经 #/home 显式到达。
   const hasTicket = new URLSearchParams(location.search).has('ticket')
   if (page === 'home' || (!session.token && !session.isDemo && !hasTicket && isBareLanding(location.hash))) {
-    renderHome(app)
+    guard(() => renderHome(app), app)
     return
   }
 
   // 显式 #/login 深链（含营销首页「登录」CTA）在演示态同样放行——访客可随时转真实登录
   // （演示实例上用演示账号登录即得完整功能），这是演示会话唯一不接管的路由。
   if (page === 'login' && !session.token) {
-    renderLogin(app)
+    guard(() => renderLogin(app), app)
     return
   }
 
@@ -130,10 +169,10 @@ function navigate() {
     // 宿主连接页会话前置（docs/frontend-host-switching.md）：登录前就要能换目标宿主，
     // 以极简独立形态渲染（不走控制台外壳）；有会话时走下方 builders 在外壳内渲染。
     if (page === 'connections') {
-      renderConnections(app, params, { standalone: true })
+      guard(() => renderConnections(app, params, { standalone: true }), app)
       return
     }
-    renderLogin(app)
+    guard(() => renderLogin(app), app)
     return
   }
 

@@ -8,6 +8,11 @@
   <link rel="icon" href="/ybk-mark.png">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/home.css">
+  <!-- 首屏预载（2026-10-18 · 首屏修复）：页面模块已改动态 import，落地页只可能是
+       营销首页（免会话裸落地）或工作台（演示态/已登录裸落地）。这两块提前发起，
+       与 app.js 并行下载，避免「外壳到了才排队取页」的二次等待。其余页面按需取。 -->
+  <link rel="modulepreload" href="/js/pages/home.js">
+  <link rel="modulepreload" href="/js/pages/dashboard.js">
 </head>
 <body>
   <div id="app">

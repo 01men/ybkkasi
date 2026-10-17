@@ -26,6 +26,27 @@ globalThis.window = window
 globalThis.location = window.location
 globalThis.localStorage = window.localStorage
 globalThis.requestAnimationFrame = window.requestAnimationFrame.bind(window)
+// 页面模块在 Node 侧按 ESM 直接 import 执行，其内部引用的是全局 MutationObserver
+// （jsdom 只把它挂在 window 上，不注入 globalThis）→ 不注入会让 31 个页面用例
+// 全部以「MutationObserver is not defined」失败，等于本门禁静默失效（基线 1/31）。
+// MutationObserver 只在 window 上存在，这里直接透传，不做行为打桩。
+globalThis.MutationObserver = window.MutationObserver
+// 同理：i18n.js 遍历文本节点用 NodeFilter（jsdom 只挂 window），缺失会产生
+// unhandledRejection 让门禁判红。
+globalThis.NodeFilter = window.NodeFilter
+globalThis.Node = window.Node
+globalThis.Text = window.Text
+// 语言钉死 zh-CN：本用例的断言匹配的是中文界面文案（如「万 tokens/成本」「接入管理」），
+// 而 i18n.js 的 effectiveLocale() 读的是**全局** navigator（页面模块按 ESM 在 Node 侧执行，
+// 不经过 window），Node 22 内置 navigator.language = en-US，会让 i18n 走翻译分支把界面
+// 翻成英文导致误判红。产品默认语言本就是 zh-CN（偏好 > 浏览器语言 > zh-CN），此处与产品对齐。
+Object.defineProperty(window.navigator, 'language', { value: 'zh-CN', configurable: true })
+Object.defineProperty(window.navigator, 'languages', { value: ['zh-CN'], configurable: true })
+Object.defineProperty(globalThis, 'navigator', {
+  value: { language: 'zh-CN', languages: ['zh-CN'], userAgent: window.navigator.userAgent },
+  configurable: true,
+  writable: true,
+})
 const nativeFetch = globalThis.fetch
 globalThis.fetch = (input, init) => nativeFetch(new URL(String(input), BASE).href, init)
 // jsdom 无 canvas 包：给营销页的背景 canvas 打桩（真实浏览器不受影响）
