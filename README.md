@@ -1,14 +1,47 @@
 # 元冰可 · 企业 AI 资源管理平台
 
-> **给已经跑 [DeepSeek Harness（dsh）](https://github.com/deepseek-ai/deepseek-harness) 的团队**：
-> 这是一套**企业管控台**——把散落在企业里的 **MCP 服务 / Skill / Agent / AI 应用 / 模型渠道 / SaaS 连接器 / NAS 存储**
-> 收进**一套身份、一套权限、一套计量、一套审计**里，并让 Agent 自己能运维这个平台。
->
-> **YBK Enterprise AI Asset Governance** — A self-hosted enterprise control console for teams
-> already running dsh: one identity, one permission model, one metering pipeline, one audit trail
-> for MCP servers, skills, agents, apps, model channels and connectors. MIT licensed.
+[![MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![selftest](https://img.shields.io/badge/selftest-1467%20green-success)]()
+[![Node](https://img.shields.io/badge/Node-%E2%89%A522.6-339933)]()
+[![i18n](https://img.shields.io/badge/i18n-zh--en--ja-blue)]()
+[![Demo](https://img.shields.io/badge/demo-demo.ybkkasi.com-FF6B35)](https://demo.ybkkasi.com)
 
-**27 个插件包 · 86 个权限点 · 431 条 REST 路由（396 权限保护 + 26 公开 + 9 仅认证）· 83 个 MCP 注册工具（全部声明最小权限）· 零重型运行时依赖**
+**把散落在企业里的 MCP 服务 / Skill / Agent / AI 应用 / 模型渠道 / SaaS 连接器 / NAS 存储，
+统一成一套可管、可算、可审的资产。**
+
+一套身份 · 一套权限 · 一套计量 · 一套审计。**27 个插件包，按需启用。**
+
+> **YBK Enterprise AI Asset Governance** — One control plane for every MCP server, skill,
+> agent, and AI app. One identity, one permission model, one metering pipeline, one audit trail.
+> Self-hosted, MIT licensed.
+
+**[▶ 免登录在线体验](https://demo.ybkkasi.com)** · **[⬇ 60 秒本地启动](#60-秒跑起来)** · **[📖 文档](docs/ARCHITECTURE.md)**
+
+---
+
+## 你可能正在经历这些
+
+- MCP 服务散在各处，**没人说得清谁在用**
+- Agent 拿着一把**万能 token 横冲直撞**
+- 模型账单月底出来，**没人说得清哪个部门花的**
+- 出了数据问题，**翻遍日志查不到审计记录**
+
+元冰可把这些统一成「资产」，**从注册那一刻起就进入治理轨道**。
+
+---
+
+## 这和 AI Gateway 有什么不同
+
+网关把 MCP 当作「一种要路由的流量」；
+元冰可把 MCP / Skill / Agent 当作「**要被管生命周期的资产**」——
+有状态机、有审批流、有逐工具最小权限声明、能按部门 / Agent / Skill 三个维度出成本报表。
+
+| 层 | 代表方案 | 元冰可的位置 |
+|---|---|---|
+| AI/LLM Gateway | LiteLLM · Portkey · Higress · Bifrost | 不竞争，管流量路由 |
+| LLMOps 可观测 | Langfuse · LangSmith · Braintrust | 不竞争，互补（我们缺 trace 深度） |
+| Agent 构建平台 | Dify · Coze · FastGPT | 不构建，只治理已建成的 |
+| **企业 AI 资产治理** | **这是一个刚被验证需求的新品类** | **✅ 这一层** |
 
 ---
 
@@ -195,11 +228,15 @@ sync / conflict / help         三方同步 / 组织冲突 / 帮助
 | AI / LLM Gateway | LiteLLM · Portkey · Higress · Bifrost | 不竞争。网关解决**流量路由与成本可见**,这里解决**资产治理与责任归属** |
 | LLMOps 可观测       | Langfuse · LangSmith · Braintrust     | 不竞争,但**互补**——这里有计量与审计,缺 trace/eval 深度   |
 | Agent 构建平台       | Dify · Coze · FastGPT                 | 不同赛道。这里不构建 Agent,只**治理**已建成的            |
-| **AI 资产治理**      | 国外无成熟对标;国内多为大厂私有方案                    | ✅ **这一层**                               |
+| **AI 资产治理**      | 无成熟方案（早期玩家:Monospace / Busabase / AgentValet）| ✅ **这一层** |
 | 企业 MaaS 私有化      | 阿里百炼 · 百度 · 蚂蚁 Agentar                | 轻量,可完全私有化,不绑云合同                         |
 
-如果你已经在用 dsh,并且团队里有 20 个以上 MCP / Agent / Skill 散在各处没人管——
-这层工具目前确实没什么成熟选择。
+这是一个**刚被验证需求的新品类**——网关上在做流量、可观测在做 trace、构建平台在做 Agent,
+但「企业里已经建成的那些 AI 资产归谁管」这一层还没有成熟答案。
+
+大多数团队现在的状态是:MCP 服务散在各处没人知道谁在用、Agent 拿着万能 token 横冲直撞、
+模型账单月底出来没人说得清哪个部门花的、出了问题查不到审计记录。
+元冰可把这些**统一成"资产"**,每类资产共享同一套底座。
 
 ---
 
