@@ -8,11 +8,33 @@
 > already running dsh: one identity, one permission model, one metering pipeline, one audit trail
 > for MCP servers, skills, agents, apps, model channels and connectors. MIT licensed.
 
-**27 个插件包 · 84 个权限点 · 354 条 REST 路由 · 83 个 MCP 注册工具（全部声明最小权限）· 零重型运行时依赖**
+**27 个插件包 · 86 个权限点 · 431 条 REST 路由（396 权限保护 + 26 公开 + 9 仅认证）· 83 个 MCP 注册工具（全部声明最小权限）· 零重型运行时依赖**
 
 ---
 
 ## 60 秒跑起来
+
+**Docker 一键体验**(推荐——打开即免登只读演示控制台):
+
+```bash
+docker compose up -d              # → http://localhost:7300(≤60 秒可访问,见演示数据)
+```
+
+`docker compose up` 自带 `DEMO_SEED=1 + DEMO_MODE=1`:首启注入完整演示数据,
+访客**不注册不登录**直接浏览真实控制台(权限集为 26 个 `.read` 点白名单,
+写操作 403/405,页面顶部有「演示模式 · 只读」横幅)。仅在演示实例开启 `DEMO_MODE`
+——它会开放实例全部只读数据面,勿接真实业务数据。
+
+**生产部署**(不带任何 `DEMO_*` 变量,行为与源码部署完全一致):
+
+```bash
+docker run -d --name ybkkasi -p 7300:7300 \
+  -e ADMIN_PASSWORD='你的强口令' \
+  -v ybkkasi-data:/app/data \
+  ybkkasi:1.3.0
+```
+
+源码部署(要求 Node ≥ 22.6,原生 TypeScript 运行,无构建步骤;`node:sqlite` 为 Node 内置):
 
 ```bash
 npm install && npm start          # → http://127.0.0.1:7300
@@ -26,6 +48,7 @@ npm install && npm start          # → http://127.0.0.1:7300
 ```bash
 DEMO_SEED=1 npm start             # 注入演示数据(组织树/账号/MCP/Skill/Agent/应用/28 天历史)
 # 演示账号 admin / ops / hr / dev / audit,口令均为 Ybk@2026
+# 追加 DEMO_MODE=1 即开启免登只读演示态(同 Docker 体验形态)
 ```
 
 企业单节点部署建议开启 SQLite 集合后端(数据完整性 / 内存有界,详见「诚实边界」):
@@ -35,7 +58,7 @@ PLATFORM_STORAGE=sqlite npm start # 业务集合切换 SQLite 后端(WAL + 事�
 ```
 
 ```bash
-npm run selftest                  # 1467 项端到端断言(隔离实例,全绿;含 SQLite 后端契约节)
+npm run selftest                  # 1486 项端到端断言(隔离实例,全绿;含 SQLite 后端契约节)
 npm run lint:manifests            # 插件清单五面 YAML 校验
 ```
 
@@ -142,6 +165,10 @@ sync / conflict / help         三方同步 / 组织冲突 / 帮助
 
 这个项目的价值有一半在于它**明确说清了自己不做什么**:
 
+- **免登演示态**(`DEMO_MODE=1`):**不新增鉴权面、不发令牌、不开写权限**——仅在既有
+  console 鉴权中间件的「无 Bearer 头」分支注入固定只读主体(26 个 `.read` 点白名单,
+  无 `*`);写方法入口直接 405,带 Bearer 的真实登录路径行为完全不变。代价说清楚:
+  它开放实例**全部只读数据视图**给任何能访问端口的人,仅限演示种子数据实例,默认关闭。
 - **存储**:业务集合**双形态**——默认 JSON 集合(原子落盘);`PLATFORM_STORAGE=sqlite` 切换
   SQLite 后端(WAL + `synchronous=FULL` + 事务,首启自动回填既有 JSON 数据,`uniqueOn`
   落为引擎级 UNIQUE INDEX,JSON 文件保留为回滚源)。计量与事务数据始终为 SQLite
@@ -179,13 +206,14 @@ sync / conflict / help         三方同步 / 组织冲突 / 帮助
 ## 开发
 
 ```bash
-npm run selftest              # 1467 项端到端断言(含 P95 尾延迟闸门 + 故障注入 + SQLite 后端契约)
+npm run selftest              # 1486 项端到端断言(含 P95 尾延迟闸门 + 故障注入 + SQLite 后端契约)
 npm run lint:manifests        # 插件清单校验
 npm run lint:boot-order       # 插件装配顺序
 npm run lint:cjk              # 中文残留门禁
 npm run manifests             # 重新生成清单
 
 node scripts/storage-bench.mjs         # 存储后端基准(JSON vs SQLite,10k 写入 P99)
+node scripts/demo-route-audit.mjs      # 演示只读面审计(GET/HEAD 路由权限点 vs 演示白名单差集)
 node tests/full-chain-drill.mjs        # 全链路演练
 node tests/workforce-loop-drill.mjs    # 数字员工闭环演练
 ```
@@ -201,4 +229,4 @@ MIT
 
 ---
 
-> 最近更新：2026-10-16 · v1.3.0 整改攻坚批次——启动探针上线（双实例守卫 + 插件树体检，拒绝带病启动）、cordis 精确锁版 4.0.4 + CI 双轨、存储 SQLite 收尾（默认 JSON_KEEP 名单 / 回填哈希对账 / iam 一人一号演练）、dsh 耦合面窄端口化 + 契约测试；selftest 1467/1467。此前：2026-10-16 · v1.2.0 产品化收口——存储双后端化（ADR-0001 第一期）、README 重写、文档叙事收敛；功能层全球化三语切换（zh-CN/en-US/ja-JP）+ 语言切换双缺陷收口。完整版本史见 [CHANGELOG.md](CHANGELOG.md)。
+> 最近更新：2026-10-17 · 市场引爆 W1 批次——免登演示模式（DEMO_MODE=1：无 Bearer 注入 26 个 `.read` 白名单主体 + 写方法 405 + 前端演示会话/只读横幅/写按钮权限门控收口，`console.read` 只读基线点经 `console.login` 蕴含规则真实用户零感知）+ Docker 一键体验（`docker compose up` ≤60 秒起演示实例）+ 演示只读面路由审计脚本；selftest 1486/1486（新增演示态 20 断言）。此前：2026-10-16 · v1.3.0 整改攻坚批次——启动探针上线（双实例守卫 + 插件树体检，拒绝带病启动）、cordis 精确锁版 4.0.4 + CI 双轨、存储 SQLite 收尾（默认 JSON_KEEP 名单 / 回填哈希对账 / iam 一人一号演练）、dsh 耦合面窄端口化 + 契约测试。完整版本史见 [CHANGELOG.md](CHANGELOG.md)。

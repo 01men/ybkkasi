@@ -4,7 +4,7 @@
  * + 「运营报表」tab 保留旧资产运营页全部功能（inventory / report / benefit / retire-reasons）。
  * 数据源：GET /api/fleet/ledger（六类统一 schema，WB 实现）；旧功能继续走 /api/assets/*。
  */
-import { api } from '../api.js'
+import { api, session } from '../api.js'
 import { icon } from '../icons.js'
 import { $, esc, toast, fmtCost, fmtNum } from '../ui.js'
 import {
@@ -32,14 +32,15 @@ export async function renderAssets(content, params, ctx) {
       title: '资产台账',
       extra: 'MCP / Agent / 应用 / Skill / 模型路由 / NAS 六类资产一处盘点 · 统一归属、健康、用量与成本穿透',
       actions: `
-        <button class="btn btn-default" id="ledger-healthcheck">${icon('zap', 14)} 一键巡检</button>
-        <button class="btn btn-primary" id="ledger-register">${icon('plus', 14)} 登记资产</button>`,
+        ${/* 一键巡检是留痕写操作（POST，演示态被 405 闸门拦截）——演示访客隐藏 */ session.isDemo ? '' : `<button class="btn btn-default" id="ledger-healthcheck">${icon('zap', 14)} 一键巡检</button>`}
+        ${/* 登记资产 = 各类资产登记写入口的启动页，无任何登记写点的账号不展示 */ (session.can('agent.write') || session.can('app.write') || session.can('mcp.service.write') || session.can('nas.write') || session.can('skill.submit')) ? `<button class="btn btn-primary" id="ledger-register">${icon('plus', 14)} 登记资产</button>` : ''}`,
     })}
     <div id="asset-tabs" class="mb-14"></div>
     <div id="asset-tab-body"></div>`
 
   // 顶部动作：一键巡检（留痕审计 + toast 结果）；登记资产 → 渐进式登记页
-  $('#ledger-healthcheck').onclick = async (e) => {
+  const healthBtn = $('#ledger-healthcheck')
+  if (healthBtn) healthBtn.onclick = async (e) => {
     const btn = e.currentTarget
     btn.disabled = true
     btn.textContent = rqI18n.t('巡检中…')
@@ -53,7 +54,8 @@ export async function renderAssets(content, params, ctx) {
       btn.textContent = rqI18n.t('一键巡检')
     }
   }
-  $('#ledger-register').onclick = () => { location.hash = '#/register' }
+  const registerBtn = $('#ledger-register')
+  if (registerBtn) registerBtn.onclick = () => { location.hash = '#/register' }
 
   $('#asset-tabs').appendChild(tabRow(
     [

@@ -59,14 +59,14 @@ export async function renderApps(content, params, ctx) {
         <div class="page-sub">在 Agent 底座上扩展应用形态与访问入口；应用 → Agent → MCP/Skill 依赖一图穿透，成本链路可归集。</div>
       </div>
       <div class="page-actions">
-        <button class="btn btn-primary" id="app-add">${icon('plus', 14)}注册应用</button>
+        ${session.can('app.write') ? `<button class="btn btn-primary" id="app-add">${icon('plus', 14)}注册应用</button>` : ''}
       </div>
     </div>
     <div class="card-grid" id="app-cards"></div>`
 
   const holder = $('#app-cards')
   if (!apps.length) {
-    holder.appendChild(emptyState({ title: '还没有 AI 应用', desc: '注册第一个应用，把 Agent 编排成产品', actionText: '注册应用', onAction: () => $('#app-add').click(), icon: 'app' }))
+    holder.appendChild(emptyState({ title: '还没有 AI 应用', desc: '注册第一个应用，把 Agent 编排成产品', ...(session.can('app.write') ? { actionText: '注册应用', onAction: () => $('#app-add').click() } : {}), icon: 'app' }))
   }
   for (const app of apps) {
     const [typeLabel_, typeIcon] = APP_TYPE[app.attrs['appType']] ?? ['应用', 'app']
@@ -104,8 +104,9 @@ export async function renderApps(content, params, ctx) {
     holder.appendChild(card)
   }
 
-  $('#app-add').onclick = () => openAppCreate(data.schema, ctx)
-  if (params.get('action') === 'create') openAppCreate(data.schema, ctx)
+  const addBtn = $('#app-add')
+  if (addBtn) addBtn.onclick = () => openAppCreate(data.schema, ctx)
+  if (params.get('action') === 'create' && session.can('app.write')) openAppCreate(data.schema, ctx)
   if (params.get('focus')) void openAppDetail(params.get('focus'), ctx)
 }
 

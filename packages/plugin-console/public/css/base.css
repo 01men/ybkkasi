@@ -1377,3 +1377,18 @@ textarea.form-control { height: auto; min-height: 88px; padding: 9px 12px; resiz
   .login-hero-grid, .login-hero-strip, .login-hero-points, .login-hero-footer { display: none; }
   .login-panel { width: 100%; flex: 1; padding: 26px 20px 44px; justify-content: flex-start; }
 }
+
+/* 演示只读横幅（DEMO_MODE=1 免登演示态，2026-10-17）：顶栏下琥珀色窄条，
+   与 badge-warn 同语义色系（--warn 系 token 单源 tokens.css） */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 20px;
+  font-size: var(--fs-12);
+  color: var(--warn-strong);
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--warn-border);
+}
+.demo-banner strong { font-weight: 600; }
+.demo-banner svg { flex: none; }

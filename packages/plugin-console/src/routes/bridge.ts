@@ -37,7 +37,10 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
     }
   })
 
-  guarded('GET', '/api/platform/info', 'console.login', () => {
+  // console.read（2026-10-17）：平台信息/插件清单为纯读面，被 console.login 蕴含（真实用户零感知），
+  // 免登演示态据此可开「插件与工具」页。注意：DEMO_MODE=1 时本路由暴露实例全部只读视图，
+  // 仅应在无敏感/演示种子数据的实例上开启（见 demo-mode.ts 诚实边界）。
+  guarded('GET', '/api/platform/info', 'console.read', () => {
     const versionInfo = platformVersionInfo()
     const plugins = [
       'platform-core', 'resource-core', 'iam', 'authn', 'usage', 'audit', 'market', 'modelgw', 'mcp', 'nas', 'skillhub', 'agent', 'app', 'connect', 'update', 'console', 'panel-core', 'dingtalk-bridge',
@@ -94,7 +97,8 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
     return args
   }
 
-  guarded('GET', '/api/tools/schemas', 'console.login', () => ({
+  // console.read（2026-10-17，同 /api/platform/info 口径：纯读目录，演示态可读）
+  guarded('GET', '/api/tools/schemas', 'console.read', () => ({
     tools: ctx.tools.schemas().map((tool) => ({ name: tool.name, description: tool.description, permission: tool.permission, parameters: tool.parameters })),
   }))
 

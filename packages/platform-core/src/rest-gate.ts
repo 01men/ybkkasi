@@ -50,12 +50,30 @@ export interface RestGate {
   actorOf(exchange: HttpExchange): string
 }
 
+/**
+ * 权限点蕴含表（2026-10-17 演示模式批次）：键为业务点，值为蕴含它的基线点——
+ * 持有基线点即视为持有业务点。
+ *
+ *   console.read（控制台只读基线：工作台聚合/通知/平台信息/工具目录/最近调用）
+ *     ← console.login（登录会话基线，所有可登录角色必持）
+ *
+ * 动机：这批纯读路由此前声明 console.login，「登录会话」语义与「可读工作台」
+ * 并不精确对齐，且免登演示态（DEMO_MODE=1，见 plugin-console demo-mode.ts）
+ * 的只读白名单不含登录级点，访客打不开工作台首屏。路由改声明 console.read 后，
+ * 判定面补本蕴含规则，存量真实用户令牌（只签了 console.login，含升级前签发的旧令牌）
+ * 无需重签即零感知通过——带 Bearer 的请求行为完全不变。
+ * 前端 session.can()（plugin-console/public/js/api.js）有同款镜像规则，两处须同步改。
+ */
+const IMPLIED_POINTS: Record<string, string> = { 'console.read': 'console.login' }
+
 export function createRestGate(ctx: RestGateHost): RestGate {
   const caller = (exchange: HttpExchange): CallerInfo => exchange.principal as CallerInfo
 
   const requirePermission = (exchange: HttpExchange, point: string): boolean => {
     const info = caller(exchange)
-    if (info.permissions.includes('*') || info.permissions.includes(point)) return true
+    const impliedBy = IMPLIED_POINTS[point]
+    if (info.permissions.includes('*') || info.permissions.includes(point)
+      || (impliedBy !== undefined && info.permissions.includes(impliedBy))) return true
     ctx.platformBus.emit('audit.authz.denied', {
       actorId: info.userId ?? info.principalId,
       actorName: info.name,

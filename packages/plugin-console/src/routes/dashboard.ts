@@ -14,7 +14,9 @@ import type { ConsoleRouteDeps } from './deps.ts'
 export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { guarded, body, changeLog, caller } = deps
   // -- 总览（工作台）-------------------------------------------------------
-  guarded('GET', '/api/overview', 'console.login', () => {
+  // console.read（控制台只读基线，被 console.login 蕴含——真实用户零感知）：
+  // 纯聚合读接口用「登录会话」点声明语义不准，且免登演示态白名单不含登录级点（2026-10-17）
+  guarded('GET', '/api/overview', 'console.read', () => {
     const pendingApprovals = ctx.audit.approvals().find((item) => item.status === 'pending')
     const unreadAlerts = ctx.audit.alerts().find((item) => !item.read)
     const recentEvents = ctx.platformBus.recent(20).map((event) => ({
@@ -150,7 +152,8 @@ export function registerDashboardRoutes(ctx: Context, deps: ConsoleRouteDeps): v
     } catch { /* 通知落库失败不阻塞事件链 */ }
   })
 
-  guarded('GET', '/api/notifications', 'console.login', (exchange) => {
+  // console.read（2026-10-17，同 /api/overview 口径：纯读，演示态可读）
+  guarded('GET', '/api/notifications', 'console.read', (exchange) => {
     const info = caller(exchange)
     if (!info.userId) return { items: [], unread: 0, readCursor: null, note: t('机器主体无个人通知面（v1 口径）') }
     const since = exchange.query.get('since') ?? ''

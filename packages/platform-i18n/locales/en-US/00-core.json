@@ -19,5 +19,6 @@
   "下架": "Delist",
   "吊销": "Revoke",
   "审批通过": "Approved",
-  "审批驳回": "Rejected"
+  "审批驳回": "Rejected",
+  "演示模式为只读，不支持写操作。请自行部署后体验完整功能。": "Demo mode is read-only and does not accept write operations. Deploy your own instance to experience the full product."
 }

@@ -15,6 +15,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange, Collection, RecordBase, CallerInfo } from '../../platform-core/src/index.ts'
 import { createRestGate } from '../../platform-core/src/index.ts'
 import { createPluginContext, newId, platformVersionInfo, PlatformEvents } from '../../platform-core/src/index.ts'
+import { demoPrincipal, isDemoMode, DEMO_PRINCIPAL_ID, DEMO_READONLY_PERMISSIONS, READONLY_METHODS } from './demo-mode.ts'
 import { PermissionCatalog, type UserManageActor } from '../../plugin-iam/src/index.ts'
 import { ProviderAuthError } from '../../plugin-iam/src/providers.ts'
 import { normalizeLocale, readCatalogDir, DEFAULT_LOCALE, t } from '../../platform-i18n/src/index.ts'
@@ -82,6 +83,9 @@ export const PUBLIC_PATHS = new Set([
   '/api/panel/auth/refresh',
   // 首启 bootstrap 提示（M2）：登录页「初始口令待接管」横幅数据源；只回一个布尔（见 routes/platform.ts 泄露评估）
   '/api/platform/bootstrap',
+  // 演示态标记（DEMO_MODE=1，公开只回一个布尔 + 访客名）：前端据此显示「演示模式·只读」横幅
+  // 并隐藏写操作按钮。不泄露任何业务数据——主体信息与 demo-mode.ts 常量一致。
+  '/api/platform/demo',
 ])
 
 /** 动态路径的公开前缀（OIDC 授权页查询：仅回显客户端名/scope，不泄露 redirect_uri）。
@@ -129,6 +133,7 @@ function maskServiceHeaders<T extends { headers?: Record<string, string> }>(serv
 /** NAS 资产回显时脱敏网关访问令牌（存储保留原文，仅展示层掩码）。 */
 export function apply(ctx: Context) {
   const http = ctx.httpServer
+  const demo = isDemoMode()
 
   // -- 鉴权中间件 ---------------------------------------------------------
   http.use((exchange) => {
@@ -139,6 +144,21 @@ export function apply(ctx: Context) {
     const signedLinkDownload = nasFileStream && Boolean(exchange.query.get('sig'))
     if (!exchange.path.startsWith('/api/') || PUBLIC_PATHS.has(exchange.path) || PUBLIC_PATH_PREFIXES.some((prefix) => exchange.path.startsWith(prefix)) || ticketDownload || signedLinkDownload) return
     const header = String(exchange.headers['authorization'] ?? '')
+
+    // 演示只读态（DEMO_MODE=1）：无 Bearer 时注入固定只读主体。
+    // 权限集为白名单 `.read` 枚举（见 demo-mode.ts），后续每个 guarded 路由的
+    // requirePermission 照常生效——写类路由自然 403，此处不另建拦截层。
+    if (!header && demo) {
+      // 纵深防御：写方法入口即拒。覆盖「路由漏声明权限点」这类遗漏面（第一道闸是权限集无写点）。
+      if (!READONLY_METHODS.has(exchange.method.toUpperCase())) {
+        exchange.fail(405, 'DEMO_READONLY', t('演示模式为只读，不支持写操作。请自行部署后体验完整功能。'))
+        return true
+      }
+      const principal = demoPrincipal()
+      exchange.principal = { ...principal, permissions: [...principal.permissions] } as unknown as CallerInfo
+      return
+    }
+
     if (!header.startsWith('Bearer ')) {
       exchange.fail(401, 'UNAUTHORIZED', t('缺少 Bearer 令牌，请先登录'))
       return true
@@ -247,6 +267,20 @@ export function apply(ctx: Context) {
 
   // -- 平台级路由（M2 筑基）：routes/platform.ts（首启 bootstrap 状态） ------
   registerPlatformRoutes(ctx, { http })
+
+  // -- 演示态标记（DEMO_MODE=1）--------------------------------------------
+  // 只回模式开关 + 访客名 + 只读权限清单：前端据此显示「演示模式·只读」横幅并隐藏写操作。
+  // 非演示态返回 { demo: false }，前端按正常登录态走——同一份前端代码兼容两种形态。
+  http.register('GET', '/api/platform/demo', (exchange) => {
+    exchange.ok({
+      demo,
+      ...(demo ? {
+        principalId: DEMO_PRINCIPAL_ID,
+        name: demoPrincipal().name,
+        readonlyPermissions: [...DEMO_READONLY_PERMISSIONS],
+      } : {}),
+    })
+  }, { access: 'public' })
 
   // -- 静态 SPA -----------------------------------------------------------
   const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'public')

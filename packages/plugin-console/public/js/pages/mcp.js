@@ -35,8 +35,8 @@ export async function renderMcp(content, params, ctx) {
         <div class="page-sub">工具的供给链路：注册登记 → 安全审核 → 测试验证 → 灰度发布 → 运行监控。网关统一鉴权、限流熔断。</div>
       </div>
       <div class="page-actions">
-        <button class="btn btn-default" id="mcp-permgroups">${icon('shield', 14)}权限组管理</button>
-        <button class="btn btn-primary" id="mcp-deploy-wizard">${icon('plus', 14)}接入 MCP 服务</button>
+        ${session.can('mcp.permgroup.write') ? `<button class="btn btn-default" id="mcp-permgroups">${icon('shield', 14)}权限组管理</button>` : ''}
+        ${session.can('mcp.service.write') ? `<button class="btn btn-primary" id="mcp-deploy-wizard">${icon('plus', 14)}接入 MCP 服务</button>` : ''}
       </div>
     </div>
 
@@ -52,7 +52,7 @@ export async function renderMcp(content, params, ctx) {
 
   const cards = $('#mcp-cards')
   if (!services.length) {
-    cards.appendChild(emptyState({ title: '还没有 MCP 服务', desc: '接入第一个 MCP 服务，为 Agent 提供工具能力', actionText: '接入 MCP 服务', onAction: () => $('#mcp-deploy-wizard').click() }))
+    cards.appendChild(emptyState({ title: '还没有 MCP 服务', desc: '接入第一个 MCP 服务，为 Agent 提供工具能力', ...(session.can('mcp.service.write') ? { actionText: '接入 MCP 服务', onAction: () => $('#mcp-deploy-wizard').click() } : {}) }))
   }
   for (const svc of services) {
     const [bg, color] = ICON_COLORS[svc.icon] ?? ICON_COLORS.mcp
@@ -84,8 +84,10 @@ export async function renderMcp(content, params, ctx) {
     cards.appendChild(card)
   }
 
-  $('#mcp-deploy-wizard').onclick = () => openDeployWizard(ctx)
-  $('#mcp-permgroups').onclick = () => openPermGroups(ctx)
+  const deployBtn = $('#mcp-deploy-wizard')
+  if (deployBtn) deployBtn.onclick = () => openDeployWizard(ctx)
+  const permBtn = $('#mcp-permgroups')
+  if (permBtn) permBtn.onclick = () => openPermGroups(ctx)
 
   if (params.get('action') === 'deploy') openDeployWizard(ctx)
   if (params.get('focus')) void openServiceDetail(params.get('focus'), ctx)

@@ -133,8 +133,9 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   /**
    * 最近调用（WP-04/A3 全员工作台）：当前登录人自身的计量事件 ≤5，只读自见（不做跨人透视）。
    * 管理口径仍走 /api/usage/events（usage.read）。
+   * console.read（2026-10-17）：纯读自见接口，被 console.login 蕴含（真实用户零感知），演示态可读。
    */
-  guarded('GET', '/api/usage/recent', 'console.login', (exchange) => {
+  guarded('GET', '/api/usage/recent', 'console.read', (exchange) => {
     const info = caller(exchange)
     if (!info.userId) return { items: [] }
     const limit = Math.min(Number(exchange.query.get('limit') ?? 5) || 5, 20)

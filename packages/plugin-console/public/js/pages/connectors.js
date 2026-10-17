@@ -6,7 +6,7 @@
  * 桥接过渡：经 POST /api/mcp/import 纳入的 open-connector MCP 服务在 #/mcp 打「桥接」徽章。
  * 空白态均提供上手指引（三步接入 / 三形态连接 / 权限组模型），并修复与 ui.js 组件库的 API 对齐。
  */
-import { api } from '../api.js'
+import { api, session } from '../api.js'
 import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
 import {
@@ -100,9 +100,9 @@ export async function renderConnectors(content, params, ctx) {
     }
     host.insertAdjacentHTML('beforeend', `
       <button class="btn btn-default" id="cn-guide-btn">${icon('book', 14)}接入指引</button>
-      <button class="btn btn-default" id="cn-gateway">${icon('settings', 14)}网关设置</button>`)
+      ${session.can('connector.gateway.write') ? `<button class="btn btn-default" id="cn-gateway">${icon('settings', 14)}网关设置</button>` : ''}`)
     $('#cn-guide-btn').addEventListener('click', () => guideDrawer())
-    $('#cn-gateway').addEventListener('click', () => gatewayDrawer())
+    $('#cn-gateway')?.addEventListener('click', () => gatewayDrawer())
   }
 
   // -- 网关设置抽屉 ------------------------------------------------------------
@@ -285,12 +285,12 @@ export async function renderConnectors(content, params, ctx) {
               title: '配置网关并探活',
               done: configured,
               desc: '在 open-connector 侧设好 <code>ENCRYPTION_KEY</code> / <code>ADMIN_TOKEN</code>，再于「网关设置」填写 sidecar 地址（如 <code>http://open-connector:3000</code>）保存探活。',
-              actions: [{ label: '打开网关设置', primary: true, onClick: () => gatewayDrawer() }],
+              actions: session.can('connector.gateway.write') ? [{ label: '打开网关设置', primary: true, onClick: () => gatewayDrawer() }] : [],
             },
             {
               title: '同步目录',
               desc: '探活通过后一键拉取 Provider 与 Action 目录（含风险级、入参 schema、agent.md 连接指南），支持关键词检索。',
-              actions: [{ label: '同步目录', primary: configured, onClick: () => syncCatalog() }],
+              actions: session.can('connector.connection.write') ? [{ label: '同步目录', primary: configured, onClick: () => syncCatalog() }] : [],
             },
             {
               title: '建连接 · 发权限',
@@ -750,7 +750,7 @@ export async function renderConnectors(content, params, ctx) {
         badge: '<span class="badge badge-warn no-dot">未就绪</span>',
         desc: '运行日志需要 <code>connector.runs.read</code> 权限点与健康的网关连接。完成网关接入并产生真实调用后，这里会逐条展示每次 Action 调用（runId / Provider / 结果 / 令牌引用），并支持台账核对与计量对账。',
         steps: [
-          { title: '接入网关', desc: '参考「目录」页签的三步指引完成网关配置与目录同步。', actions: [{ label: '打开网关设置', primary: true, onClick: () => gatewayDrawer() }] },
+          { title: '接入网关', desc: '参考「目录」页签的三步指引完成网关配置与目录同步。', ...(session.can('connector.gateway.write') ? { actions: [{ label: '打开网关设置', primary: true, onClick: () => gatewayDrawer() }] } : {}) },
           { title: '产生调用', desc: 'Agent 携 oct_ 令牌经网关调用 Action 后，运行记录即出现在此处。' },
           { title: '对账审计', desc: '点上方「oct_ 台账」核对令牌镜像；「运行对账」逐条核对网关记录 ↔ 平台计量流水，bypass 即旁路调用。' },
         ],

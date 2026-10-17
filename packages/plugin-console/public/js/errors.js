@@ -103,6 +103,15 @@ const COPY = {
     message: '当前账号缺少执行此操作所需的权限点。如需办理，请联系管理员调整角色授权。',
     action: null,
   },
+  // 演示只读闸门（2026-10-17 演示模式批次）：DEMO_MODE=1 实例的写方法入口 405。
+  // 正常浏览时写按钮已按权限隐藏，本码仅在直调 API 等旁路触达——文案与
+  // platform-i18n 服务端词条同句（en/ja 词典复用同一键，不双源）。
+  DEMO_READONLY: {
+    tone: 'warn',
+    title: '演示模式 · 只读',
+    message: '演示模式为只读，不支持写操作。请自行部署后体验完整功能。',
+    action: null,
+  },
   NOT_FOUND: {
     tone: 'warn',
     title: '找不到目标资源或页面',

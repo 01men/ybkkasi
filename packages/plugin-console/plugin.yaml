@@ -8,3 +8,4 @@ provides:
     []
 permissions:
   - console.login
+  - console.read

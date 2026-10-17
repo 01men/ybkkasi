@@ -1084,5 +1084,9 @@
   "我已保存凭证并已把指引发给 Agent，关闭": "I have saved the credential and sent the guide to my Agent — close",
   "{metric}：{base} → {target}{unit}": "{metric}: {base} → {target}{unit}",
   "严重告警 {a} · MCP 熔断 {b}": "Critical alerts {a} · MCP broken {b}",
-  "意见：{opinion}": "Opinion: {opinion}"
+  "意见：{opinion}": "Opinion: {opinion}",
+  "演示模式 · 只读": "Demo mode · read-only",
+  "写操作已禁用；自行部署后可体验完整功能（创建/审批/执行）。": "Write operations are disabled. Deploy your own instance to experience the full product (create / approve / execute).",
+  "退出演示": "Exit demo",
+  "演示访客": "Demo visitor"
 }

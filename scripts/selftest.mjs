@@ -1209,7 +1209,11 @@ try {
     check('矩阵：普通成员账号就绪', memberLogin.ok, JSON.stringify(memberLogin.error))
     const member = memberLogin.data.token
     const memberPerms = memberLogin.data.user.permissions
-    const denied = matrix.data.guarded.filter((route) => !route.permission.split(',').some((point) => memberPerms.includes(point)))
+    // 期望推导的蕴含镜像（与 rest-gate IMPLIED_POINTS 同步改）：member 持 console.login
+    // 即视为持 console.read——否则 5 个 console.read 纯读路由会被误判为「应对成员 403」
+    const memberHas = (point) => memberPerms.includes(point)
+      || (point === 'console.read' && memberPerms.includes('console.login'))
+    const denied = matrix.data.guarded.filter((route) => !route.permission.split(',').some(memberHas))
     let rejectedCount = 0
     const leaked = []
     for (const route of denied) {
@@ -7485,6 +7489,113 @@ try {
     check('请求级协商：?lang=en-US 鉴权 401 文案切英文，默认 zh 逐字节不变',
       probe401En.error?.code === 'UNAUTHORIZED' && probe401En.error?.message === 'Missing Bearer token. Please sign in first.'
       && probe401Zh.error?.code === 'UNAUTHORIZED' && probe401Zh.error?.message === '缺少 Bearer 令牌，请先登录')
+  }
+
+  // ================================================================ 演示只读态（DEMO_MODE=1，2026-10-17 批次）
+  // 三道防线各有断言：① 白名单无写点（静态）② 写方法入口 405（运行时）③ 默认关闭（主实例回归）。
+  // 另锁死本批次缺陷修复：console.read 五个纯读路由匿名 200（改前 /api/overview 声明
+  // console.login → 演示访客打不开工作台首屏）。
+  section('演示只读态（DEMO_MODE=1：免登只读 / 写方法 405 / Bearer 行为不变）')
+  {
+    // -- 静态面：白名单卫生 + fail-closed 语义（不依赖任何实例） ----------------
+    const demoModule = await import('../packages/plugin-console/src/demo-mode.ts')
+    check('演示白名单无写点泄漏（findWritePermissionLeaks 为空数组）',
+      Array.isArray(demoModule.findWritePermissionLeaks()) && demoModule.findWritePermissionLeaks().length === 0,
+      JSON.stringify(demoModule.findWritePermissionLeaks()))
+    check('演示白名单含控制台只读基线 console.read（工作台首屏声明点）',
+      demoModule.DEMO_READONLY_PERMISSIONS.includes('console.read'))
+    check('DEMO_MODE fail-closed：仅严格取值 \'1\' 启用（true/yes/on/缺省 均不启用）',
+      demoModule.isDemoMode({}) === false
+      && demoModule.isDemoMode({ DEMO_MODE: 'true' }) === false
+      && demoModule.isDemoMode({ DEMO_MODE: 'yes' }) === false
+      && demoModule.isDemoMode({ DEMO_MODE: '1' }) === true)
+    const routeAudit = spawn(process.execPath, ['scripts/demo-route-audit.mjs'], { stdio: 'pipe' })
+    const routeAuditCode = await new Promise((resolve) => routeAudit.on('close', resolve))
+    check('演示只读面路由审计：GET/HEAD 声明点与白名单差集无缺口（demo-route-audit 零退出）', routeAuditCode === 0)
+
+    // -- 非演示态回归（主实例未设 DEMO_MODE）：行为与改动前一致 ------------------
+    const demoFlagOff = await api('GET', '/api/platform/demo')
+    check('非演示态：/api/platform/demo 恒 {demo:false}（不含主体/权限任何字段）',
+      demoFlagOff.ok === true && demoFlagOff.data?.demo === false && Object.keys(demoFlagOff.data ?? {}).length === 1,
+      JSON.stringify(demoFlagOff.data ?? demoFlagOff.error).slice(0, 160))
+    const anonOverviewOff = await api('GET', '/api/overview')
+    check('非演示态：匿名 /api/overview 仍 401（默认关闭，不引入新鉴权面）', anonOverviewOff.status === 401)
+
+    // -- 演示态运行时（独立实例：DEMO_MODE=1 + DEMO_SEED=1，隔离数据目录与端口） --
+    const DEMO_PORT = 7319
+    const DEMO_BASE = `http://127.0.0.1:${DEMO_PORT}`
+    const demoDataDir = join(process.cwd(), 'data-selftest-demo')
+    await rm(demoDataDir, { recursive: true, force: true })
+    await mkdir(demoDataDir, { recursive: true })
+    const demoProc = spawn(process.execPath, ['src/main.ts', '--port', String(DEMO_PORT), '--data', demoDataDir], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: {
+        ...process.env,
+        DEMO_MODE: '1',
+        DEMO_SEED: '1',
+        OOMOL_CONNECT_ENCRYPTION_KEY: 'selftest-encryption-key-not-a-secret',
+        OOMOL_CONNECT_ADMIN_TOKEN: OC_TOKEN,
+        OOMOL_CONNECT_STUB_URL: OC_BASE,
+        OOMOL_CONNECT_DEMO_SEED: '1',
+        DSH_UPDATE_RAW_BASE: `http://127.0.0.1:${GH_PORT}`,
+        DSH_UPDATE_API_BASE: `http://127.0.0.1:${GH_PORT}`,
+        DSH_UPDATE_AUTO_CHECK: 'off',
+        EXEC_HUB_TICK_MS: '600000',
+        EXEC_HUB_FIRST_TICK_MS: '600000',
+      },
+    })
+    let demoBooted = false
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      try {
+        if ((await fetch(`${DEMO_BASE}/api/health`)).ok) { demoBooted = true; break }
+      } catch { /* retry */ }
+    }
+    check('演示实例启动（DEMO_MODE=1 + DEMO_SEED=1，隔离实例）', demoBooted)
+    if (demoBooted) {
+      const demoApi = async (method, path, { token, body } = {}) => {
+        const headers = { 'content-type': 'application/json' }
+        if (token) headers.authorization = `Bearer ${token}`
+        const res = await fetch(`${DEMO_BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+        return { status: res.status, json: await res.json().catch(() => null) }
+      }
+      const demoFlag = await demoApi('GET', '/api/platform/demo')
+      check('演示态标记端点（公开）：{demo:true, principalId, name, readonlyPermissions[]}',
+        demoFlag.status === 200 && demoFlag.json?.data?.demo === true && demoFlag.json.data?.principalId === 'demo-visitor'
+        && typeof demoFlag.json.data?.name === 'string' && Array.isArray(demoFlag.json.data?.readonlyPermissions)
+        && demoFlag.json.data.readonlyPermissions.length > 0,
+        JSON.stringify(demoFlag.json?.data ?? demoFlag.json).slice(0, 160))
+      check('演示态下发权限面与代码白名单逐项一致（防端点回显与常量双源漂移）',
+        JSON.stringify([...(demoFlag.json?.data?.readonlyPermissions ?? [])].sort())
+          === JSON.stringify([...demoModule.DEMO_READONLY_PERMISSIONS].sort()))
+      // 本批次缺陷修复锁死：console.read 五路纯读路由匿名 200（验收：工作台首屏 0 个 403）
+      for (const path of ['/api/overview', '/api/notifications', '/api/platform/info', '/api/tools/schemas', '/api/usage/recent']) {
+        const res = await demoApi('GET', path)
+        check(`演示态匿名 GET ${path} → 200（只读基线可达）`, res.status === 200, `status=${res.status}`)
+      }
+      // 第一道闸（权限集只含 .read）：挂写语义点的 GET 路由 403
+      const demoPanelOrgs = await demoApi('GET', '/api/panel/orgs')
+      check('演示态写语义点路由 403（GET /api/panel/orgs → panel.config.write）', demoPanelOrgs.status === 403, `status=${demoPanelOrgs.status}`)
+      // 第二道闸（写方法入口即拒）：匿名 POST 一律 405 DEMO_READONLY
+      const demoAnonPost = await demoApi('POST', '/api/exec/goals', { body: { name: '演示拒绝写入' } })
+      check('演示态匿名写请求 405 DEMO_READONLY（纵深防御第二道闸）',
+        demoAnonPost.status === 405 && demoAnonPost.json?.error?.code === 'DEMO_READONLY',
+        JSON.stringify(demoAnonPost.json?.error ?? {}).slice(0, 160))
+      // Bearer 路径完全不变：真实登录在演示实例照常可用，写操作对真实用户照常放行
+      const demoLogin = await demoApi('POST', '/api/auth/login', { body: { username: 'admin', password: 'Ybk@2026' } })
+      check('演示态：登录端点照常可用（PUBLIC_PATHS 先于演示分支，访客仍可注册登录）',
+        demoLogin.status === 200 && typeof demoLogin.json?.data?.token === 'string', `status=${demoLogin.status}`)
+      const demoToken = demoLogin.json?.data?.token ?? ''
+      const demoBearerOverview = await demoApi('GET', '/api/overview', { token: demoToken })
+      check('演示态：带 Bearer 的真实用户照常读工作台（真登录路径不受演示分支影响）',
+        demoBearerOverview.status === 200, `status=${demoBearerOverview.status}`)
+      const demoBearerWrite = await demoApi('POST', '/api/notifications/read-cursor', { token: demoToken, body: {} })
+      check('演示态：带 Bearer 的真实用户照常执行写操作（不经 405 闸门）',
+        demoBearerWrite.status === 200, `status=${demoBearerWrite.status}`)
+    }
+    demoProc.kill('SIGTERM')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await rm(demoDataDir, { recursive: true, force: true }).catch(() => {})
   }
 
   section('凭证零进平台（红线一 · T-24 全目录扫描）')

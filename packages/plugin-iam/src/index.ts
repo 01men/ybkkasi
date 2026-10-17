@@ -226,6 +226,11 @@ const AUTO_SYNC_MIN_INTERVAL_MINUTES = 5
 
 export const PermissionCatalog: Array<{ point: string; label: string; group: string }> = [
   { point: 'console.login', label: '登录控制台', group: '基础' },
+  // 控制台只读基线（2026-10-17 演示模式批次）：工作台聚合/通知/平台信息/工具目录/最近调用
+  // 五个纯读路由的声明点。被 console.login 蕴含（判定面规则见 platform-core rest-gate.ts
+  // IMPLIED_POINTS），任何可登录角色无需显式授予即通过；单独授予本点不构成登录能力。
+  // 免登演示态的只读白名单收录本点（访客可读工作台，拿不到 console.login 本身）。
+  { point: 'console.read', label: '控制台只读（工作台/通知/平台信息/工具目录）', group: '基础' },
   { point: 'iam.org.read', label: '查看组织', group: '组织账号' },
   { point: 'iam.org.write', label: '管理组织', group: '组织账号' },
   { point: 'iam.user.read', label: '查看账号', group: '组织账号' },

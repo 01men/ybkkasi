@@ -26,10 +26,10 @@ export async function renderAuthn(content, params, ctx) {
         <div class="page-sub">人与机器双轨身份；令牌统一签发 / 校验 / 吊销，密钥 KMS 托管，支持轮换。外部应用经 OIDC 协议接入（RS256 / JWKS）。</div>
       </div>
       <div class="page-actions">
-        <button class="btn btn-default" id="authn-rotate">${icon('refresh', 14)}轮换签名密钥</button>
+        ${session.can('authn.token.revoke') ? `<button class="btn btn-default" id="authn-rotate">${icon('refresh', 14)}轮换签名密钥</button>` : ''}
         ${canOidcWrite ? `<button class="btn btn-default" id="oidc-keys-rotate">${icon('shield', 14)}轮换 OIDC 签名密钥</button>` : ''}
         ${canOidcWrite ? `<button class="btn btn-default" id="oidc-client-add">${icon('plug', 14)}登记 OIDC 客户端</button>` : ''}
-        <button class="btn btn-primary" id="authn-credential">${icon('key', 14)}签发机器凭证</button>
+        ${canPrincipalWrite ? `<button class="btn btn-primary" id="authn-credential">${icon('key', 14)}签发机器凭证</button>` : ''}
       </div>
     </div>
 
@@ -149,7 +149,8 @@ export async function renderAuthn(content, params, ctx) {
   }
   renderTab('principals')
 
-  $('#authn-credential').onclick = async () => {
+  const credentialBtn = $('#authn-credential')
+  if (credentialBtn) credentialBtn.onclick = async () => {
     // 已注册的可绑定主体：选择后自动回填 refType/refId（凭据与资源真正关联），外部系统仍可手填
     let bindable, authz
     try {
@@ -230,7 +231,8 @@ client_secret: ${esc(result.clientSecret)}</div>
     }
   }
 
-  $('#authn-rotate').onclick = async () => {
+  const rotateBtn = $('#authn-rotate')
+  if (rotateBtn) rotateBtn.onclick = async () => {
     const result = await confirmDialog({
       title: '轮换签名密钥', danger: true, confirmText: '确认轮换',
       message: '轮换后 <b>全部存量令牌立即失效</b>（宽限期机制生产环境可配）。确定继续？',
@@ -313,7 +315,7 @@ client_secret: ${esc(result.clientSecret)}</div>
     }
   }
 
-  if (params.get('action') === 'credential') $('#authn-credential').click()
+  if (params.get('action') === 'credential' && canPrincipalWrite) $('#authn-credential').click()
 
   // ---- 机器授权选择器（签发 / 编辑弹窗共用）：'*' 全部权限 + 机器角色多选 + 附加权限点分组多选 ----
   async function fetchAuthzOptions() {

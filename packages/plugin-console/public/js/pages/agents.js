@@ -49,7 +49,7 @@ export async function renderAgents(content, params, ctx) {
           <span class="segmented-item active" data-v="card">${icon('app', 14)}卡片</span>
           <span class="segmented-item" data-v="table">${icon('scroll', 14)}表格</span>
         </div>
-        <button class="btn btn-primary" id="agent-add">${icon('plus', 14)}注册 Agent</button>
+        ${session.can('agent.write') ? `<button class="btn btn-primary" id="agent-add">${icon('plus', 14)}注册 Agent</button>` : ''}
       </div>
     </div>
     <div class="filter-bar">
@@ -77,7 +77,7 @@ export async function renderAgents(content, params, ctx) {
     const holder = $('#agent-list')
     holder.innerHTML = ''
     if (!list.length) {
-      holder.appendChild(emptyState({ title: '没有匹配的 Agent', desc: '调整筛选条件，或注册你的第一个 Agent', actionText: '注册 Agent', onAction: () => $('#agent-add').click(), icon: 'bot' }))
+      holder.appendChild(emptyState({ title: '没有匹配的 Agent', desc: '调整筛选条件，或注册你的第一个 Agent', ...(session.can('agent.write') ? { actionText: '注册 Agent', onAction: () => $('#agent-add').click() } : {}), icon: 'bot' }))
       return
     }
     if (view === 'card') {
@@ -150,9 +150,10 @@ export async function renderAgents(content, params, ctx) {
       refresh()
     }
   })
-  $('#agent-add').onclick = () => openAgentCreate(schema, ctx)
+  const addBtn = $('#agent-add')
+  if (addBtn) addBtn.onclick = () => openAgentCreate(schema, ctx)
   refresh()
-  if (params.get('action') === 'create') openAgentCreate(schema, ctx)
+  if (params.get('action') === 'create' && session.can('agent.write')) openAgentCreate(schema, ctx)
   if (params.get('focus')) void openAgentDetail(params.get('focus'), ctx)
 }
 

@@ -29,8 +29,8 @@ export async function renderNas(content, params, ctx) {
         <div class="page-sub">FS 文件存储类资产：经 MCP 文件网关（地址 + Bearer 令牌 + X-NAS-IP 路由头）统一纳管，探活 → 上线 → 工具发现，文件操作全程审计留痕。</div>
       </div>
       <div class="page-actions">
-        <button class="btn btn-default" id="nas-import">${icon('plug', 14)}导入 mcpServers JSON</button>
-        <button class="btn btn-primary" id="nas-create">${icon('plus', 14)}新建 NAS 资产</button>
+        ${session.can('nas.write') ? `<button class="btn btn-default" id="nas-import">${icon('plug', 14)}导入 mcpServers JSON</button>` : ''}
+        ${session.can('nas.write') ? `<button class="btn btn-primary" id="nas-create">${icon('plus', 14)}新建 NAS 资产</button>` : ''}
       </div>
     </div>
     <div class="filter-bar">
@@ -53,8 +53,7 @@ export async function renderNas(content, params, ctx) {
       holder.appendChild(emptyState({
         title: '还没有 NAS 资产',
         desc: '新建资产或粘贴 mcpServers JSON 一键纳管，网关可达即可上线并发现文件工具',
-        actionText: '新建 NAS 资产',
-        onAction: () => $('#nas-create').click(),
+        ...(session.can('nas.write') ? { actionText: '新建 NAS 资产', onAction: () => $('#nas-create').click() } : {}),
         icon: 'server',
       }))
       return
@@ -87,8 +86,10 @@ export async function renderNas(content, params, ctx) {
       void refresh()
     }
   })
-  $('#nas-create').onclick = () => openNasCreate(schema, ctx)
-  $('#nas-import').onclick = () => openNasImport(ctx)
+  const createBtn = $('#nas-create')
+  if (createBtn) createBtn.onclick = () => openNasCreate(schema, ctx)
+  const importBtn = $('#nas-import')
+  if (importBtn) importBtn.onclick = () => openNasImport(ctx)
 
   renderList(data.items)
   if (params.get('action') === 'create') openNasCreate(schema, ctx)

@@ -1,6 +1,6 @@
 /** 应用外壳：路由 + 布局 + 侧边栏 + 顶栏 + ⌘K 命令面板。 */
 import { icon } from './icons.js'
-import { session, api, exchangeBridgeSession, BASE, IS_LOCAL_HOST, CONNECTION_NAME } from './api.js'
+import { session, api, exchangeBridgeSession, demoStatus, BASE, IS_LOCAL_HOST, CONNECTION_NAME } from './api.js'
 import { $, $$, h, toast, esc } from './ui.js'
 import { openCmdk } from './cmdk.js'
 import { replayPlatformTheme, PLATFORM_KEY } from './platform.js'
@@ -111,13 +111,22 @@ function navigate() {
   // 产品首页（公共营销页，#/home）：免会话可浏览；未登录裸落地（'' | '#/' | '#/dashboard'）
   // 也落首页——先让产品展示全貌，登录从导航/CTA 进入（不再直接整登录页）。
   // 例外：带 ?ticket= 的一键免登入口仍直落登录页（票据由登录页消费，落在营销页会静默丢票）。
+  // 演示态（DEMO_MODE=1 免登只读会话）例外：裸落地直接进控制台——访客要的就是产品本体，
+  // 营销首页仍可经 #/home 显式到达。
   const hasTicket = new URLSearchParams(location.search).has('ticket')
-  if (page === 'home' || (!session.token && !hasTicket && isBareLanding(location.hash))) {
+  if (page === 'home' || (!session.token && !session.isDemo && !hasTicket && isBareLanding(location.hash))) {
     renderHome(app)
     return
   }
 
-  if (!session.token) {
+  // 显式 #/login 深链（含营销首页「登录」CTA）在演示态同样放行——访客可随时转真实登录
+  // （演示实例上用演示账号登录即得完整功能），这是演示会话唯一不接管的路由。
+  if (page === 'login' && !session.token) {
+    renderLogin(app)
+    return
+  }
+
+  if (!session.token && !session.isDemo) {
     // 宿主连接页会话前置（docs/frontend-host-switching.md）：登录前就要能换目标宿主，
     // 以极简独立形态渲染（不走控制台外壳）；有会话时走下方 builders 在外壳内渲染。
     if (page === 'connections') {
@@ -187,6 +196,7 @@ function renderShell(page, params, builder) {
             <div class="avatar" id="avatar" title="${esc(session.user?.displayName ?? '')}">${esc((session.user?.displayName ?? '?').slice(0, 1))}</div>
           </div>
         </header>
+        ${session.isDemo ? `<div class="demo-banner" id="demo-banner" role="status">${icon('eye', 14)}<strong>${esc(rqI18n.t('演示模式 · 只读'))}</strong><span>${esc(rqI18n.t('写操作已禁用；自行部署后可体验完整功能（创建/审批/执行）。'))}</span></div>` : ''}
         <main class="content" id="page-content"></main>
       </div>
     </div>`
@@ -226,9 +236,16 @@ function renderShell(page, params, builder) {
         <div class="fs-13 ellipsis" style="font-weight:600">${esc(session.user?.displayName ?? '')}</div>
         <div class="fs-11 ellipsis" style="color:var(--text-3)">${esc(session.user?.roles?.[0] ?? '成员')}</div>
       </div>
-      <button class="icon-btn" id="btn-logout" title="退出登录" style="width:28px;height:28px">${icon('logout', 15)}</button>
+      <button class="icon-btn" id="btn-logout" title="${esc(session.isDemo ? rqI18n.t('退出演示') : rqI18n.t('退出登录'))}" style="width:28px;height:28px">${icon(session.isDemo ? 'x' : 'logout', 15)}</button>
     </div>`
   $('#btn-logout').onclick = async () => {
+    // 演示会话：内存态身份，退出即清（无服务端会话可注销；回营销首页继续浏览）
+    if (session.isDemo) {
+      session.exitDemo()
+      location.hash = '#/home'
+      navigate()
+      return
+    }
     try { await api.post('/api/auth/logout') } catch { /* ignore */ }
     session.clear()
     location.hash = '#/login'
@@ -298,6 +315,15 @@ window.addEventListener('hashchange', navigate)
 // 深链（#/其他页面）与页内导航永不触发分诊。
 async function boot() {
   if (!session.token) await exchangeBridgeSession()
+  // 免登演示态探测（2026-10-17）：无令牌且服务端开启 DEMO_MODE=1 → 注入内存只读演示会话，
+  // 直接进控制台（工作台首屏即产品全貌）。探测端点公开且失败回退 {demo:false}，
+  // 演示能力缺失永不阻塞既有启动链；真令牌用户不受影响（isDemo 以 token 优先失效）。
+  if (!session.token) {
+    const status = await demoStatus()
+    if (status.demo) {
+      session.enterDemo({ principalId: status.principalId, name: status.name, readonlyPermissions: status.readonlyPermissions ?? [] })
+    }
+  }
   // 已登录态 next 消费（交接 F 清单 P 节，2026-09-11）：next 的解析/白名单/出口原本只在登录页，
   // 而控制台路由在已有会话时直接渲染外壳——宿主已登录时打开「宿主/?next=<面板地址>」参数被
   // 静默丢弃，远程 dsh 面板向导的跨源扫码回跳死洞（须先登出宿主才能走通）。现于启动链按

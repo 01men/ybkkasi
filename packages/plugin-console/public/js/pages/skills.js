@@ -42,7 +42,7 @@ export async function renderSkills(content, params, ctx) {
         <button class="btn btn-default" id="skill-storage">${icon('server', 14)}存储配置</button>
         <button class="btn btn-default" id="skill-mine">${icon('user', 14)}我的提交</button>
         ${session.can('skill.approve') ? `<button class="btn btn-default" id="skill-review">${icon('checkSquare', 14)}待审批<span class="badge badge-danger no-dot" id="skill-review-count" style="margin-left:6px;display:none">0</span></button>` : ''}
-        <button class="btn btn-primary" id="skill-submit">${icon('plus', 14)}提交新技能</button>`,
+        ${session.can('skill.submit') ? `<button class="btn btn-primary" id="skill-submit">${icon('plus', 14)}提交新技能</button>` : ''}`,
     })}
     <div id="skill-heatmap" class="mb-20"></div>
     <div class="filter-bar">
@@ -156,10 +156,11 @@ export async function renderSkills(content, params, ctx) {
   $('#skill-storage').onclick = () => openStorageModal()
   const reviewBtn = $('#skill-review')
   if (reviewBtn) reviewBtn.onclick = () => { state.mode = state.mode === 'review' ? 'market' : 'review'; void refresh() }
-  $('#skill-submit').onclick = () => openSubmitModal(ctx, refresh)
+  const submitBtn = $('#skill-submit')
+  if (submitBtn) submitBtn.onclick = () => openSubmitModal(ctx, refresh)
 
   await refresh()
-  if (params.get('action') === 'submit') openSubmitModal(ctx, refresh)
+  if (params.get('action') === 'submit' && session.can('skill.submit')) openSubmitModal(ctx, refresh)
   if (params.get('focus')) void openSkillDetail(params.get('focus'), ctx, refresh, heatState)
 }
 

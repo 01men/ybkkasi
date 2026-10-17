@@ -27,12 +27,15 @@ export async function renderMembers(ctx) {
   const selectedUserIds = new Set()
   let draggingUserIds = []
   $('#iam-actions').innerHTML = `
-    <button class="btn btn-default" id="org-add">${icon('plus', 14)}新建组织</button>
-    <button class="btn btn-default" id="user-import">${icon('download', 14)}批量导入</button>
-    <button class="btn btn-primary" id="user-add">${icon('plus', 14)}创建账号</button>`
-  $('#user-add').onclick = () => openUserCreate(treeData, usersData)
-  $('#org-add').onclick = () => openOrgCreate(treeData)
-  $('#user-import').onclick = () => void openUserImport()
+    ${session.can('iam.org.write') ? `<button class="btn btn-default" id="org-add">${icon('plus', 14)}新建组织</button>` : ''}
+    ${session.can('iam.user.write') ? `<button class="btn btn-default" id="user-import">${icon('download', 14)}批量导入</button>` : ''}
+    ${session.can('iam.user.write') ? `<button class="btn btn-primary" id="user-add">${icon('plus', 14)}创建账号</button>` : ''}`
+  const userAddBtn = $('#user-add')
+  if (userAddBtn) userAddBtn.onclick = () => openUserCreate(treeData, usersData)
+  const orgAddBtn = $('#org-add')
+  if (orgAddBtn) orgAddBtn.onclick = () => openOrgCreate(treeData)
+  const userImportBtn = $('#user-import')
+  if (userImportBtn) userImportBtn.onclick = () => void openUserImport()
 
   const body = $('#iam-body')
   body.innerHTML = `

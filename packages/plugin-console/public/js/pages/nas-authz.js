@@ -35,17 +35,20 @@ export async function renderNasAuthz(content) {
         <div class="page-sub">组织位置 + 角色层级 RBAC（P/D/T/M + C 叠加）：五步判定序，显式例外优先于角色矩阵；网关与 hermes 双强制点共用同一套规则，全链 fail-closed。</div>
       </div>
       <div class="page-actions">
-        <button class="btn btn-default" id="az-reconcile">${icon('refresh', 14)}组织目录对账</button>
-        <button class="btn btn-default" id="az-vacancy">${icon('users', 14)}负责人悬空扫描</button>
-        <button class="btn btn-primary" id="az-simulate">${icon('search', 14)}check 试算</button>
+        ${session.can('nas.authz.write') ? `<button class="btn btn-default" id="az-reconcile">${icon('refresh', 14)}组织目录对账</button>` : ''}
+        ${session.can('nas.authz.write') ? `<button class="btn btn-default" id="az-vacancy">${icon('users', 14)}负责人悬空扫描</button>` : ''}
+        ${session.can('nas.authz.check') ? `<button class="btn btn-primary" id="az-simulate">${icon('search', 14)}check 试算</button>` : ''}
       </div>
     </div>
     <div id="az-body" class="az-page"></div>`
 
   await loadAll()
-  $('#az-reconcile').onclick = () => runGovern('/api/nas/authz/reconcile', rqI18n.t('组织目录对账'))
-  $('#az-vacancy').onclick = () => runGovern('/api/nas/authz/leader-vacancy-scan', rqI18n.t('负责人悬空扫描'))
-  $('#az-simulate').onclick = () => openSimulate()
+  const reconcileBtn = $('#az-reconcile')
+  if (reconcileBtn) reconcileBtn.onclick = () => runGovern('/api/nas/authz/reconcile', rqI18n.t('组织目录对账'))
+  const vacancyBtn = $('#az-vacancy')
+  if (vacancyBtn) vacancyBtn.onclick = () => runGovern('/api/nas/authz/leader-vacancy-scan', rqI18n.t('负责人悬空扫描'))
+  const simulateBtn = $('#az-simulate')
+  if (simulateBtn) simulateBtn.onclick = () => openSimulate()
   renderBody()
 }
 
@@ -117,13 +120,16 @@ function renderBody() {
 
 function renderGates() {
   const holder = $('#az-gates')
+  const canWrite = session.can('nas.authz.write')
   const gate = (key, label, desc) => `
     <div class="az-gate ${rules[key] ? 'on' : ''}">
       <div class="az-grow">
         <div class="az-gate-name">${label}</div>
         <div class="az-gate-desc">${desc}</div>
       </div>
-      <button class="btn btn-sm ${rules[key] ? 'btn-warning' : 'btn-default'}" data-gate="${key}">${rules[key] ? '已开启' : '已关闭'}</button>
+      ${canWrite
+        ? `<button class="btn btn-sm ${rules[key] ? 'btn-warning' : 'btn-default'}" data-gate="${key}">${rules[key] ? '已开启' : '已关闭'}</button>`
+        : `<span class="fs-11 text-3" title="需要 nas.authz.write 权限">${rules[key] ? '已开启' : '已关闭'}（只读）</span>`}
     </div>`
   holder.innerHTML = `
     <div class="az-card-head">
@@ -321,6 +327,7 @@ function expireCountdown(iso) {
 function renderExceptions() {
   const holder = $('#az-exceptions')
   const items = rules.exceptions ?? []
+  const canManage = session.can('nas.authz.write')
   holder.innerHTML = `
     <div class="az-card-head">
       <div class="az-grow">
@@ -329,7 +336,7 @@ function renderExceptions() {
       </div>
       <div class="az-head-actions">
         <span class="badge no-dot badge-muted">${esc(rqI18n.t('{n} 条', { n: items.length }))}</span>
-        <button class="btn btn-sm btn-primary" id="az-exc-add">${icon('plus', 12)}新建例外</button>
+        ${canManage ? `<button class="btn btn-sm btn-primary" id="az-exc-add">${icon('plus', 12)}新建例外</button>` : ''}
       </div>
     </div>
     <div id="az-exc-table"></div>`
@@ -345,12 +352,13 @@ function renderExceptions() {
         { title: '限定用户', render: (item) => `<span class="fs-12">${item.userIds?.length ? `<span class="az-users">${item.userIds.map((id) => `<code class="az-uid">${esc(id)}</code>`).join('')}</span>` : '<span class="text-4">全部用户</span>'}</span>` },
         { title: '有效期', width: 130, render: (item) => expireCountdown(item.expiresAt) },
         { title: '事由', render: (item) => `<span class="az-reason">${esc(item.note ?? '—')}</span>` },
-        { title: '', width: 60, render: (item) => `<button class="btn btn-sm btn-default" data-del="${esc(item.id)}">删除</button>` },
+        ...(canManage ? [{ title: '', width: 60, render: (item) => `<button class="btn btn-sm btn-default" data-del="${esc(item.id)}">删除</button>` }] : []),
       ],
       rows: items,
     }))
   }
-  $('#az-exc-add').onclick = () => openExceptionEditor()
+  const excAddBtn = $('#az-exc-add')
+  if (excAddBtn) excAddBtn.onclick = () => openExceptionEditor()
   $$('#az-exc-table [data-del]').forEach((btn) => {
     btn.onclick = async () => {
       const confirmed = await confirmDialog({ title: '删除例外', message: rqI18n.t('删除例外 {id}？删除立即生效并升版本留痕。', { id: btn.dataset.del }), danger: true })
@@ -425,6 +433,7 @@ function openExceptionEditor(existing) {
 function renderCGroups() {
   const holder = $('#az-cgroups')
   const items = (rules.cGroups ?? []).map((id) => ({ id, name: groupNames.get(id) ?? id }))
+  const canManage = session.can('nas.authz.write')
   holder.innerHTML = `
     <div class="az-card-head">
       <div class="az-grow">
@@ -433,16 +442,17 @@ function renderCGroups() {
       </div>
       <div class="az-head-actions">
         <span class="badge no-dot badge-muted">${esc(rqI18n.t('{n} 组', { n: items.length }))}</span>
-        <button class="btn btn-sm btn-default" id="az-cg-add">${icon('plus', 12)}关联组</button>
+        ${canManage ? `<button class="btn btn-sm btn-default" id="az-cg-add">${icon('plus', 12)}关联组</button>` : ''}
       </div>
     </div>
     <div id="az-cg-list">${items.length ? items.map((item) => `
       <div class="az-cg-item">
         <span class="az-cg-name">${esc(item.name)}</span>
-        <button class="btn btn-sm btn-default" data-cg="${esc(item.id)}">移除</button>
+        ${canManage ? `<button class="btn btn-sm btn-default" data-cg="${esc(item.id)}">移除</button>` : ''}
       </div>`).join('') : '<div class="az-empty-line">尚未关联动态组</div>'}</div>`
 
-  $('#az-cg-add').onclick = () => {
+  const cgAddBtn = $('#az-cg-add')
+  if (cgAddBtn) cgAddBtn.onclick = () => {
     // 已关联值可能是组名或组 id，统一按名字去重
     const linkedNames = new Set((rules.cGroups ?? []).map((v) => groupNames.get(v) ?? v))
     const options = [...new Set([...groupNames.values()])]
@@ -515,10 +525,11 @@ function renderAnchors() {
           ? `<span class="az-path" style="max-width:220px" title="${esc(text)}">${esc(text)}</span>`
           : '<span class="text-4">—</span>'
       } },
-      { title: '', width: 70, render: () => '<button class="btn btn-sm btn-default" data-edit="1">编辑</button>' },
+      // 锚点编辑是写操作（PUT rules）：无写点的账号（含演示访客）不渲染编辑入口，行点击也不开编辑器
+      ...(session.can('nas.authz.write') ? [{ title: '', width: 70, render: () => '<button class="btn btn-sm btn-default" data-edit="1">编辑</button>' }] : []),
     ],
     rows: nasList,
-    onRowClick: (id) => openAnchorEditor(nasList.find((item) => item.id === id)),
+    ...(session.can('nas.authz.write') ? { onRowClick: (id) => openAnchorEditor(nasList.find((item) => item.id === id)) } : {}),
   }))
   $$('#az-anchor-list [data-edit]').forEach((btn, index) => {
     btn.onclick = (event) => {
