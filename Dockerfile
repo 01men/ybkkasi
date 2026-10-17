@@ -7,17 +7,25 @@
 # 由 .dockerignore 排除，不进镜像。
 FROM node:22-alpine
 
-ENV NODE_ENV=production
 WORKDIR /app
 
 # 清单与源码一并拷贝（npm workspaces 全树安装，锁文件锁定版本）；
 # devDependencies 必须安装——@deepseek-ai/cordis（插件树内核）与 openid-client（OIDC）
 # 声明在 devDependencies 但是运行时硬依赖，--omit=dev 会让实例起不来。
+#
+# 注意：NODE_ENV=production 必须在 npm ci **之后** 设置。
+# npm 会依据 NODE_ENV 把 ci 的默认安装范围收缩为 --omit=dev，若在 npm ci 之前
+# 设 ENV，@deepseek-ai/cordis 与 openid-client 会被静默跳过，容器启动即以
+# ERR_MODULE_NOT_FOUND 崩掉（npm 7+ 起 NODE_ENV=production 即触发该行为）。
+# 故此处在 ci 命令上显式 --include=dev 兜底，与 ENV 的先后顺序解耦。
 COPY package.json package-lock.json cordis.yml cordis.patch.yml ./
 COPY src ./src
 COPY packages ./packages
 COPY docs ./docs
-RUN npm ci --no-audit --no-fund
+RUN npm ci --include=dev --no-audit --no-fund
+
+# 依赖装齐后再切生产模式（npm ci 已完成，不再影响安装范围）。
+ENV NODE_ENV=production
 
 # 平台全部持久化状态（业务集合 + SQLite 计量/事务库 + OIDC 私钥）都在数据目录：
 # 挂 volume 持久化，容器层不存状态，升级镜像 = 换容器不换数据。
