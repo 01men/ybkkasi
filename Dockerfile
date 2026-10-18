@@ -13,11 +13,16 @@ WORKDIR /app
 # 清单与源码一并拷贝（npm workspaces 全树安装，锁文件锁定版本）；
 # devDependencies 必须安装——@deepseek-ai/cordis（插件树内核）与 openid-client（OIDC）
 # 声明在 devDependencies 但是运行时硬依赖，--omit=dev 会让实例起不来。
+#
+# ⚠️ 必须显式 --include=dev：上一行 `ENV NODE_ENV=production` 会让 npm 的默认 omit 规则
+# 变成 omit=dev（实测 npm 10.9.7：`NODE_ENV=production` + `npm ci` 只装 dependencies，
+# devDependencies 全部缺失 → 容器启动即崩，构建日志不报错，最难查）。
+# 以后新增任何运行时硬依赖到 devDependencies 的包，都靠这个 flag 兜住。
 COPY package.json package-lock.json cordis.yml cordis.patch.yml ./
 COPY src ./src
 COPY packages ./packages
 COPY docs ./docs
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund --include=dev
 
 # 平台全部持久化状态（业务集合 + SQLite 计量/事务库 + OIDC 私钥）都在数据目录：
 # 挂 volume 持久化，容器层不存状态，升级镜像 = 换容器不换数据。
