@@ -1,7 +1,7 @@
 # 元冰可 · 企业 AI 资源管理平台
 
 [![MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![selftest](https://img.shields.io/badge/selftest-1467%20green-success)](https://github.com/01men/ybkkasi/actions/workflows/quality-gate.yml)
+[![selftest](https://img.shields.io/badge/selftest-1486%20green-success)](https://github.com/01men/ybkkasi/actions/workflows/quality-gate.yml)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.6-339933)]()
 [![i18n](https://img.shields.io/badge/i18n-zh--en--ja-blue)]()
 [![Demo](https://img.shields.io/badge/demo-demo.ybkkasi.com-FF6B35)](https://demo.ybkkasi.com)
