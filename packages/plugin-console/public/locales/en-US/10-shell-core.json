@@ -1,5 +1,9 @@
 {
   "正在加载控制台…": "Loading console…",
+  "正在装载 27 个插件包 · 84 个权限点 · 354 个 REST 路由 · 83 个 MCP 工具": "Loading 27 plugin packages · 84 permission points · 354 REST routes · 83 MCP tools",
+  "全程本地加载，数据不出你的浏览器": "Loaded entirely in your browser — no data leaves your machine",
+  "控制台需要 JavaScript。若长时间无响应，请直接访问": "The console needs JavaScript. If it does not respond, open",
+  "静态介绍页": "the static overview page",
   "总览": "Overview",
   "工作台": "Workbench",
   "部门面板": "Department Panel",
