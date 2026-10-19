@@ -362,13 +362,13 @@ textarea.form-control { height: auto; min-height: 88px; padding: 9px 12px; resiz
 .tab.active { color: var(--brand-primary-deep); font-weight: 600; border-bottom-color: var(--brand-primary); }
 .tab .tab-count { font-size: var(--fs-11); background: var(--surface-2); border-radius: 8px; padding: 0 6px; color: var(--text-3); }
 
-/* segmented */
-.segmented { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+/* segmented（胶囊分段：轨道全圆角，选中滑块白底 + --shadow-seg 轻投影） */
+.segmented { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px; }
 .segmented-item {
-  padding: 4px 12px; font-size: var(--fs-12-5); border-radius: 6px; cursor: pointer;
+  padding: 4px 12px; font-size: var(--fs-12-5); border-radius: 999px; cursor: pointer;
   color: var(--text-3); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
 }
-.segmented-item.active { background: var(--white); color: var(--text-1); font-weight: 500; box-shadow: var(--shadow-s); }
+.segmented-item.active { background: var(--white); color: var(--text-1); font-weight: 500; box-shadow: var(--shadow-seg); }
 .segmented-item svg { width: 14px; height: 14px; }
 
 /* ============ 抽屉 ============ */
@@ -1146,14 +1146,16 @@ textarea.form-control { height: auto; min-height: 88px; padding: 9px 12px; resiz
 .pulse { --dot-color: 4 72% 51%; animation: pulse-dot 1.6s ease-in-out infinite; }
 
 /* ---------- 分段标签（tabRow 组件）：.tabbar 内 .tab 为分段钮；
+   胶囊分段（2026-10-19 视觉优化）：轨道与滑块全圆角、选中滑块仅 --shadow-seg 轻投影，
+   徽标随选中态换底（未选中白底显于灰轨、选中回米灰显于白底）；
    旧版下划线 .tabs>.tab 结构保留不动，互不干扰 ---------- */
 .tabbar {
   display: inline-flex; align-items: center; gap: 4px;
-  background: var(--surface-2); border-radius: 8px; padding: 4px;
+  background: var(--surface-2); border-radius: 999px; padding: 4px;
 }
 .tabbar .tab {
   padding: 4px 14px; font-size: var(--fs-12-5); line-height: 1.5;
-  border-radius: 6px; margin-bottom: 0; border-bottom: none;
+  border-radius: 999px; margin-bottom: 0; border-bottom: none;
   color: var(--text-3); cursor: pointer; white-space: nowrap;
   display: inline-flex; align-items: center; gap: 6px;
   transition: color 0.15s, background 0.15s; user-select: none;
@@ -1162,15 +1164,16 @@ textarea.form-control { height: auto; min-height: 88px; padding: 9px 12px; resiz
 .tabbar .tab:hover { color: var(--text-1); }
 .tabbar .tab.active {
   background: var(--surface); color: var(--text-1); font-weight: 600;
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-seg);
 }
 .tab-badge {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 17px; height: 17px; padding: 0 5px;
-  border-radius: 5px; background: var(--surface-2); color: var(--text-3);
+  border-radius: 999px; background: var(--surface); color: var(--text-3);
   font-size: var(--fs-10-5); font-weight: 600;
   font-variant-numeric: tabular-nums; line-height: 1;
 }
+.tabbar .tab.active .tab-badge:not(.warn) { background: var(--surface-2); }
 .tab-badge.warn { background: rgba(245, 158, 11, 0.16); color: var(--warn-strong); }
 /* 详情抽屉内二级标签：复用 .tabbar 结构的容器别名 */
 .drawer-tabs { margin-bottom: 14px; }
