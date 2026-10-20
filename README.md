@@ -1,10 +1,6 @@
 # 元冰可 · 企业 AI 资源管理平台
 
-> 🎉 **We just launched on Product Hunt** — thanks for all the support!
-> [YBK · Enterprise AI Asset Governance →](https://www.producthunt.com/posts/ybk-enterprise-ai-asset-governance)
-
-[![Product Hunt](https://img.shields.io/badge/Product%20Hunt-Launch-Launch-orange)](https://www.producthunt.com/posts/ybk-enterprise-ai-asset-governance)
-
+> **v1.3.0 · MIT · self-hosted.** One control plane for every MCP server, skill, agent and AI app.
 
 [![MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![selftest](https://img.shields.io/badge/selftest-1486%20green-success)](https://github.com/01men/ybkkasi/actions/workflows/quality-gate.yml)
