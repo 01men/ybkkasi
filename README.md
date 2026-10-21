@@ -1,10 +1,6 @@
 # 元冰可 · 企业 AI 资源管理平台
 
-> 🎉 **We just launched on Product Hunt** — thanks for all the support!
-> [YBK · Enterprise AI Asset Governance →](https://www.producthunt.com/posts/ybk-enterprise-ai-asset-governance)
-
-[![Product Hunt](https://img.shields.io/badge/Product%20Hunt-Launch-Launch-orange)](https://www.producthunt.com/posts/ybk-enterprise-ai-asset-governance)
-
+> **v1.3.1 · MIT · self-hosted.** One control plane for every MCP server, skill, agent and AI app.
 
 [![MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![selftest](https://img.shields.io/badge/selftest-1486%20green-success)](https://github.com/01men/ybkkasi/actions/workflows/quality-gate.yml)
@@ -15,7 +11,7 @@
 **把散落在企业里的 MCP 服务 / Skill / Agent / AI 应用 / 模型渠道 / SaaS 连接器 / NAS 存储，
 统一成一套可管、可算、可审的资产。**
 
-一套身份 · 一套权限 · 一套计量 · 一套审计。**27 个插件包，按需启用。**
+一套身份 · 一套权限 · 一套计量 · 一套审计。**29 个插件包，按需启用。**
 
 > **YBK Enterprise AI Asset Governance** — One control plane for every MCP server, skill,
 > agent, and AI app. One identity, one permission model, one metering pipeline, one audit trail.
@@ -70,7 +66,7 @@ docker compose up -d              # → http://localhost:7300(≤60 秒可访问
 docker run -d --name ybkkasi -p 7300:7300 \
   -e ADMIN_PASSWORD='你的强口令' \
   -v ybkkasi-data:/app/data \
-  ybkkasi:1.3.0
+  ybkkasi:1.3.1
 ```
 
 源码部署(要求 Node ≥ 22.6,原生 TypeScript 运行,无构建步骤;`node:sqlite` 为 Node 内置):
@@ -188,10 +184,10 @@ usage / connect / update       计量 / 远程 dsh 接入 / 平台自更新
 sync / conflict / help         三方同步 / 组织冲突 / 帮助
 ```
 
-**REST**——354 条去重路由(代码注册口径),全部经统一鉴权中间件 + RBAC;
+**REST**——448 条去重路由(代码注册口径),全部经统一鉴权中间件 + RBAC;
 未匹配路由的匿名请求统一返回 401(而非 404),不提供路由探测侧信道。
 
-**MCP**——平台即 MCP Server,任意 MCP 客户端可直接接入;83 个注册工具
+**MCP**——平台即 MCP Server,任意 MCP 客户端可直接接入;86 个注册工具
 **均已声明最小权限 permission**。
 
 **协议契约**——对外协议键保持 ASCII 不改写,中文释义见
@@ -272,4 +268,4 @@ MIT
 
 ---
 
-> 最近更新：2026-10-17 · 市场引爆 W1 批次——免登演示模式（DEMO_MODE=1：无 Bearer 注入 26 个 `.read` 白名单主体 + 写方法 405 + 前端演示会话/只读横幅/写按钮权限门控收口，`console.read` 只读基线点经 `console.login` 蕴含规则真实用户零感知）+ Docker 一键体验（`docker compose up` ≤60 秒起演示实例）+ 演示只读面路由审计脚本；selftest 1486/1486（新增演示态 20 断言）。此前：2026-10-16 · v1.3.0 整改攻坚批次——启动探针上线（双实例守卫 + 插件树体检，拒绝带病启动）、cordis 精确锁版 4.0.4 + CI 双轨、存储 SQLite 收尾（默认 JSON_KEEP 名单 / 回填哈希对账 / iam 一人一号演练）、dsh 耦合面窄端口化 + 契约测试。完整版本史见 [CHANGELOG.md](CHANGELOG.md)。
+> 最近更新：2026-10-21 · A2A/UHP 复测整改（外部集成闭环 P1-01：归属优先于组织收敛，第三方凭证派活后可直接 get/list/cancel/订阅；治理第 2 项 permit 覆盖真实生效并经契约方法 `inspectAgent` 判定；UHP `/v1` 发现面裸体 + 注入变体统一拒绝留痕 + 直调 SSE 闭合；A2A 页接入任务 SSE 并降级轮询；新增 `lint:i18n` 三语门禁与 A2A 页面冒烟；selftest 1553/1553）。此前：2026-10-17 · 市场引爆 W1 批次——免登演示模式（DEMO_MODE=1：无 Bearer 注入 26 个 `.read` 白名单主体 + 写方法 405 + 前端演示会话/只读横幅/写按钮权限门控收口，`console.read` 只读基线点经 `console.login` 蕴含规则真实用户零感知）+ Docker 一键体验（`docker compose up` ≤60 秒起演示实例）+ 演示只读面路由审计脚本；selftest 1486/1486（新增演示态 20 断言）。此前：2026-10-16 · v1.3.0 整改攻坚批次——启动探针上线（双实例守卫 + 插件树体检，拒绝带病启动）、cordis 精确锁版 4.0.4 + CI 双轨、存储 SQLite 收尾（默认 JSON_KEEP 名单 / 回填哈希对账 / iam 一人一号演练）、dsh 耦合面窄端口化 + 契约测试。完整版本史见 [CHANGELOG.md](CHANGELOG.md)。

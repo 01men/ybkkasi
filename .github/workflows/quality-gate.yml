@@ -37,6 +37,10 @@ jobs:
         run: npm run lint:boot-order
       - name: CJK coverage lint
         run: npm run lint:cjk
+      - name: i18n coverage lint (三语文案覆盖率 ≥95%，文件级)
+        run: npm run lint:i18n
+      - name: Realtime transport tests (SSE 优先 + 轮询降级)
+        run: node packages/plugin-console/public/js/realtime.test.mjs
       - name: Selftest (全量断言 incl. P95 gate & fault injection)
         run: npm run selftest
       # test:contracts 由耦合组添加，可能尚未存在：--if-present 兼容空缺

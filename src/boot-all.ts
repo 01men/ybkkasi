@@ -28,6 +28,10 @@ import * as flowCore from '@dsh-ops/plugin-flow-core'
 import * as execHub from '@dsh-ops/plugin-exec-hub'
 import * as workforce from '@dsh-ops/plugin-workforce'
 import * as dingtalkBridge from '@dsh-ops/plugin-dingtalk-bridge'
+// 企业数字员工内网协作（A2A/UHP，协作方案 §4/§11）：UHP 执行驱动层（Server 协议面 + configured
+// harness 注册表）先于 A2A 协作平面装配；两者间联动只走 ctx.platformBus（a2a.task.* 事件族）
+import * as uhp from '@dsh-ops/plugin-uhp'
+import * as a2a from '@dsh-ops/plugin-a2a'
 // W2 启动健壮性：双实例断言 + 装配后插件树体检
 import { assertSingleRoot, formatTreeHealth, probeTree } from '@dsh-ops/platform-core'
 
@@ -81,6 +85,12 @@ export async function bootAll(ctx: Context, options: BootOptions): Promise<void>
   await ctx.plugin(workforce, { dataDir: options.dataDir })
   // 钉钉桥接（群桥/出向投递/审批推送/告警通道）：订阅 panel.message.created 与 audit.alert.fired
   await ctx.plugin(dingtalkBridge)
+  // UHP 执行驱动（协作方案 §7）：/v1/uhp 协议面 + /api/uhp/* guarded 路由——依赖 console 中间件与
+  // modelgw 先行；订阅 a2a.task.dispatch/cancel，发布 a2a.task.progress
+  await ctx.plugin(uhp)
+  // A2A 协作平面（协作方案 §5/§6）：well-known 卡片/目录/JSON-RPC 方法面/治理五查/协商引擎/
+  // 验收/巡检——依赖 skillhub/mcp/agent 先行（卡片授权集投影），派发与执行只走事件总线
+  await ctx.plugin(a2a)
   // 装配后体检：必须在全部 await ctx.plugin 之后（此刻 fiber 都应 ACTIVE）；
   // 必需服务不可达或存在拦启动的卡死 fiber 时直接拒绝启动，禁止降级为告警放行
   // （FAILED fiber 仅在声明 provide 已被其他 ACTIVE fiber 接管时豁免，见 boot-probe.ts）

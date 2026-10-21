@@ -1,6 +1,6 @@
 {
   "name": "dsh-enterprise-ops",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "type": "module",
   "description": "企业 AI 资源统一管理平台 —— 基于 DeepSeek Harness「一切皆插件」架构",
@@ -41,6 +41,7 @@
     "manifests": "node scripts/gen-manifests.mjs",
     "lint:boot-order": "node scripts/check-boot-order.mjs",
     "lint:cjk": "node scripts/lint-cjk-coverage.mjs",
+    "lint:i18n": "node scripts/lint-i18n-coverage.mjs",
     "test:contracts": "node packages/plugin-dsh-bridge/tests/host-bridge.contract.mjs && node packages/plugin-rq-card/tests/host-bridge.contract.mjs"
   },
   "engines": {

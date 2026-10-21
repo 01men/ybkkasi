@@ -51,6 +51,7 @@ const renderNasAuthz = lazy('./pages/nas-authz.js', 'renderNasAuthz')
 const renderConnectors = lazy('./pages/connectors.js', 'renderConnectors')
 const renderSkills = lazy('./pages/skills.js', 'renderSkills')
 const renderAgents = lazy('./pages/agents.js', 'renderAgents')
+const renderA2a = lazy('./pages/a2a.js', 'renderA2a')
 const renderApps = lazy('./pages/apps.js', 'renderApps')
 const renderAudit = lazy('./pages/audit.js', 'renderAudit')
 const renderApprovals = lazy('./pages/approvals.js', 'renderApprovals')
@@ -85,6 +86,8 @@ const NAV = [
     { path: '#/gateway', label: '模型网关', icon: 'route', perm: 'usage.read' },
     { path: '#/register', label: '资产登记', icon: 'zap', perm: 'console.login' },
     { path: '#/agents', label: 'Agent 本体', icon: 'bot', perm: 'agent.read' },
+    // A2A 协作：数字员工跨运行时协作面（目录发现 / 任务追踪 / 履约与巡检），读权限随目录
+    { path: '#/a2a', label: 'A2A 协作', icon: 'flow', perm: 'a2a.directory.read' },
     { path: '#/apps', label: 'AI 应用', icon: 'app', perm: 'app.read' },
     { path: '#/mcp', label: 'MCP 服务', icon: 'plug', perm: 'mcp.service.read' },
     { path: '#/nas', label: 'NAS 存储', icon: 'server', perm: 'nas.read' },
@@ -187,6 +190,7 @@ function navigate() {
     connectors: renderConnectors,
     skills: renderSkills,
     agents: renderAgents,
+    a2a: renderA2a,
     apps: renderApps,
     assets: renderAssets,
     finops: renderFinops,

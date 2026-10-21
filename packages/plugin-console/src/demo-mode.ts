@@ -63,6 +63,12 @@ export const DEMO_READONLY_PERMISSIONS: readonly string[] = [
   'connector.connection.read',
   'connector.runs.read',
   'market.read',
+  // A2A/UHP 协作面（协作方案 §14.7：新端点只读面重跑演示路由审计后有意增补——
+  // a2a.directory.read 覆盖目录/任务治理视图/履约/巡检报告等纯读路由；uhp.read 覆盖
+  // harness 注册表与执行记录读面。写/验收/执行类（a2a.admin、a2a.task.accept、uhp.admin、
+  // uhp.invoke、agent.a2a.invoke）全部不进本表，写方法另有 405 闸门双保险）
+  'a2a.directory.read',
+  'uhp.read',
   // 平台运维（只读面：版本、更新检查、健康）
   'platform.update.read',
   // 控制台只读基线（2026-10-17）：工作台聚合/通知/平台信息/工具目录/最近调用五个纯读路由的

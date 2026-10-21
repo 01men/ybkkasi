@@ -40,6 +40,16 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
     return undefined
   })
 
+  // -- 协作链计量查询（C4 A2A/UHP 协作面 additive） ----------------------------
+  // 按contextId 归集「一次跨员工协作的总成本」：?context=<id> 查单链明细；缺省返回窗口 Top 协作链。
+  guarded('GET', '/api/usage/collaborations', 'usage.read', (exchange) => {
+    const context = exchange.query.get('context') ?? ''
+    if (context) return { contextId: context, events: ctx.usage.collaborationEvents(context) }
+    const days = Math.min(Math.max(Number(exchange.query.get('days') ?? 30) || 30, 1), 365)
+    const from = new Date(Date.now() - days * 86_400_000).toISOString()
+    return { from, top: ctx.usage.collaborationSummary(from, Math.min(Number(exchange.query.get('limit') ?? 20) || 20, 100)) }
+  })
+
   // -- 用量与成本报表（设计适配规格 5.5，2026-10-14） --------------------------
   // 28 天（可调 1-90）用量报表：日序列 / 部门分摊（占比+环比）/ Top 资产 / 单位 DAU 成本。
   // 全部 usage 事件真实聚合（usageReport 只读方法）；dim 只影响 topAssets 排序与占比基数，

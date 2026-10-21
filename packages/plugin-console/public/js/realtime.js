@@ -54,6 +54,9 @@ function tr(text, params) {
  * @param {(reason: string) => void} [options.onDowngrade] 降级回调（恰好一次）
  * @param {(error: Error, info: { consecutiveFailures: number, status?: number }) => void} [options.onPollError]
  *        轮询单轮失败回调（含网络异常与非 2xx 响应；consecutiveFailures 从 1 起计，成功即清零）
+ * @param {string[]} [options.eventNames]   需要转发的 SSE 具名事件（服务端 `event: xxx`）。
+ *        EventSource 的 onmessage 只收**无命名**事件；业务侧显式声明后，每个具名事件以
+ *        `{ event: '<name>', ...解析后的 data }` 交给 onMessage，与轮询响应同通道消费。
  * @param {object} [options.headers]        轮询请求头（如鉴权 authorization）
  * @param {typeof fetch} [options.fetchImpl] 轮询用 fetch（缺省取 globalThis.fetch）
  * @param {typeof EventSource} [options.EventSourceImpl] SSE 实现（缺省取 globalThis.EventSource）
@@ -68,6 +71,7 @@ export function createEventStream(options) {
     onMessage,
     onDowngrade,
     onPollError,
+    eventNames = [],
     headers,
     fetchImpl = globalThis.fetch ? globalThis.fetch.bind(globalThis) : undefined,
     EventSourceImpl = globalThis.EventSource,
@@ -175,6 +179,18 @@ export function createEventStream(options) {
   }
   es.onmessage = (event) => {
     emitMessage(parseMaybeJson(event.data))
+  }
+  // 具名事件：EventSource 不会把它们送进 onmessage，需按名显式 addEventListener。
+  // 每个事件统一包装为 { ...data, event: '<name>' }（event 最后写，避免载荷里的同名字段
+  // 覆盖通道判别）；非对象载荷包成 { event, data }，轮询降级路径的消费方按同一形状分支。
+  for (const eventName of eventNames) {
+    if (typeof es.addEventListener !== 'function') break
+    es.addEventListener(eventName, (event) => {
+      const payload = parseMaybeJson(event?.data)
+      emitMessage(payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? { ...payload, event: eventName }
+        : { event: eventName, data: payload })
+    })
   }
   es.onerror = () => {
     downgrade('sse-error')

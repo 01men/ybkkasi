@@ -24,6 +24,10 @@
  *     pragma 探测 + ALTER TABLE 幂等迁移）。语义：把本次消费事实关联到 workforce_invocations 的一条
  *     工作调用账（workforce_usage_links 的伴随索引），聚合/对账口径不变、不双计；幂等键机制与历史
  *     resource 键一字不动。
+ *   - C4（企业数字员工内网协作 A2A/UHP，2026-10-20）协作链归集（additive-only，同 D3 口径）：
+ *     UsageRecordInput / UsageEvent 增可选 contextId，落库列 context_id TEXT NOT NULL DEFAULT ''。
+ *     语义：同一 A2A contextId（跨员工协作链）下多 Task 的全部计量按链归集——
+ *     collaborationEvents() / collaborationSummary() 提供「一次协作总成本」聚合，幂等键机制不变。
  *
  * 商业模式收敛（元冰可开发计划 M0，2026-09-09）：平台商业口径为「私有化年费 + 治理包」，
  * usage 管道定位为**用量透明计量与内部成本参考**——价格簿 list 侧统一零价快照（charge_cents=0，
@@ -70,6 +74,8 @@ export interface UsageEvent {
   trace_id?: string
   /** D3（additive）：关联的数字员工工作调用账 ID（workforce_invocations.id）；非工作调用事件不下发该键。 */
   invocationId?: string
+  /** C4（additive，A2A/UHP 协作面）：跨员工协作链 ID（A2A contextId）——同链多 Task 的全部计量按此归集；非协作事件不下发该键。 */
+  contextId?: string
   occurred_at: string
   tenant_id: string
   org: string
@@ -94,6 +100,8 @@ export interface UsageRecordInput {
   trace_id?: string
   /** D3（additive，可选）：数字员工工作调用账 ID（invocation_id 列）；缺省空串，聚合口径不变。 */
   invocationId?: string
+  /** C4（additive，可选）：A2A 协作链 ID（context_id 列）；缺省空串，聚合口径不变。 */
+  contextId?: string
   /** 幂等键：调用方自带（推荐，如 <producer>:<业务单号>）；缺省按主体+资源+窗口+序号生成。 */
   idempotency_key?: string
   occurred_at?: string
@@ -178,6 +186,8 @@ export class UsageService extends Service {
       trace_id: "TEXT NOT NULL DEFAULT ''",
       // D3（组7 additive）：数字员工工作调用关联列——新库直接建齐；存量库由下方 pragma 探测迁移
       invocation_id: "TEXT NOT NULL DEFAULT ''",
+      // C4（A2A/UHP 协作面 additive）：跨员工协作链关联列——同上 additive-only 口径
+      context_id: "TEXT NOT NULL DEFAULT ''",
     }, { uniques: [['idempotency_key']], indexes: [['occurred_at'], ['principal'], ['tenant_id']] })
     // 存量库增量迁移（D3，幂等守护）：pragma table_info 探测无列才 ALTER——
     // 只 additive（NOT NULL 带默认值），不改既有列、不动索引与幂等键
@@ -185,6 +195,11 @@ export class UsageService extends Service {
     if (!usageColumns.some((column) => column.name === 'invocation_id')) {
       this.ctx.txnStore.run("ALTER TABLE usage_events ADD COLUMN invocation_id TEXT NOT NULL DEFAULT ''")
       this.ctx.logger('usage').info('usage_events 增量迁移：已补 invocation_id 列（数字员工工作调用关联，D3 additive）')
+    }
+    // C4 存量库增量迁移（与 D3 同款幂等守护）：A2A 协作链关联列
+    if (!usageColumns.some((column) => column.name === 'context_id')) {
+      this.ctx.txnStore.run("ALTER TABLE usage_events ADD COLUMN context_id TEXT NOT NULL DEFAULT ''")
+      this.ctx.logger('usage').info('usage_events 增量迁移：已补 context_id 列（A2A 跨员工协作链关联，C4 additive）')
     }
     // 消费水位（引擎级幂等）：同一消费方对同一事件只产生一次副作用——
     // replay()/死信重投不会造成 billing/audit 投影双计（评审实证缺陷的修复点）。
@@ -289,6 +304,8 @@ export class UsageService extends Service {
       ...(input.trace_id !== undefined ? { trace_id: input.trace_id } : {}),
       // D3（additive）：仅调用方显式携带时下发该键（schema 前向兼容：消费端容忍缺省）
       ...(input.invocationId !== undefined ? { invocationId: input.invocationId } : {}),
+      // C4（additive）：A2A 协作链 ID，仅显式携带时下发
+      ...(input.contextId !== undefined ? { contextId: input.contextId } : {}),
       occurred_at: input.occurred_at ?? new Date().toISOString(),
       tenant_id: tenant,
       org: input.org,
@@ -486,6 +503,43 @@ export class UsageService extends Service {
       "SELECT resource, substr(occurred_at, 1, 10) AS day, COUNT(*) AS count FROM usage_events WHERE occurred_at >= ? AND resource LIKE ? GROUP BY resource, day ORDER BY day",
       [fromIso, `${prefix}%`],
     ).map((row) => ({ resource: row.resource, day: String(row.day), count: Number(row.count) }))
+  }
+
+  /**
+   * 协作链聚合（C4 A2A/UHP 协作面 additive）：按 context_id（A2A contextId）归集「一次跨员工
+   * 协作的总成本」。单链查询返回链上全部事件（时间正序）；窗口汇总返回 Top 协作链。
+   * 金额口径与 usageReport 相同：tokens=键名含 tokens 的米值和，cost=内部成本参考。
+   */
+  collaborationEvents(contextId: string): UsageEvent[] {
+    if (!contextId) return []
+    const rows = this.ctx.txnStore.sql<UsageRow>(
+      'SELECT * FROM usage_events WHERE context_id = ? ORDER BY occurred_at ASC',
+      [contextId],
+    )
+    return rows.map(rowToEvent)
+  }
+
+  collaborationSummary(fromIso: string, limit = 20): Array<{ contextId: string; events: number; tokens: number; cost_cents: number; charge_cents: number; firstAt: string; lastAt: string }> {
+    return this.ctx.txnStore.sql<{
+      context_id: string
+      events: number
+      tokens: number
+      cost_cents: number
+      charge_cents: number
+      firstAt: string
+      lastAt: string
+    }>(
+      "SELECT context_id, COUNT(*) AS events, COALESCE(SUM((SELECT SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)) FROM json_each(e.meters_json) m WHERE json_extract(m.value, '$.key') LIKE '%tokens%')), 0) AS tokens, COALESCE(SUM(CAST(json_extract(e.pricing_json, '$.cost_cents') AS INTEGER)), 0) AS cost_cents, COALESCE(SUM(CAST(json_extract(e.pricing_json, '$.charge_cents') AS INTEGER)), 0) AS charge_cents, MIN(e.occurred_at) AS firstAt, MAX(e.occurred_at) AS lastAt FROM usage_events e WHERE e.occurred_at >= ? AND e.context_id != '' GROUP BY e.context_id ORDER BY tokens DESC, cost_cents DESC, events DESC, lastAt DESC, context_id ASC LIMIT ?",
+      [fromIso, Math.min(Math.max(limit, 1), 100)],
+    ).map((row) => ({
+      contextId: row.context_id,
+      events: Number(row.events),
+      tokens: Number(row.tokens) || 0,
+      cost_cents: Number(row.cost_cents) || 0,
+      charge_cents: Number(row.charge_cents) || 0,
+      firstAt: String(row.firstAt),
+      lastAt: String(row.lastAt),
+    }))
   }
 
   /**
@@ -1258,6 +1312,8 @@ interface UsageRow {
   trace_id: string
   /** D3（组7 additive）：存量库迁移前该列不存在，读侧按 undefined 容忍。 */
   invocation_id?: string
+  /** C4（additive）：存量库迁移前该列不存在，读侧按 undefined 容忍。 */
+  context_id?: string
 }
 
 function usageRow(event: UsageEvent): Record<string, string | number> {
@@ -1275,6 +1331,7 @@ function usageRow(event: UsageEvent): Record<string, string | number> {
     pricing_json: JSON.stringify(event.pricing),
     trace_id: event.trace_id ?? '',
     invocation_id: event.invocationId ?? '',
+    context_id: event.contextId ?? '',
   }
 }
 
@@ -1287,6 +1344,8 @@ function rowToEvent(row: UsageRow): UsageEvent {
     ...(row.trace_id !== '' ? { trace_id: row.trace_id } : {}),
     // D3 读路径同步：存量行（迁移前列缺省 ''）不下发该键，新行原样带回（重放/消费方不丢关联）
     ...(row.invocation_id !== undefined && row.invocation_id !== '' ? { invocationId: row.invocation_id } : {}),
+    // C4 读路径同步：存量行（迁移前列缺省 ''）不下发该键，新行原样带回
+    ...(row.context_id !== undefined && row.context_id !== '' ? { contextId: row.context_id } : {}),
     occurred_at: row.occurred_at,
     tenant_id: row.tenant_id,
     org: row.org,

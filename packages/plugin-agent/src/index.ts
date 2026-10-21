@@ -191,7 +191,9 @@ export class AgentRegistryService extends Service {
       // agent.write：注册后凭自身凭证即可完成接入验证后的资料提报更新（PATCH /api/agents/:id）
       // modelgw.invoke：模型网关调用（LLM 是 Agent 的第一消耗品；计量经 usage.recorded 回灌本台账）
       // exec.read/exec.write：执行中枢 exec_* 工具（R10 心跳唤醒/待办拉取；目录条目由 apply() 启动期补录）
-      scopes: ['mcp.invoke', 'skill.read', 'agent.read', 'agent.write', 'usage.write', 'connector.invoke', 'modelgw.invoke', 'exec.read', 'exec.write'],
+      // agent.a2a.invoke：A2A 协作调用（跨员工派活/续答/取消）。OBO 令牌 scope = 人类 ∩ 本凭证，
+      //   此前凭证缺此点导致「人类无法以代表身份发起协作」（E-2/Q-6），故入默认凭证范围。
+      scopes: ['mcp.invoke', 'skill.read', 'agent.read', 'agent.write', 'agent.a2a.invoke', 'usage.write', 'connector.invoke', 'modelgw.invoke', 'exec.read', 'exec.write'],
       })
     }
     this.ctx.platformBus.emit(PlatformEvents.AgentRegistered, {
@@ -789,6 +791,29 @@ export function apply(ctx: Context) {
   migrateAgentCredentialAgentWrite(ctx)
   migrateAgentCredentialModelgwInvoke(ctx)
   migrateAgentCredentialExecScopes(ctx)
+  migrateAgentCredentialA2aInvoke(ctx)
+}
+
+/** 一次性迁移：为存量 Agent 机器凭证补 agent.a2a.invoke（OBO 协作调用面；先例 agent-scopes-exec-rw-v1）。 */
+function migrateAgentCredentialA2aInvoke(ctx: Context): void {
+  const markers = ctx.opsStorage.collection<{ id: string; doneAt: string }>('agent:migrations')
+  const MARK = 'agent-scopes-a2a-invoke-v1'
+  if (markers.get(MARK)) return
+  let patched = 0
+  for (const principal of ctx.authn.principals().find(
+    (item) => item.type === 'machine' && item.refType === 'agent' && item.status === 'active' && !item.scopes.includes('agent.a2a.invoke'),
+  )) {
+    ctx.authn.principals().update(principal.id, { scopes: [...principal.scopes, 'agent.a2a.invoke'] })
+    ctx.audit.record({
+      type: 'change', actorType: 'system', actorId: 'agent-migration', actorName: '凭证范围迁移',
+      action: 'agent.credential.a2a-invoke-backfill', resourceType: 'agent',
+      resourceId: principal.refId ?? '', resourceName: principal.name, result: 'ok',
+      detail: '补入 agent.a2a.invoke（OBO 令牌 scope=人类∩凭证；缺此点则人类无法代表员工发起 A2A 协作）',
+    })
+    patched++
+  }
+  markers.insert({ id: MARK, doneAt: new Date().toISOString() })
+  if (patched > 0) ctx.logger('agent').info(`存量 Agent 凭证迁移完成：${patched} 条补入 agent.a2a.invoke`)
 }
 
 /** 一次性迁移：为存量 Agent 机器凭证补 connector.invoke（幂等标记，先例 agent-scopes-usage-write-v1）。 */

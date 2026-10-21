@@ -5,6 +5,7 @@
  * 统一动词集合：list / get / create / update / freeze / deploy / rollback
  *               / offline / invoke / submit / approve / publish / install
  *               / metrics / logs / token / sync / topology / cost
+ *               / a2a 目录·派活·任务·验收·履约·规则·巡检 / uhp 发现·harness·执行记录
  *
  * 全局约定（方案 §4.2）：
  *   --output json|table   机器可读优先，默认 table
@@ -15,7 +16,7 @@
  * 认证：DSHCTL_TOKEN 环境变量，或 admin 账号自动登录。
  */
 import fs from 'node:fs'
-const BASE = process.env.DSHCTL_URL ?? 'http://127.0.0.1:7300'
+let BASE = process.env.DSHCTL_URL ?? 'http://127.0.0.1:7300'
 const argv = process.argv.slice(2)
 
 // ------------------------------------------------------------------ utils
@@ -31,9 +32,44 @@ function flag(name, fallback) {
 function argOf(name) {
   return flag(name.replace(/^--/, ''), undefined)
 }
-const OUTPUT = flag('output', 'table')
-const DRY_RUN = flag('dry-run', false)
-const ASSUME_YES = flag('yes', false) || flag('confirm', false)
+// 布尔语义旗标归一：--x / --x=true / --x on 均为真；--x=false|0|no|off 为假
+function truthyFlag(name) {
+  const value = flag(name)
+  if (value === undefined || value === false) return false
+  if (value === true) return true
+  return !['false', '0', 'no', 'off'].includes(String(value).trim().toLowerCase())
+}
+
+// 全局选项（D4）：既可前置也可后置。前置的若不剥离会被当成「资源名」报「未知资源：--output」，
+// 故在资源识别前统一从 argv 头部剥离并记入 GLOBALS；后置的仍由 flag() 就地查找。
+// --token 特例：前置位视为平台令牌；后置位保留给子命令私有语义（nas create --token= 是 NAS 访问令牌）。
+const GLOBAL_VALUE_FLAGS = ['output', 'lang', 'url', 'token']
+const GLOBAL_BOOL_FLAGS = ['dry-run', 'yes', 'confirm']
+const GLOBALS = {}
+function consumeLeadingGlobals() {
+  for (;;) {
+    const item = argv[0]
+    if (!item || !item.startsWith('--')) break
+    const name = item.slice(2).split('=')[0]
+    if (!GLOBAL_VALUE_FLAGS.includes(name) && !GLOBAL_BOOL_FLAGS.includes(name)) break
+    argv.shift()
+    if (item.includes('=')) { GLOBALS[name] = item.split('=').slice(1).join('=') || true; continue }
+    if (GLOBAL_BOOL_FLAGS.includes(name)) { GLOBALS[name] = true; continue }
+    const value = argv[0]
+    if (value !== undefined && !value.startsWith('--')) { argv.shift(); GLOBALS[name] = value }
+    else GLOBALS[name] = true
+  }
+}
+consumeLeadingGlobals()
+
+const OUTPUT = GLOBALS.output !== undefined ? GLOBALS.output : flag('output', 'table')
+const DRY_RUN = truthyFlag('dry-run') || GLOBALS['dry-run'] === true
+const ASSUME_YES = truthyFlag('yes') || truthyFlag('confirm') || GLOBALS.yes === true || GLOBALS.confirm === true
+// --url：CLI 旗标优先于 DSHCTL_URL 环境变量（前置后置均可）
+{
+  const urlFlag = GLOBALS.url !== undefined ? GLOBALS.url : flag('url')
+  if (urlFlag && urlFlag !== true) BASE = String(urlFlag).replace(/\/+$/, '')
+}
 
 // ------------------------------------------------------------------ i18n
 // 界面语言决议（协议口径 R10）：--lang 旗标 > DSHCTL_LANG > PLATFORM_LOCALE > zh-CN。
@@ -47,7 +83,7 @@ function normalizeLocale(input) {
   }
   return null
 }
-const LOCALE = normalizeLocale(flag('lang'))
+const LOCALE = normalizeLocale(GLOBALS.lang !== undefined ? GLOBALS.lang : flag('lang'))
   ?? normalizeLocale(process.env.DSHCTL_LANG)
   ?? normalizeLocale(process.env.PLATFORM_LOCALE)
   ?? 'zh-CN'
@@ -126,6 +162,39 @@ async function ensureToken() {
   }
 }
 
+// 宽容调用（免鉴权规范端点）：A2A well-known 与 UHP /v1 均为规范裸 JSON（无 {ok,data} 信封）。
+// 兼容规则：响应含布尔 ok 字段按平台信封解（ok=false 报错退出），否则整体视为数据。
+// 信封分支保留仅为对接升级窗口内的旧版被管实例，不再是主路径。
+async function callLoose(method, path) {
+  const headers = {}
+  if (token) headers.authorization = `Bearer ${token}`
+  const response = await fetch(`${BASE}${path}`, { method, headers })
+  const payload = await response.json().catch(() => null)
+  if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof payload.ok === 'boolean') {
+    if (!response.ok || payload.ok === false) {
+      const message = payload?.error?.message ?? `HTTP ${response.status}`
+      const code = payload?.error?.code ?? `HTTP_${response.status}`
+      fail(t('{message}（{code}）', { message, code }))
+    }
+    return payload.data
+  }
+  if (!response.ok) fail(t('HTTP {status}', { status: response.status }))
+  return payload
+}
+
+// A2A JSON-RPC 调用：平台信封内的 JSON-RPC 2.0。error 分支 exit 非 0 并打印 error.message 与 error.data.code。
+async function callJsonRpc(slug, method, params) {
+  const data = await call('POST', `/api/agents/${encodeURIComponent(slug)}/a2a`, { jsonrpc: '2.0', id: 1, method, params })
+  if (data && typeof data === 'object' && data.error) {
+    const detail = data.error.data && data.error.data.code ? ` / ${data.error.data.code}` : ''
+    console.error(`\n✘ ${t('{message}（JSON-RPC {code}{detail}）', { message: data.error.message ?? 'JSON-RPC error', code: data.error.code ?? '', detail })}`)
+    console.error(t('  修复建议：检查目标数字员工是否在线、数据密级是否越权、参数是否完整。'))
+    console.error(t('  帮助：dshctl help'))
+    process.exit(1)
+  }
+  return data?.result
+}
+
 // ------------------------------------------------------------------ 输出
 // 表头中文标签：键为列名（--output json 的协议键，保留 ASCII），值为 table 模式的中文显示名
 const HEADER_ZH = {
@@ -149,6 +218,9 @@ const HEADER_ZH = {
   meters: '计量', charge: '费用(分)', codeMask: '接入码', template: '模板', expiresAt: '过期时间',
   usedBy: '使用者', remark: '备注', hostname: '主机名', lastUsedAt: '最近使用', isError: '出错',
   durationMs: '耗时(ms)', value: '返回值', developer: '开发者', installs: '安装量', usageKey: '计量键',
+  members: '成员数', agent: 'Agent', taskId: '任务ID', state: '状态', outputText: '输出',
+  slug: 'Slug', agentId: 'AgentID', autonomy: '自主度', ceiling: '密级上限', harnessId: 'Harness',
+  stepBudget: '步数预算', received: '接收数', completionRate: '完成率', acceptancePassRate: '验收通过率',
 }
 // 状态枚举中文伴随：协议值保留 ASCII（json 输出原样），table 模式经此映射展示（对齐 errors.js 映射表做法）
 const STATUS_ZH = {
@@ -158,9 +230,11 @@ const STATUS_ZH = {
   expired: '已过期', disabled: '已禁用', enabled: '已启用', running: '运行中', failed: '失败',
   succeeded: '成功', allow: '放行', deny: '拒绝', info: '提示', warning: '警告', critical: '严重',
   submitted: '已提交', reviewing: '审批中', stopped: '已停止', unknown: '未知',
+  completed: '已完成', canceled: '已取消', working: '执行中', queued: '排队中',
+  input_required: '待补充输入', auth_required: '待授权', requested: '已请求',
 }
 const zhEnum = (value) => t(STATUS_ZH[String(value)] ?? value)
-const isEnumCol = (col) => col === 'status' || col === 'health' || col === 'severity' || col === 'decision'
+const isEnumCol = (col) => col === 'status' || col === 'health' || col === 'severity' || col === 'decision' || col === 'state'
 
 function out(data, columns, title) {
   if (OUTPUT === 'json') {
@@ -271,7 +345,7 @@ const COMMANDS = {
         '            [--idempotency-key= --tenant-id=]        幂等键 / 租户（可选）',
         '            events [--principal= --resource= --limit=] | totals [--principal= --from=]   计量事件查询 / 汇总',
         '  audit     logs [--type= --resourceId= --limit=] | alerts [--unread] | read-all   审计日志 / 告警 / 全部已读',
-        '  approval  list [--pending] | decide <id> --decision=approve|reject --opinion=    审批单列表 / 裁决',
+        '  approval  list [--pending] | decide <id> --decision=approve|reject --opinion= [--confirmed] [--final-review]   审批单列表 / 裁决（高风险单需 --confirmed 二次确认）',
         '  cost      report --groupBy=app|agent|org|date      成本报表（按应用/Agent/组织/日期）',
         '  platform  info                              插件树 / 工具目录 / 集合',
         '  update    status | check                    平台版本与上游更新状态 / 立即检查（60s 冷却）',
@@ -286,12 +360,24 @@ const COMMANDS = {
         '            sign --dir=<目录>                对五面指纹签名（输出 signature）',
         '            submit --dir=<目录> --user=<开发者账号> [--password=<密码>]',
         '            list | install <pluginId> --orgId= --caps=<逗号分隔能力> [--tenantId=]',
+        '  a2a       directory [--q= --skill= --runtime= --autonomy=]   A2A 协作目录（在线数字员工发现）',
+        '            card <slug>                       读取 Agent Card（well-known，免鉴权，兼容裸 JSON / 信封）',
+        '            send <slug> --message=<文本> [--data-class=] [--context=]   派活（JSON-RPC message/send）',
+        '            tasks [--agent= --state= --context= --limit=] | task <taskId>   协作任务列表 / 详情',
+        '            cancel <slug> <taskId> [--reason=] | accept <taskId> --decision=accepted|rejected --reason=   取消 / 交付验收（人在环）',
+        '            fulfillment                       履约视图（完成率 / 耗时 / 验收通过率）',
+        '            rules | rule-add --name= [--keyword=] [--data-class-at-least=internal|secret] | rule-rm <id>   审批规则管理',
+        '            patrol                            触发协商一致性巡检',
+        '  uhp       discover                          UHP 能力发现（免鉴权）',
+        '            harnesses | harness-add --id= --agent= --model= [--step-budget=] [--ceiling=] | harness-rm <id>   harness 注册表管理',
+        '            responses [--task= --agent= --limit=]   UHP 执行记录',
         '',
         '全局选项：',
         '  --output json|table    输出格式（默认 table，机器消费建议 json）',
         '  --dry-run              变更预演（MCP 部署等支持影响面预览）',
         '  --yes                  跳过交互确认（供 Agent 非交互调用）',
         '  --url <base>           平台地址（默认 http://127.0.0.1:7300）',
+        '  --token <token>        平台令牌（优先于 DSHCTL_TOKEN）',
         '  --lang <zh-CN|en-US|ja-JP>  界面语言（默认 zh-CN，亦可用环境变量 DSHCTL_LANG）',
         '',
         '认证：DSHCTL_TOKEN（优先）或 DSHCTL_USER / DSHCTL_PASS（默认 admin）',
@@ -508,6 +594,23 @@ const COMMANDS = {
       out(data.roles.map((role) => ({ code: role.code, name: role.name, builtin: role.builtin, permissions: role.permissions.join(',') })), ['code', 'name', 'builtin', 'permissions'])
     },
   },
+  group: {
+    run: async () => {
+      const action = argv[0] ?? 'list'
+      await ensureToken()
+      if (!action || action === 'list') {
+        const data = await call('GET', '/api/iam/groups')
+        out((data.groups ?? []).map((group) => ({
+          id: group.id,
+          name: group.name,
+          type: group.type,
+          members: Array.isArray(group.resolvedMembers) ? group.resolvedMembers.length : (group.memberIds ?? []).length,
+        })), ['id', 'name', 'type', 'members'], '用户组')
+        return
+      }
+      fail(t('用法：group list（用户组列表；成员数为动态规则解析后的去重总数）'))
+    },
+  },
   sync: {
     run: async () => {
       await ensureToken()
@@ -589,6 +692,7 @@ const COMMANDS = {
         if (refId) payload.refId = String(refId)
         if (!payload.name) fail(t('用法：credential create --name=<名称> --scope=<权限点>[,<权限点>…] [--refType= --refId=]'))
         const data = await call('POST', '/api/authn/principals', payload)
+        if (OUTPUT === 'json') { out(data); return }
         ok(t('凭证已签发（clientSecret 仅此一次展示）'))
         out(data)
         return
@@ -598,6 +702,7 @@ const COMMANDS = {
         if (!id || !scopesRaw) fail(t('用法：credential scopes <principalId> --scopes=<权限点>[,<权限点>…|*]'))
         const scopes = String(scopesRaw).split(',').map((s) => s.trim()).filter(Boolean)
         const data = await call('PATCH', `/api/authn/principals/${id}`, { scopes })
+        if (OUTPUT === 'json') { out({ principalId: data.id, name: data.name, scopes: data.scopes.join(','), status: data.status }); return }
         ok(t('权限范围已更新为 {scopes}（存量令牌已联动吊销，机器侧需重新换牌）', { scopes: data.scopes.join(',') }))
         out({ principalId: data.id, name: data.name, scopes: data.scopes.join(','), status: data.status })
         return
@@ -605,6 +710,8 @@ const COMMANDS = {
       if (action === 'rotate') {
         if (!id) fail(t('用法：credential rotate <principalId>'))
         const data = await call('POST', `/api/authn/principals/${id}/rotate-secret`)
+        // 机器可读分支：--output json 时输出纯净 JSON（✔ 人类提示不进 stdout，避免破坏管道消费）
+        if (OUTPUT === 'json') { out(data); return }
         ok(t('clientSecret 已轮换（新值仅此一次展示，旧值立即失效，存量令牌已全部吊销）'))
         out(data)
         return
@@ -624,7 +731,16 @@ const COMMANDS = {
         out(data.services.map((s) => ({ id: s.id, name: s.name, status: s.status, version: 'v' + s.currentVersion, gray: s.grayPercent + '%', health: s.health.status, tools: s.tools.length })), ['id', 'name', 'status', 'version', 'gray', 'health', 'tools'])
         return
       }
-      if (action === 'get') { out(await call('GET', `/api/mcp/services`)).services; return }
+      if (action === 'get') {
+        // D2 修复：原写法 `out(await call(...)).services` 括号错位（对 out() 返回值取 .services），
+        // 正确语义：取列表后按 id 过滤出单条详情。
+        if (!id) fail(t('用法：mcp get <服务ID>'))
+        const data = await call('GET', '/api/mcp/services')
+        const service = (data.services ?? []).find((item) => item.id === id)
+        if (!service) fail(t('MCP 服务不存在：{id}', { id }))
+        out(service)
+        return
+      }
       if (action === 'metrics') {
         const data = await call('GET', `/api/mcp/services/${id}/metrics`)
         out({ calls: data.calls, successRate: data.successRate, p95Latency: data.p95Latency, tokens: data.tokens })
@@ -663,6 +779,18 @@ const COMMANDS = {
         let args = {}
         if (flag('args')) { try { args = JSON.parse(String(flag('args'))) } catch { fail(t('--args 必须是合法 JSON')) } }
         const data = await call('POST', '/api/mcp/invoke', { serviceId: id, tool: argOf('--tool'), args })
+        // D6 修复：denied / error / rate_limited / breaker_open 均为业务失败（HTTP 200 但 ok=false），
+        // 必须以非 0 退出码呈现，供脚本与 Agent 判定。
+        if (!data || data.ok === false || (data.status && data.status !== 'ok')) {
+          console.error(`\n✘ ${t('MCP 调用未成功：{error}（status={status}{code}）', {
+            error: data?.error ?? '—',
+            status: data?.status ?? 'unknown',
+            code: data?.code ? `，code=${data.code}` : '',
+          })}`)
+          console.error(t('  修复建议：确认服务已发布且在线、工具名正确、当前身份具备调用授权（denied 时可申请工作级授权）。'))
+          console.error(t('  帮助：dshctl help'))
+          process.exit(1)
+        }
         out(data)
         return
       }
@@ -1153,6 +1281,20 @@ const COMMANDS = {
         out(data)
         return
       }
+      // D1 修复：Agent 详情（GET /api/agents/:id）自带 topology 字段（依赖/绑定树，深度 2），直接投影输出
+      if (action === 'topology') {
+        if (!id) fail(t('用法：agent topology <id>'))
+        const topology = (await call('GET', `/api/agents/${id}`)).topology
+        const flat = []
+        const walk = (node, depth) => {
+          flat.push({ id: node.id, type: node.type, name: '  '.repeat(depth) + (node.name ?? ''), status: node.status })
+          for (const child of node.children ?? []) walk(child, depth + 1)
+        }
+        if (Array.isArray(topology)) for (const node of topology) walk(node, 0)
+        else if (topology) walk(topology, 0)
+        out(flat, ['id', 'type', 'name', 'status'], 'Agent 拓扑')
+        return
+      }
       if (action === 'create') {
         const data = await call('POST', '/api/agents', {
           name: argOf('--name'),
@@ -1218,6 +1360,181 @@ const COMMANDS = {
     },
   },
 
+  // ---------------------------------------------------------------- a2a / uhp（协作与执行驱动）
+  a2a: {
+    desc: 'A2A 协作面（目录 / Agent Card / 派活 / 任务 / 验收 / 履约 / 规则 / 巡检）',
+    run: async () => {
+      const action = argv[0] ?? 'directory'
+      const queryOf = (pairs) => {
+        const search = new URLSearchParams()
+        for (const [flagName, key] of pairs) {
+          const value = flag(flagName)
+          if (value !== undefined && value !== true) search.set(key, String(value))
+        }
+        return search.size ? `?${search}` : ''
+      }
+      if (!action || action === 'directory') {
+        await ensureToken()
+        const data = await call('GET', '/api/a2a/directory' + queryOf([['q', 'q'], ['skill', 'skill'], ['runtime', 'runtime'], ['autonomy', 'autonomy'], ['data-class', 'dataClass']]))
+        out((data.agents ?? []).map((entry) => ({
+          agentId: entry.agentId, slug: entry.slug, name: entry.name, runtime: entry.runtime,
+          autonomy: entry.autonomy, ceiling: entry.dataClassCeiling,
+          skills: (entry.skills ?? []).map((skill) => skill?.name ?? skill?.id ?? skill).join(','),
+        })), ['agentId', 'slug', 'name', 'runtime', 'autonomy', 'ceiling', 'skills'], 'A2A 协作目录')
+        return
+      }
+      if (action === 'card') {
+        const slug = argv[1]
+        if (!slug) fail(t('用法：a2a card <slug>（well-known 免鉴权；兼容裸 JSON 与平台信封）'))
+        out(await callLoose('GET', `/.well-known/agents/${encodeURIComponent(slug)}/agent-card.json`))
+        return
+      }
+      if (action === 'send') {
+        const slug = argv[1]
+        const message = argOf('--message')
+        if (!slug || !message) fail(t('用法：a2a send <slug> --message=<文本> [--data-class=] [--context=]'))
+        const metadata = {}
+        if (flag('data-class')) metadata.dataClass = String(flag('data-class'))
+        if (flag('context')) metadata.contextId = String(flag('context'))
+        const result = await callJsonRpc(slug, 'message/send', { message: String(message), metadata })
+        out(result?.task ?? result)
+        return
+      }
+      if (action === 'tasks') {
+        await ensureToken()
+        const data = await call('GET', '/api/a2a/tasks' + queryOf([['agent', 'agentId'], ['state', 'state'], ['context', 'contextId'], ['limit', 'limit']]))
+        out((data.tasks ?? []).map((task) => ({
+          taskId: task.taskId, agent: task.agentSlug ?? task.agentId, state: task.state, mode: task.mode,
+          dataClass: task.dataClass, message: task.message,
+        })), ['taskId', 'agent', 'state', 'mode', 'dataClass', 'message'], 'A2A 协作任务')
+        return
+      }
+      if (action === 'task') {
+        const taskId = argv[1]
+        if (!taskId) fail(t('用法：a2a task <taskId>'))
+        await ensureToken()
+        const data = await call('GET', `/api/a2a/tasks/${encodeURIComponent(taskId)}`)
+        out(data.task ?? data)
+        return
+      }
+      if (action === 'cancel') {
+        const slug = argv[1]
+        const taskId = argv[2]
+        if (!slug || !taskId) fail(t('用法：a2a cancel <slug> <taskId> [--reason=]'))
+        await ensureToken()
+        const params = { taskId }
+        if (flag('reason')) params.reason = String(flag('reason'))
+        const result = await callJsonRpc(slug, 'tasks/cancel', params)
+        out(result?.task ?? result)
+        return
+      }
+      if (action === 'accept') {
+        const taskId = argv[1]
+        const decision = flag('decision')
+        if (!taskId || !['accepted', 'rejected'].includes(decision)) {
+          fail(t('用法：a2a accept <taskId> --decision=accepted|rejected --reason=<理由>（仅人类用户；仅 completed 任务可验收）'))
+        }
+        await ensureToken()
+        const data = await call('POST', `/api/a2a/tasks/${encodeURIComponent(taskId)}/acceptance`, { decision, reason: String(flag('reason', '')) })
+        ok(t('验收已登记：{decision}', { decision: decision === 'accepted' ? t('通过') : t('驳回') }))
+        out(data.task ?? data)
+        return
+      }
+      if (action === 'fulfillment') {
+        await ensureToken()
+        const data = await call('GET', '/api/a2a/fulfillment')
+        out(data.fulfillment ?? data, ['agentSlug', 'agentName', 'received', 'completed', 'failed', 'completionRate', 'acceptancePassRate', 'avgDurationMs', 'p95DurationMs'], 'A2A 履约视图')
+        return
+      }
+      if (action === 'rules') {
+        await ensureToken()
+        const data = await call('GET', '/api/a2a/rules')
+        out(data.rules ?? data, ['id', 'name', 'matchDataClassAtLeast', 'matchKeyword', 'enabled'], 'A2A 审批规则')
+        return
+      }
+      if (action === 'rule-add') {
+        const name = argOf('--name')
+        if (!name) fail(t('用法：a2a rule-add --name=<名称> [--keyword=] [--data-class-at-least=internal|secret]（至少一个匹配条件）'))
+        await ensureToken()
+        const body = { name: String(name) }
+        if (flag('keyword')) body.matchKeyword = String(flag('keyword'))
+        if (flag('data-class-at-least')) body.matchDataClassAtLeast = String(flag('data-class-at-least'))
+        const data = await call('POST', '/api/a2a/rules', body)
+        ok(t('规则已创建：{id}', { id: data.rule?.id ?? '' }))
+        out(data.rule ?? data)
+        return
+      }
+      if (action === 'rule-rm') {
+        const ruleId = argv[1]
+        if (!ruleId) fail(t('用法：a2a rule-rm <规则ID>'))
+        await ensureToken()
+        await call('DELETE', `/api/a2a/rules/${encodeURIComponent(ruleId)}`)
+        ok(t('规则已删除：{id}', { id: ruleId }))
+        return
+      }
+      if (action === 'patrol') {
+        await ensureToken()
+        const data = await call('POST', '/api/a2a/patrol/run', {})
+        out(data.report ?? data)
+        return
+      }
+      fail(t('未知动作：{resource} {action}', { resource: 'a2a', action }))
+    },
+  },
+  uhp: {
+    desc: 'UHP 执行驱动（能力发现 / harness 注册表 / 执行记录）',
+    run: async () => {
+      const action = argv[0] ?? 'discover'
+      if (!action || action === 'discover') {
+        // 规范要求免鉴权：/v1/uhp 不在 /api 鉴权域；裸 JSON / 信封双兼容
+        out(await callLoose('GET', '/v1/uhp'))
+        return
+      }
+      await ensureToken()
+      if (action === 'harnesses') {
+        const data = await call('GET', '/api/uhp/harnesses')
+        out((data.harnesses ?? []).map((harness) => ({
+          id: harness.id, agent: harness.agentName ?? harness.agentId, model: harness.model,
+          stepBudget: harness.stepBudget, ceiling: harness.dataClassCeiling, enabled: harness.enabled,
+        })), ['id', 'agent', 'model', 'stepBudget', 'ceiling', 'enabled'], 'UHP harness 注册表')
+        return
+      }
+      if (action === 'harness-add') {
+        const harnessId = argOf('--id')
+        const agent = argOf('--agent')
+        const model = argOf('--model')
+        if (!harnessId || !agent || !model) fail(t('用法：uhp harness-add --id=<harnessID> --agent=<agentId> --model=<模型slug> [--step-budget=] [--ceiling=internal|secret]'))
+        const body = { id: String(harnessId), agentId: String(agent), model: String(model) }
+        if (flag('step-budget')) body.stepBudget = Number(flag('step-budget')) || undefined
+        if (flag('ceiling')) body.dataClassCeiling = String(flag('ceiling'))
+        const data = await call('POST', '/api/uhp/harnesses', body)
+        ok(t('harness 已登记：{id}', { id: data.harness?.id ?? harnessId }))
+        out(data.harness ?? data)
+        return
+      }
+      if (action === 'harness-rm') {
+        const harnessId = argv[1]
+        if (!harnessId) fail(t('用法：uhp harness-rm <harnessID>'))
+        await call('DELETE', `/api/uhp/harnesses/${encodeURIComponent(harnessId)}`)
+        ok(t('harness 已删除：{id}', { id: harnessId }))
+        return
+      }
+      if (action === 'responses') {
+        const search = new URLSearchParams()
+        if (flag('task')) search.set('taskId', String(flag('task')))
+        if (flag('agent')) search.set('agentId', String(flag('agent')))
+        if (flag('limit')) search.set('limit', String(flag('limit')))
+        const data = await call('GET', '/api/uhp/responses' + (search.size ? `?${search}` : ''))
+        out((data.items ?? []).map((item) => ({
+          id: item.id, status: item.status, model: item.model, harnessId: item.harness_id,
+          outputText: item.output_text, createdAt: item.created_at,
+        })), ['id', 'status', 'model', 'harnessId', 'outputText', 'createdAt'], 'UHP 执行记录')
+        return
+      }
+      fail(t('未知动作：{resource} {action}', { resource: 'uhp', action }))
+    },
+  },
+
   // ---------------------------------------------------------------- audit / approval / cost / platform
   audit: {
     run: async () => {
@@ -1258,11 +1575,15 @@ const COMMANDS = {
       if (action === 'decide') {
         const decision = flag('decision')
         if (!['approve', 'reject'].includes(decision)) fail(t('--decision 必须是 approve|reject'))
-        const data = await call('POST', `/api/approvals/${argv[1]}/decide`, { decision, opinion: flag('opinion', 'CLI 审批') })
+        // D5 修复：高风险审批（如上线单）服务端要求 confirmed=true 二次确认；--final-review 走终审口径。
+        const body = { decision, opinion: flag('opinion', 'CLI 审批') }
+        if (truthyFlag('confirmed')) body.confirmed = true
+        if (truthyFlag('final-review')) body.finalReview = true
+        const data = await call('POST', `/api/approvals/${argv[1]}/decide`, body)
         ok(t('审批完成：{status}', { status: zhEnum(data.status) }))
         return
       }
-      fail(t('用法：approval list [--pending] | decide <id> --decision= --opinion='))
+      fail(t('用法：approval list [--pending] | decide <id> --decision= --opinion= [--confirmed 高风险单必带] [--final-review]'))
     },
   },
   cost: {
@@ -1461,6 +1782,19 @@ async function confirm() {
 
 // ------------------------------------------------------------------ main
 const resource = argv.shift() ?? 'help'
+// 后置 --token 作为平台令牌（前置的已在 consumeLeadingGlobals 剥离）。
+// 例外：nas create 的 --token 是 NAS 访问令牌（子命令私有语义），不当平台令牌消费。
+if (GLOBALS.token !== undefined) {
+  if (GLOBALS.token !== true) token = String(GLOBALS.token)
+} else {
+  const trailingToken = flag('token')
+  if (trailingToken !== undefined && trailingToken !== true && !(resource === 'nas' && argv[0] === 'create')) token = String(trailingToken)
+}
+// 5.1：--help / -h / help（含任意位置出现的 --help / -h）一律干净输出帮助并以 0 退出
+if (resource === '--help' || resource === '-h' || resource === 'help' || argv.includes('--help') || argv.includes('-h')) {
+  COMMANDS.help.run()
+  process.exit(0)
+}
 const command = COMMANDS[resource]
 if (!command) {
   console.error(t('未知资源：{resource}', { resource }))

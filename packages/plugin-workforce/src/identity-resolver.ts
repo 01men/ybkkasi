@@ -16,7 +16,7 @@ import { Service } from '@deepseek-ai/cordis'
 import type { ManagedEmployeeRef, WorkCallerRef } from '../../../platform-core/src/workforce-port.ts'
 import { appointmentInEffect } from './domain.ts'
 import type { WorkforceIdentityResolver } from './contract.ts'
-import type { AppointmentRecord, BindingRecord, IdentityResolution } from './contract.ts'
+import type { AppointmentRecord, BindingRecord, IdentityResolution, AgentBindingState } from './contract.ts'
 import type { WorkforceStoreService } from './repositories.ts'
 
 export class IdentityResolverService extends Service implements WorkforceIdentityResolver {
@@ -84,6 +84,36 @@ export class IdentityResolverService extends Service implements WorkforceIdentit
       appointmentVersion: resolution.appointment.version,
       workOrgId: resolution.appointment.orgId,
       dataClass: resolution.appointment.dataClass,
+    }
+  }
+
+  /**
+   * 绑定态三段探测（协作面治理第 2 项，P2-01）：未纳管 / 已纳管但 permit 失效 / permit 生效。
+   * describeAgent 的二分（null 或受管）无法区分前两种——协作面必须区分：
+   * 「从未纳管」按 legacy 放行，「已纳管但离岗/无任用」必须 fail-closed 拒绝。
+   */
+  async inspectAgent(agentId: string): Promise<AgentBindingState> {
+    const id = String(agentId ?? '').trim()
+    if (id === '') return { agentId: id, bound: false, permitEffective: false }
+    const binding = this.activeBindingByAgent(id)
+    if (!binding) return { agentId: id, bound: false, permitEffective: false }
+    const employee = this.store.employees.get(binding.employeeId)
+    if (!employee || employee.status !== 'active') {
+      return {
+        agentId: id, bound: true, permitEffective: false,
+        employeeId: binding.employeeId, bindingId: binding.id, reason: 'EMPLOYEE_NOT_ACTIVE',
+      }
+    }
+    const appointment = this.latestEffectiveAppointment(binding.employeeId)
+    if (!appointment) {
+      return {
+        agentId: id, bound: true, permitEffective: false,
+        employeeId: binding.employeeId, bindingId: binding.id, reason: 'NO_EFFECTIVE_APPOINTMENT',
+      }
+    }
+    return {
+      agentId: id, bound: true, permitEffective: true,
+      employeeId: binding.employeeId, bindingId: binding.id,
     }
   }
 }

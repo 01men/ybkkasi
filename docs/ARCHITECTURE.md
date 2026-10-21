@@ -83,7 +83,7 @@ data/
 ## 鉴权与权限模型
 
 - 全部 `/api/*` 路由经统一鉴权中间件 + RBAC；未匹配路由的匿名请求统一返回 401（不提供路由探测侧信道）。
-- 权限点集中登记（`packages/*/manifest/permissions.yaml`，当前 84 个），控制台/CLI/MCP 工具共用。
+- 权限点集中登记（`packages/*/manifest/permissions.yaml`，静态 86 + 各插件启动期幂等补录 8 = 运行时目录 94 个），控制台/CLI/MCP 工具共用。
 - 令牌：双轨身份（人 + 机器凭证）、受众（aud）收敛、on-behalf-of 链、refresh 轮转 + 重放防护；
   唯一性约束（如「一人一号」identityLinks）在 sqlite 后端下由引擎级唯一索引兜底。
 - 对外协议键保持 ASCII 不改写（中文释义见 `docs/协议键中文对照总表.md`）。
@@ -92,9 +92,11 @@ data/
 
 | 面 | 入口 | 说明 |
 | --- | --- | --- |
-| REST | `/api/*`（354 条去重路由） | 统一鉴权 + RBAC |
-| MCP | `/mcp`（83 个注册工具，全部声明最小权限 permission） | 平台即 MCP Server；dsh 宿主形态下工具对模型直接可见 |
+| REST | `/api/*`（448 条去重路由） | 统一鉴权 + RBAC |
+| MCP | `/mcp`（86 个注册工具，全部声明最小权限 permission） | 平台即 MCP Server；dsh 宿主形态下工具对模型直接可见 |
 | CLI | `dshctl.mjs`（16 组命令） | 机器可读输出优先 |
+| A2A | `/api/agents/:slug/a2a`（JSON-RPC）+ `/.well-known/*`（签名卡发现，规范裸体）+ `/v1/a2a/*`（SSE） | 数字员工互调协作面（plugin-a2a，见 docs/a2a-uhp-implementation.md） |
+| UHP | `/v1/uhp`（能力发现免鉴权，规范裸体）+ `/v1/uhp/responses`（任务面，自校验 Bearer + uhp.invoke） | harness 统一执行驱动（plugin-uhp） |
 | 控制台 | `/`（SPA，zh-CN/en-US/ja-JP 运行时切换） | `/docs` 仅公开白名单接入指引 |
 
 ## 关键不变量（改动前先读）

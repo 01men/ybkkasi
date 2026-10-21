@@ -42,15 +42,24 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
   // 仅应在无敏感/演示种子数据的实例上开启（见 demo-mode.ts 诚实边界）。
   guarded('GET', '/api/platform/info', 'console.read', () => {
     const versionInfo = platformVersionInfo()
-    const plugins = [
-      'platform-core', 'resource-core', 'iam', 'authn', 'usage', 'audit', 'market', 'modelgw', 'mcp', 'nas', 'skillhub', 'agent', 'app', 'connect', 'update', 'console', 'panel-core', 'dingtalk-bridge',
-    ]
+    // Q-18：插件清单取实际装配树（ctx.registry 的 fiber 名），不再维护写死清单——
+    // 写死清单随新插件上线即漂移（加载屏 29 个 vs 此处 18 个），使同一产品出现两个插件数。
+    // 过滤口径：顶层插件包名（排除插件内注册的 Service 类与 *-tools 工具子插件，二者非独立插件包）。
+    const plugins: string[] = []
+    try {
+      for (const fiber of ctx.registry.values()) {
+        const name = (fiber as { name?: string }).name
+        if (!name || /Service$/.test(name) || /-tools$/.test(name)) continue
+        if (!plugins.includes(name)) plugins.push(name)
+      }
+    } catch { /* registry 不可枚举时退化为空清单，不伪造数字 */ }
     return {
       name: '元冰可|企业AI资源管理平台',
       version: versionInfo.version,
       installMode: versionInfo.installMode,
       runtime: 'standalone-cordis（dsh 插件兼容）',
       plugins,
+      pluginCount: plugins.length,
       collections: ctx.opsStorage.names(),
       tools: ctx.tools.schemas(),
       resourceTypes: ctx.resourceCore.typesSpecs().map((spec) => ({ type: spec.type, label: spec.label, plugin: spec.plugin })),

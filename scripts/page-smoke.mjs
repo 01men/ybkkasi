@@ -124,7 +124,9 @@ await test('P03 资产台账 assets：六类过滤 + 台账表', async () => {
 })
 await test('P04 AI 市场 skills：市场卡片结构', async () => {
   await renderPage('pages/skills.js', 'renderSkills', new URLSearchParams())
-  assert(await waitFor(() => $$('.card').length >= 1, 8000), '市场卡片应渲染')
+  // 技能卡片的类名是 .res-card；.card 只有热力图区块（依赖 usage 数据）才有——
+  // 只断言 .card 会让本用例随夹具的计量数据有无而红绿（QA 2026-10-21 P04 复现）。
+  assert(await waitFor(() => $$('.res-card').length >= 1, 8000), '市场卡片应渲染（.res-card）')
 })
 await test('P05 平台接入 access：三 tab', async () => {
   const content = await renderPage('pages/access.js', 'renderAccess', new URLSearchParams(), [
@@ -135,6 +137,25 @@ await test('P06 审批中心 approvals：左右布局 + 决策按钮钩子', asy
   await renderPage('pages/approvals.js', 'renderApprovals', new URLSearchParams())
   assert(await waitFor(() => !!$('[data-reject], [data-approve], #ap-reject') || /等待审批|暂无|没有待办/.test($('#content').textContent), 8000), '审批操作位或空态应在位')
 })
+// A2A 协作页（QA 2026-10-21 P2-06：新增页面此前未进 page-smoke，五 tab 零覆盖）
+for (const tab of ['directory', 'tasks', 'fulfillment', 'rules', 'uhp']) {
+  await test(`P06b A2A 协作 a2a${tab === 'directory' ? '' : `?tab=${tab}`}：页面结构 + 数据面接线`, async () => {
+    const content = await renderPage('pages/a2a.js', 'renderA2a', new URLSearchParams({ tab }), [
+      ['页头标题', (c) => /A2A 协作/.test(c.textContent)],
+      ['tab 导航', (c) => c.querySelectorAll('#a2a-tabs .tab').length >= 4],
+    ])
+    const bodyFirst = content.querySelector('#a2a-body')?.textContent ?? ''
+    // 数据面接线：各 tab 的核心区块必须真实渲染（不能只吐页头空壳）
+    const probe = {
+      directory: () => /协作目录|自治级别|没有匹配|搜索员工/.test($('#a2a-body')?.textContent ?? ''),
+      tasks: () => /任务追踪|全部目标员工|暂无协作任务|通配|任务/.test($('#a2a-body')?.textContent ?? ''),
+      fulfillment: () => /数字员工|接收|完成率|暂无协作履约/.test($('#a2a-body')?.textContent ?? ''),
+      rules: () => /审批规则|规则名称|暂无审批规则|关键词/.test($('#a2a-body')?.textContent ?? ''),
+      uhp: () => /执行体|UHP|harness|执行记录/.test($('#a2a-body')?.textContent ?? ''),
+    }[tab]
+    assert(await waitFor(probe, 9000), `${tab} 区块应渲染（body=${bodyFirst.slice(0, 80)}）`)
+  })
+}
 
 // ================= 工作台五 tab =================
 for (const [tab, hint] of [['', '总览'], ['cockpit', '经营'], ['goals', '目标'], ['actions', '行动'], ['collab', '协作'], ['ops', '平台运行']]) {

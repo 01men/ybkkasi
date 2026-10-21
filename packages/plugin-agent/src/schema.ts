@@ -14,6 +14,7 @@ export const AGENT_TYPE_SPEC: ResourceTypeSpec = {
       { key: 'basic', label: '基本属性', description: '身份与归属信息' },
       { key: 'tech', label: '技术属性', description: '模型、提示词与能力依赖' },
       { key: 'governance', label: '治理属性', description: '风险与数据密级（上线审批依据）' },
+      { key: 'collab', label: '协作属性', description: 'A2A 协作面（Agent Card / UHP 执行驱动）' },
     ],
     fields: [
       { key: 'description', label: '描述', type: 'text', group: 'basic', required: true, placeholder: '这个 Agent 做什么、适用什么场景', hint: '展示在市场与详情页' },
@@ -66,6 +67,18 @@ export const AGENT_TYPE_SPEC: ResourceTypeSpec = {
       { key: 'rank', label: '职级', type: 'string', group: 'governance', placeholder: '如 L4/P6', hint: '自由文本' },
       { key: 'managerId', label: '汇报上级 Agent', type: 'string', group: 'governance', placeholder: '另一 Agent 的 ID（agt-…）', hint: '汇报线（组织下达与上浮通道），填另一 Agent 的 ID' },
       { key: 'heartbeatIntervalMinutes', label: '心跳间隔（分钟）', type: 'number', group: 'governance', hint: '执行中枢按此间隔定时唤醒该 Agent 拉取待办（0 或留空=不参与心跳调度）' },
+      // C4 A2A/UHP 协作面（additive，红线 2 结构变更登记见 docs/contract-c3-agent-a2a-v2-release-notes.md）：
+      // 存量登记无这些字段按缺省口径处理（退化为 v1 点名调用行为），不设 requiredForOnline。
+      { key: 'a2aDataClassCeiling', label: '协作密级天花板', type: 'enum', group: 'collab', defaultValue: 'internal', options: [
+        { value: 'public', label: '公开', hint: '仅可承接公开级任务' },
+        { value: 'internal', label: '内部', hint: '可承接内部级任务（默认）' },
+        { value: 'secret', label: '秘密（渠道口径）', hint: '可承接秘密级任务（仍受模型渠道分级锁死约束）' },
+      ], hint: '该员工可接收的最高任务数据密级（A2A 协作治理第 3 项检查；渠道口径 public/internal/secret，与 Agent 业务密级 dataClass 是两套口径，不互译）' },
+      { key: 'uhpHarnessRef', label: 'UHP harness 引用', type: 'string', group: 'collab', placeholder: 'UHP 注册表中的 harness id（留空=按本 Agent attrs 临时投影）', hint: '指向 plugin-uhp 的 configured harness 注册项（模型渠道组/步数预算/工具白名单）；留空时 UHP 按本 Agent 属性临时投影执行' },
+      { key: 'uhpSessionPolicy', label: '会话续接策略', type: 'enum', group: 'collab', defaultValue: 'task-bound', options: [
+        { value: 'task-bound', label: '任务级（结束即焚）', hint: '会话生命周期与任务绑定，任务结束会话不复用' },
+        { value: 'employee-bound', label: '员工级（长期会话）', hint: '同一调用方对该员工的多次任务共享长期会话上下文' },
+      ], hint: 'UHP 执行会话的续接策略（协作方案 §5.1）' },
     ],
   },
   lifecycle: {

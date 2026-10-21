@@ -525,6 +525,25 @@ export interface WorkforceIdentityResolver {
    */
   resolveByCaller(caller: WorkCallerRef): Promise<IdentityResolution | null>
   describeAgent(agentId: string): Promise<ManagedEmployeeRef | null>
+  /**
+   * Agent 绑定态探测（协作面治理第 2 项 permit 覆盖，P2-01）：与 describeAgent 的区别是
+   * **区分「未纳管」与「已纳管但 permit 失效」**——前者按 legacy 语义放行，后者必须
+   * fail-closed 拒绝（员工离岗 / 任用撤销 / 绑定停用）。只返回服务端回查事实。
+   */
+  inspectAgent(agentId: string): Promise<AgentBindingState>
+}
+
+/** Agent 绑定态（inspectAgent 返回值；bound=false 表示从未纳管）。 */
+export interface AgentBindingState {
+  agentId: string
+  /** 是否存在 active 绑定（纳管事实）。 */
+  bound: boolean
+  /** 受管三要素全部成立：员工在岗 + 绑定有效 + 存在生效任用。 */
+  permitEffective: boolean
+  employeeId?: string
+  bindingId?: string
+  /** permitEffective=false 且 bound=true 时的诚实原因（便于排障与审计）。 */
+  reason?: 'EMPLOYEE_NOT_ACTIVE' | 'NO_EFFECTIVE_APPOINTMENT'
 }
 
 // ---------------------------------------------------------------------------

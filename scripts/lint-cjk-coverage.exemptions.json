@@ -87,6 +87,11 @@
     },
     {
       "kind": "literal",
+      "key": "packages/plugin-console/public/js/pages/a2a.js::error",
+      "reason": "UI 语义 tone 枚举（toast(message, 'error') 的提示级别协议值，CSS 类 toast-error 消费，非用户文案）；销账条件：该字面量改为中文文案或 toast 签名变更时复核（A2A 协作页新增，2026-10-20）"
+    },
+    {
+      "kind": "literal",
       "key": "packages/plugin-console/public/js/pages/agents.js::#entry_ticket=",
       "reason": "其他机制料（逐条人审归档）；销账条件：该字面量改为中文文案或协议键变更时复核（REFACTOR-2026-10-13 阶段 2 机制料底册）"
     },
@@ -1399,6 +1404,11 @@
       "kind": "literal",
       "key": "packages/plugin-console/public/js/pages/home.js::smooth",
       "reason": "ScrollBehavior API 枚举值（behavior:smooth，协议层保留 ASCII，QA-20261013 移动端适配 D-1 锚点滚动引入）；销账条件：API 用法变更或该行删除时复核"
+    },
+    {
+      "kind": "literal",
+      "key": "packages/plugin-console/public/js/pages/a2a.js::context",
+      "reason": "URL 查询参数名（#/a2a?tab=tasks&context=<协作链 ID>，协议键保留 ASCII，A2AUHP 验收 C 组 G1 协作链下钻引入）；销账条件：参数名变更或该用法删除时复核"
     }
   ]
 }

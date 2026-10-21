@@ -55,6 +55,22 @@ const PORT = 7311
 const BASE = `http://127.0.0.1:${PORT}`
 const DATA_DIR = join(process.cwd(), 'data-selftest')
 
+/**
+ * 为子实例申请空闲端口（QA 2026-10-21 复测结论 §3.3/§6 第 5 条：selftest 的固定端口
+ * 7313/7316/7318/7319/7322/7399 与并行测试实例冲突时会产生假失败，本轮 QA 两次踩中）。
+ * 用法：`const port = await freePort()` —— listen(0) 拿到内核分配端口后立即释放，
+ * 子实例随后绑同一端口（窗口极短，且这些子实例都在本章节内独占运行）。
+ * 固定端口仍可经环境变量钉死（SELFTEST_PIN_PORTS=1，便于复现历史环境）。
+ */
+async function freePort() {
+  if (process.env.SELFTEST_PIN_PORTS === '1') return null
+  const server = createServer()
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  await new Promise((resolve) => server.close(resolve))
+  return port
+}
+
 // 版本期望动态取自根 package.json：bump 版本不再需要联动本文件（QA 2026-10-16 B-1，
 // 此前硬编码 '1.1.0' 在仓库升至 1.2.0 后双红）
 const ROOT_PKG_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
@@ -589,6 +605,7 @@ const proc = spawn(process.execPath, ['src/main.ts', '--port', String(PORT), '--
     EXEC_HUB_TICK_MS: '600000',
     EXEC_HUB_FIRST_TICK_MS: '600000',
     EXEC_LOCK_TIMEOUT_MS: '2500',
+    A2A_SYNC_WAIT_MS: '800',
     // 门户 downloadUrl 生成基址指向自测实例：门户技能包下载断言可直连验证
     PORTAL_PUBLIC_BASE: `http://127.0.0.1:${PORT}`,
   },
@@ -1262,7 +1279,12 @@ try {
       if (file.replaceAll('\\', '/').endsWith('/js/pages/oauth.js')) continue // 协议页豁免（注释在案）
       if (file.replaceAll('\\', '/').endsWith('/js/realtime.js')) continue // SSE/轮询运输层模块（api.js 同级豁免，注释在案）
       const text = readFileSync(file, 'utf8')
-      if (/fetch\(|XMLHttpRequest|EventSource/.test(text)) bareFetch.push(file.split(/[\\/]/).pop())
+      // 只扫代码行：整行注释里提到 transport 词（如「浏览器原生流对象无法带 Bearer 头」）不是裸调用，
+      // 与本段后面的弹窗不变量同口径（后者已 strip 行注释），避免注释措辞把门禁变脆。
+      const codeText = text.split('\n')
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+        .join('\n')
+      if (/fetch\(|XMLHttpRequest|EventSource/.test(codeText)) bareFetch.push(file.split(/[\\/]/).pop())
     }
     check('走查不变量：console 前端除 api.js（与协议页豁免）外零裸 fetch/XHR/SSE',
       bareFetch.length === 0, JSON.stringify(bareFetch))
@@ -2752,6 +2774,498 @@ try {
       await runA2a()
     } finally {
       a2aStub.close()
+    }
+  }
+
+  // ================================================================ A2A/UHP 协作面（内网协作方案 C4 批次：卡片/任务/治理/协商/UHP）
+  section('A2A/UHP 协作面（Agent Card 验签 / 八态任务 / 治理五查 / A0-A3 协商 / UHP 执行驱动）')
+  {
+    // 本段专用模型 stub：按消息内容分派行为（普通问答 / 协商 accept / 协商 counter / 慢任务）
+    let stubMode = 'chat'
+    const collabStub = createServer((req, res) => {
+      if (!(req.url ?? '').endsWith('/chat/completions')) { res.writeHead(404).end('{}'); return }
+      let raw = ''
+      req.on('data', (chunk) => { raw += chunk })
+      req.on('end', () => {
+        let lastUser = ''
+        try { const body = JSON.parse(raw); lastUser = (body.messages ?? []).filter((m) => m.role === 'user').map((m) => m.content).join('\n') } catch { /* 忽略 */ }
+        const finish = (content) => {
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content } }], usage: { prompt_tokens: 60, completion_tokens: 45 } }))
+        }
+        if (lastUser.includes('协作要约')) {
+          finish(stubMode === 'accept' ? '{"decision":"accept","note":"边界清晰，可承接"}' : '{"decision":"counter","proposal":{"时限":"顺延一周"},"note":"当前排期冲突，建议顺延"}')
+          return
+        }
+        if (lastUser.includes('慢任务标记')) {
+          setTimeout(() => finish('慢任务完成（不应被交付，任务已取消）'), 2500)
+          return
+        }
+        finish('协作面自测应答：任务执行回路正常。')
+      })
+    })
+    await new Promise((resolve) => collabStub.listen(0, '127.0.0.1', resolve))
+    // JSON-RPC 端点经 exchange.ok 包平台信封 {ok,data:{jsonrpc,result|error}}（guarded 400 时为 {ok:false,error}）——统一解包
+    const rpc = async (path, token, body) => {
+      const resp = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, ...body }) })
+      const payload = await resp.json().catch(() => ({}))
+      const inner = payload.data && payload.data.jsonrpc ? payload.data : payload
+      return { status: resp.status, result: inner.result, error: inner.error ?? (payload.ok === false ? payload.error : undefined), raw: payload }
+    }
+    const runCollab = async () => {
+      // 重指 deepseek-chat 到本段 stub（各段互不影响惯例）
+      const modelPoint = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'deepseek-chat', displayName: 'DeepSeek Chat（协作面自测 stub）', provider: 'deepseek', endpoint: `http://127.0.0.1:${collabStub.address().port}/v1`, apiKey: 'stub-key', costCentsPerKTokens: 0 } })
+      check('协作面：deepseek-chat 重指本段 stub', modelPoint.ok, JSON.stringify(modelPoint.error))
+
+      // -- 目标员工注册上线（A0 默认自治） + 协作调用方员工（机器凭证，可授 agent.a2a.invoke）
+      const targetCreate = await api('POST', '/api/agents', { token: ops, body: { name: '协作目标员工', slug: 'collab-target', attrs: { description: 'A2A/UHP 协作面端到端自测目标', model: 'deepseek-chat', riskLevel: 'low', systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://collab.example.com/chat' } } })
+      check('协作面：目标员工注册', targetCreate.ok && Boolean(targetCreate.data?.agent?.id), JSON.stringify(targetCreate.error))
+      const target = targetCreate.data.agent
+      const targetTrial = await api('POST', `/api/agents/${target.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
+      const targetOnlineReq = await api('POST', `/api/agents/${target.id}/transition`, { token: ops, body: { action: 'online', note: '协作面自测上线' } })
+      const targetOnline = await api('POST', `/api/approvals/${targetOnlineReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '协作面自测（异人审批）', confirmed: true, finalReview: true } })
+      check('协作面：目标员工上线', targetTrial.ok && targetOnline.ok && targetOnline.data.status === 'executed', JSON.stringify(targetOnline.error ?? targetOnlineReq.error))
+
+      // -- Agent Card 发现 + JWS(Ed25519) 先验签后采信
+      const platformCard = await fetch(`${BASE}/.well-known/agent-card.json`).then((r) => r.json())
+      check('协作面：平台目录卡公开可读（含 Ed25519 验签公钥）',
+        platformCard.signingKeys?.[0]?.algorithm === 'Ed25519' && (platformCard.agents ?? []).some((a) => a.slug === 'collab-target'),
+        JSON.stringify(platformCard).slice(0, 160))
+      const cardResp = await fetch(`${BASE}/.well-known/agents/collab-target/agent-card.json`)
+      const card = await cardResp.json() // 规范裸体（Q-31：well-known 不再包 {ok,data} 信封）
+      const nodeCrypto = await import('node:crypto')
+      const pub = nodeCrypto.createPublicKey({ key: Buffer.from(platformCard.signingKeys[0].publicKeyBase64, 'base64'), format: 'der', type: 'spki' })
+      const { signatures, ...cardBody } = card
+      const signingInput = `${signatures[0].protected}.${Buffer.from(JSON.stringify(cardBody), 'utf8').toString('base64url')}`
+      const jwsOk = nodeCrypto.verify(null, Buffer.from(signingInput), pub, Buffer.from(signatures[0].signature, 'base64'))
+      check('协作面：单员工签名卡 JWS 验签通过（Ed25519）', cardResp.status === 200 && jwsOk && card.extensions[0].uri === 'urn:ybk:ext:governance:v1', `jws=${jwsOk}`)
+      const ghostCard = await fetch(`${BASE}/.well-known/agents/not-exists/agent-card.json`)
+      check('协作面：未上线/不存在员工卡片 404（不泄露存在性）', ghostCard.status === 404, `status=${ghostCard.status}`)
+
+      // -- 目录检索 + 权限点
+      const directory = await api('GET', '/api/a2a/directory?q=协作目标', { token: admin })
+      check('协作面：目录检索命中在线员工（治理扩展字段透出）',
+        directory.ok && directory.data.agents.some((a) => a.slug === 'collab-target' && a.autonomy === 'A0' && a.meteringSubject === `agent:${target.id}`),
+        JSON.stringify(directory.error ?? directory.data?.agents?.length))
+
+      // -- single_turn：人类（A1 映射）× A0 目标 → 平台代答闭环 + 协作链计量
+      const stSend = await rpc(`/api/agents/collab-target/a2a`, admin, { method: 'message/send', params: { message: '单轮问答自测', metadata: { dataClass: 'internal' } } })
+      const stTask = stSend.result?.task
+      check('协作面：message/send 单轮问答 completed（A0 目标诚实代答）',
+        Boolean(stTask) && stTask.state === 'completed' && /协作面自测应答/.test(stTask.artifacts?.[0]?.content ?? '') && stTask.mode === 'single_turn',
+        JSON.stringify(stSend.error ?? stTask?.stateReason ?? 'no-result').slice(0, 200))
+      if (!stTask) return // 单轮闭环未达成，后续链路断言无意义（防连锁 TypeError 掩盖首因）
+      const stUsage = await api('GET', `/api/usage/collaborations?context=${encodeURIComponent(stTask.contextId)}`, { token: admin })
+      check('协作面：协作链计量按 contextId 归集（calls=1 + tokens 随链）',
+        stUsage.ok && stUsage.data.events.length >= 1 && stUsage.data.events[0].contextId === stTask.contextId && Number(stUsage.data.events[0].meters?.find((m) => m.key === 'calls')?.value) === 1,
+        JSON.stringify(stUsage.error ?? stUsage.data?.events?.[0]?.meters).slice(0, 200))
+
+      // -- 治理检查第 3 项：密级天花板越级拒绝
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { a2aDataClassCeiling: 'public' } } })
+      const ceilingHit = await rpc('/api/agents/collab-target/a2a', admin, { method: 'message/send', params: { message: '越级测试', metadata: { dataClass: 'internal' } } })
+      check('协作面：密级越级走治理拒绝（-32002 DATA_CLASS_EXCEEDED，任务留痕 rejected）',
+        ceilingHit.error?.code === -32002 && JSON.stringify(ceilingHit.error).includes('DATA_CLASS_EXCEEDED'),
+        JSON.stringify(ceilingHit.error ?? ceilingHit.raw).slice(0, 200))
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { a2aDataClassCeiling: 'internal' } } })
+
+      // -- 协商矩阵拒绝：A3 调用方 × A0 目标（A0 不可被驱动执行）
+      const callerCreate = await api('POST', '/api/agents', { token: ops, body: { name: '协作发起员工', attrs: { description: 'A2A 发起方自测', model: 'deepseek-chat', riskLevel: 'low', autonomy: 'A3' } } })
+      const callerAgent = callerCreate.data.agent
+      const callerPrincipal = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'collab-caller', refType: 'agent', refId: callerAgent.id, scopes: ['agent.a2a.invoke', 'agent.read'] } })
+      check('协作面：发起方机器凭证（refType=agent + agent.a2a.invoke）', callerPrincipal.ok && callerPrincipal.data.clientId, JSON.stringify(callerPrincipal.error))
+      const callerCc = await api('POST', '/api/auth/client-credentials', { body: { clientId: callerPrincipal.data.clientId, clientSecret: callerPrincipal.data.clientSecret } })
+      const callerToken = callerCc.data.token
+      const matrixReject = await rpc('/api/agents/collab-target/a2a', callerToken, { method: 'message/send', params: { message: '请执行动作' } })
+      check('协作面：协商矩阵拒绝（A3 调用方 × A0 目标 → NEGOTIATION_REJECTED）',
+        matrixReject.error?.code === -32002 && JSON.stringify(matrixReject.error).includes('NEGOTIATION_REJECTED'),
+        JSON.stringify(matrixReject.error ?? matrixReject.raw).slice(0, 200))
+
+      // -- execute_report：目标升 A2 后，A3 调用方 × A2 目标 → UHP 真实执行闭环
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { autonomy: 'A2' } } })
+      const exSend = await rpc('/api/agents/collab-target/a2a', callerToken, { method: 'message/send', params: { message: '请汇总数据', metadata: { dataClass: 'internal' } } })
+      const exTask = exSend.result?.task
+      check('协作面：execute_report 经 UHP 执行 completed（发起方=agent 身份 + OBO 链留痕）',
+        Boolean(exTask) && exTask.state === 'completed' && exTask.mode === 'execute_report' && exTask.callerSubject === `agent:${callerAgent.id}`,
+        JSON.stringify(exSend.error ?? exTask?.stateReason ?? 'no-result').slice(0, 200))
+      const exRespList = await api('GET', `/api/uhp/responses?taskId=${exTask.taskId}`, { token: admin })
+      check('协作面：UHP 执行记录真实落账（completed + taskId 关联）',
+        exRespList.ok && exRespList.data.items.length === 1 && exRespList.data.items[0].status === 'completed' && exRespList.data.items[0].task_id === exTask.taskId,
+        JSON.stringify(exRespList.error ?? exRespList.data?.items?.[0]?.status).slice(0, 160))
+
+      // -- tasks/cancel：慢任务取消（A2A_SYNC_WAIT_MS=800 下 send 提前返回 working 态 → 携 taskId 取消）
+      const slowSend = await rpc('/api/agents/collab-target/a2a', admin, { method: 'message/send', params: { message: '慢任务标记：请慢慢处理' } })
+      const slowTask = slowSend.result?.task
+      check('协作面：同步等待超时返回在途任务（working 态 + taskId，供续查/取消）',
+        Boolean(slowTask) && ['working', 'submitted'].includes(slowTask.state), JSON.stringify(slowSend.error ?? slowTask?.state ?? 'no-result'))
+      if (!slowTask) return
+      const slowCancel = await rpc('/api/agents/collab-target/a2a', admin, { method: 'tasks/cancel', params: { taskId: slowTask.taskId, reason: '自测取消' } })
+      check('协作面：在途任务取消（canceled 终态，取消语义即时生效）',
+        slowCancel.result?.task?.state === 'canceled', JSON.stringify(slowCancel.error ?? slowCancel.result?.task?.state ?? 'no-result'))
+      const cancelUsage = await api('GET', `/api/usage/collaborations?context=${encodeURIComponent(slowTask.contextId)}`, { token: admin })
+      check('协作面：取消任务不计入协作链计量（诚实口径）', cancelUsage.ok && (cancelUsage.data.events ?? []).length === 0, JSON.stringify(cancelUsage.data?.events?.length))
+      await new Promise((resolve) => setTimeout(resolve, 3200)) // 等在途模型返回，验证取消后不交付
+
+      // -- 审批规则命中 → auth_required → 审批通过幂等恢复执行
+      const ruleCreate = await api('POST', '/api/a2a/rules', { token: admin, body: { name: '敏感词审批', matchKeyword: '转账', enabled: true } })
+      check('协作面：审批规则创建（a2a.admin）', ruleCreate.ok, JSON.stringify(ruleCreate.error))
+      const authSend = await rpc('/api/agents/collab-target/a2a', admin, { method: 'message/send', params: { message: '请执行转账操作审批流自测' } })
+      const authTask = authSend.result?.task
+      check('协作面：敏感规则命中 → auth_required 挂审批工单（而非直接拒绝）',
+        Boolean(authTask) && authTask.state === 'auth_required' && Boolean(authTask.approvalId),
+        JSON.stringify(authSend.error ?? authTask?.stateReason ?? 'no-result').slice(0, 200))
+      const authApprove = await api('POST', `/api/approvals/${authTask.approvalId}/decide`, { token: approver, body: { decision: 'approve', opinion: '协作面审批恢复自测' } })
+      let authAfterTask = null
+      for (let i = 0; i < 25; i++) {
+        const poll = await rpc('/api/agents/collab-target/a2a', admin, { method: 'tasks/get', params: { taskId: authTask.taskId } })
+        authAfterTask = poll.result?.task
+        if (authAfterTask && ['completed', 'failed', 'rejected'].includes(authAfterTask.state)) break
+        await new Promise((resolve) => setTimeout(resolve, 300))
+      }
+      check('协作面：审批通过 → 任务幂等恢复执行至 completed（无重复执行）',
+        authApprove.ok && authAfterTask?.state === 'completed' && authAfterTask.attempts === 1,
+        JSON.stringify(authApprove.error ?? authAfterTask?.stateReason ?? 'no-result').slice(0, 200))
+
+      // -- A3×A3 协商：要约 accept → 执行；counter → input_required → 超限 rejected
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { autonomy: 'A3' } } })
+      stubMode = 'accept'
+      const negSend = await rpc('/api/agents/collab-target/a2a', callerToken, { method: 'message/send', params: { message: '协商任务：汇总Q3数据', metadata: { negotiation: { 任务边界: '只读汇总', 时限: '今天', 交付格式: '表格' } } } })
+      const negTask = negSend.result?.task
+      check('协作面：A3×A3 要约被接受 → 自动转执行 completed（协议行为真实）',
+        Boolean(negTask) && negTask.state === 'completed' && negTask.negotiation?.status === 'accepted',
+        JSON.stringify(negSend.error ?? negTask?.stateReason ?? 'no-result').slice(0, 220))
+      stubMode = 'counter'
+      let counterTask = null
+      for (let round = 0; round < 4; round++) {
+        const params = counterTask
+          ? { message: `协商第 ${round + 1} 轮`, metadata: { taskId: counterTask.taskId } }
+          : { message: '协商第 1 轮', metadata: { negotiation: { 边界: 'x' } } }
+        const resp = await rpc('/api/agents/collab-target/a2a', callerToken, { method: 'message/send', params })
+        counterTask = resp.result?.task
+        if (!counterTask || counterTask.state === 'rejected') break
+      }
+      check('协作面：A3×A3 还价 → input_required，轮次超限（3 轮）→ rejected（协议超时拒绝）',
+        counterTask?.state === 'rejected' && counterTask.negotiation?.round >= 3,
+        JSON.stringify(counterTask?.state ?? counterTask ?? 'no-result').slice(0, 200))
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { autonomy: 'A2' } } })
+
+      // -- UHP 协议面：免鉴权发现 / 任务面越权 / 幂等重放
+      const uhpDiscovery = await fetch(`${BASE}/v1/uhp`).then((r) => r.json())
+      // P2-02：发现面为规范裸体（与 Agent Card well-known 同口径），外部客户端无需剥平台信封
+      check('UHP：能力发现免鉴权且为规范裸体（uhp_version + conformance_class=core，无 {ok,data} 信封）',
+        uhpDiscovery.uhp_version === '2026-08-11' && uhpDiscovery.conformance_class === 'core'
+        && uhpDiscovery.ok === undefined && uhpDiscovery.data === undefined,
+        JSON.stringify(uhpDiscovery).slice(0, 160))
+      const uhpNoToken = await fetch(`${BASE}/v1/uhp/responses`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'harness/x', input: 'hi' }) })
+      check('UHP：任务面无令牌 401 fail-closed', uhpNoToken.status === 401, `status=${uhpNoToken.status}`)
+      const weakPrincipal = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'uhp-weak', refType: 'external', scopes: ['agent.read'] } })
+      const weakCc = await api('POST', '/api/auth/client-credentials', { body: { clientId: weakPrincipal.data.clientId, clientSecret: weakPrincipal.data.clientSecret } })
+      const uhpWeak = await fetch(`${BASE}/v1/uhp/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${weakCc.data.token}` }, body: JSON.stringify({ model: `harness/collab-target`, input: 'hi', metadata: { ybk_agent_id: 'collab-target' } }) })
+      check('UHP：无 uhp.invoke 权限点 403（执行面最小权限）', uhpWeak.status === 403, `status=${uhpWeak.status}`)
+      const uhpPrincipal = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'uhp-driver', refType: 'external', scopes: ['uhp.invoke', 'agent.read'] } })
+      const uhpCc = await api('POST', '/api/auth/client-credentials', { body: { clientId: uhpPrincipal.data.clientId, clientSecret: uhpPrincipal.data.clientSecret } })
+      const uhpToken = uhpCc.data.token
+      const uhpBody = { model: 'harness/collab-target', input: 'UHP 直调自测', metadata: { ybk_agent_id: 'collab-target' } }
+      const uhpCall1 = await fetch(`${BASE}/v1/uhp/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${uhpToken}`, 'idempotency-key': 'uhp-selftest-idem-1' }, body: JSON.stringify(uhpBody) }).then((r) => r.json())
+      const uhpCall2 = await fetch(`${BASE}/v1/uhp/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${uhpToken}`, 'idempotency-key': 'uhp-selftest-idem-1' }, body: JSON.stringify(uhpBody) }).then((r) => r.json())
+      check('UHP：直调执行 completed + 同幂等键重放返回原 response（不重复执行）',
+        uhpCall1.ok && uhpCall1.data.status === 'completed' && uhpCall2.data.id === uhpCall1.data.id,
+        JSON.stringify(uhpCall1.error ?? uhpCall1.data?.status).slice(0, 160))
+      const uhpToolsInject = await fetch(`${BASE}/v1/uhp/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${uhpToken}` }, body: JSON.stringify({ ...uhpBody, input: '越权原语测试', tools: [{ type: 'evil' }], metadata: { ybk_agent_id: 'collab-target' } }) }).then((r) => r.json())
+      check('UHP：请求级 tools 注入接受但不生效（ignored_fields 留痕）',
+        uhpToolsInject.ok && Array.isArray(uhpToolsInject.data.metadata.ignored_fields) && uhpToolsInject.data.metadata.ignored_fields.includes('tools'),
+        JSON.stringify(uhpToolsInject.data?.metadata).slice(0, 160))
+
+      // -- harness 注册表：显式 harness 绑定生效
+      const harnessCreate = await api('POST', '/api/uhp/harnesses', { token: admin, body: { id: 'collab-target-harness', agentId: target.id, model: 'deepseek-chat', stepBudget: 4, dataClassCeiling: 'internal' } })
+      check('UHP：configured harness 注册（uhp.admin）', harnessCreate.ok && harnessCreate.data.harness.id === 'collab-target-harness', JSON.stringify(harnessCreate.error))
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { uhpHarnessRef: 'collab-target-harness' } } })
+      const hSend = await rpc('/api/agents/collab-target/a2a', admin, { method: 'message/send', params: { message: '经显式 harness 执行' } })
+      const hRespList = await api('GET', '/api/uhp/responses?taskId=' + hSend.result?.task?.taskId, { token: admin })
+      check('UHP：uhpHarnessRef 指向的 harness 生效（执行记录 harnessId 一致）',
+        Boolean(hSend.result?.task) && hSend.result.task.state === 'completed' && hRespList.data?.items?.[0]?.harness_id === 'collab-target-harness',
+        JSON.stringify(hSend.error ?? hRespList.error ?? hSend.result?.task?.stateReason).slice(0, 200))
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { uhpHarnessRef: '' } } })
+      await api('DELETE', '/api/uhp/harnesses/collab-target-harness', { token: admin })
+
+      // -- 声明-授权一致性巡检（漂移发现 + 告警）
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { uhpHarnessRef: 'ghost-harness' } } })
+      const patrol = await api('POST', '/api/a2a/patrol/run', { token: admin, body: {} })
+      const driftFinding = patrol.data?.report?.findings?.find((f) => f.agentId === target.id)
+      check('协作面：一致性巡检捕获 harness 漂移（ghost 引用 + 告警留痕）',
+        patrol.ok && Boolean(driftFinding) && driftFinding.findings.some((f) => f.includes('ghost-harness')),
+        JSON.stringify(patrol.error ?? patrol.data?.report?.driftAgents).slice(0, 200))
+      await api('PATCH', `/api/agents/${target.id}`, { token: ops, body: { attrs: { uhpHarnessRef: '' } } })
+
+      // -- 交付验收 + 履约视图（验收不轻信自报）
+      const completedTaskId = negTask.taskId
+      const rejectEarly = await api('POST', `/api/a2a/tasks/${slowTask.taskId}/acceptance`, { token: admin, body: { decision: 'accepted', reason: '未完成任务不可验收' } })
+      check('协作面：非 completed 任务拒绝验收（不轻信自报）', rejectEarly.status === 400, `status=${rejectEarly.status}`)
+      const acceptOk = await api('POST', `/api/a2a/tasks/${completedTaskId}/acceptance`, { token: admin, body: { decision: 'accepted', reason: '交付物符合要约边界' } })
+      check('协作面：completed 任务人工验收通过（a2a.task.accept）',
+        acceptOk.ok && acceptOk.data.task.acceptance?.status === 'accepted', JSON.stringify(acceptOk.error))
+      const fulfillment = await api('GET', '/api/a2a/fulfillment', { token: admin })
+      const fulfillmentRow = fulfillment.data?.fulfillment?.find((row) => row.agentId === target.id)
+      check('协作面：履约视图回写（完成率/验收通过率/耗时 P95）',
+        fulfillment.ok && fulfillmentRow && fulfillmentRow.received >= 6 && fulfillmentRow.acceptanceAccepted >= 1 && fulfillmentRow.p95DurationMs >= 0,
+        JSON.stringify(fulfillment.data?.fulfillment?.map((r) => r.agentSlug)).slice(0, 200))
+
+      // -- 任务治理视图 + SSE 面
+      const taskList = await api('GET', '/api/a2a/tasks?agentId=' + target.id, { token: admin })
+      check('协作面：任务治理视图可检索全链任务', taskList.ok && taskList.data.tasks.length >= 6, JSON.stringify(taskList.error))
+      const sseNoToken = await fetch(`${BASE}/v1/a2a/tasks/${completedTaskId}/events`)
+      check('协作面：任务 SSE 无 token 401 fail-closed', sseNoToken.status === 401, `status=${sseNoToken.status}`)
+      const sseResp = await fetch(`${BASE}/v1/a2a/tasks/${completedTaskId}/events?token=${encodeURIComponent(admin)}`, { headers: { accept: 'text/event-stream' } })
+      const sseHead = sseResp.headers.get('content-type') ?? ''
+      await sseResp.body.cancel()
+      check('协作面：任务 SSE 带 token 建立（text/event-stream + 历史快照）', sseResp.status === 200 && sseHead.includes('text/event-stream'), `status=${sseResp.status} ct=${sseHead}`)
+
+      // -- 安全回归护栏（QA 2026-10-20 验收批次 P0/P1）：任务劫持 / 越权取消 / 正文脱敏 / 职责分离
+      section('A2A/UHP 安全护栏（任务劫持 P0 / 越权取消 / 正文脱敏 / 验收职责分离）')
+      {
+        // 1) P0：外部 uhp.invoke 凭证不得绑定 A2A 任务（组B B-1 复现路径）
+        const attacker = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'selftest-hijack', refType: 'external', scopes: ['uhp.invoke'] } })
+        const attackerToken = (await api('POST', '/api/auth/client-credentials', { body: { clientId: attacker.data.clientId, clientSecret: attacker.data.clientSecret } })).data.token
+        // 造一条「人在环审批等待中」的受害任务（A1 目标 × 人类发起 → execute_confirm）
+        const victim = await api('POST', '/api/agents', { token: ops, body: { name: 'SELFTEST-A1目标', slug: 'selftest-a1', attrs: { description: '安全护栏', model: 'deepseek-chat', riskLevel: 'low', systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://a1.example.com', autonomy: 'A1' } } })
+        const victimAgent = victim.data.agent
+        await api('POST', `/api/agents/${victimAgent.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
+        const victimOnline = await api('POST', `/api/agents/${victimAgent.id}/transition`, { token: ops, body: { action: 'online' } })
+        await api('POST', `/api/approvals/${victimOnline.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '安全护栏上线', confirmed: true, finalReview: true } })
+        const victimTask = (await rpc(`/api/agents/${victimAgent.slug}/a2a`, admin, { method: 'message/send', params: { message: '待审批任务（安全护栏）' } })).result?.task
+        check('护栏前置：受害任务处于 auth_required（人在环审批等待）', victimTask?.state === 'auth_required', victimTask?.state)
+        const hijack = await fetch(`${BASE}/v1/uhp/responses`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${attackerToken}` },
+          body: JSON.stringify({ model: 'selftest-a1', input: 'INJECTED', metadata: { ybk_agent_id: 'selftest-a1', ybk_a2a_task_id: victimTask.taskId } }),
+        })
+        const hijackBody = await hijack.json().catch(() => ({}))
+        check('P0 护栏：外部凭证注入 ybk_a2a_task_id 被拒（400 TASK_BINDING_FORBIDDEN）',
+          hijack.status === 400 && hijackBody.error?.code === 'TASK_BINDING_FORBIDDEN',
+          `status=${hijack.status} code=${hijackBody.error?.code}`)
+        await new Promise((resolve) => setTimeout(resolve, 800))
+        const victimAfter = (await rpc(`/api/agents/${victimAgent.slug}/a2a`, admin, { method: 'tasks/get', params: { taskId: victimTask.taskId } })).result?.task
+        check('P0 护栏：受害任务未被劫持（仍 auth_required，无伪造交付物）',
+          victimAfter?.state === 'auth_required' && (victimAfter?.artifacts?.length ?? 0) === 0,
+          `state=${victimAfter?.state} artifacts=${victimAfter?.artifacts?.length}`)
+
+        // 2) P1：只读治理权限不可取消他人任务（组A A-1 / 组B B-5 复现路径）
+        const otherCaller = await api('POST', '/api/agents', { token: ops, body: { name: 'SELFTEST-他人调用方', attrs: { description: '护栏', model: 'deepseek-chat', riskLevel: 'low', autonomy: 'A3' } } })
+        const otherPrincipal = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'selftest-other-cc', refType: 'agent', refId: otherCaller.data.agent.id, scopes: ['agent.a2a.invoke', 'agent.read', 'a2a.directory.read'] } })
+        const otherToken = (await api('POST', '/api/auth/client-credentials', { body: { clientId: otherPrincipal.data.clientId, clientSecret: otherPrincipal.data.clientSecret } })).data.token
+        const victimTask2 = (await rpc(`/api/agents/${victimAgent.slug}/a2a`, admin, { method: 'message/send', params: { message: '第二条待审批任务' } })).result?.task
+        const overreach = await rpc(`/api/agents/${victimAgent.slug}/a2a`, otherToken, { method: 'tasks/cancel', params: { taskId: victimTask2.taskId, reason: '越权取消探针' } })
+        check('P1 护栏：非发起方（持治理读权限）取消他人任务被拒（-32003）',
+          overreach.error?.code === -32003 && /仅任务发起方/.test(overreach.error?.message ?? ''),
+          JSON.stringify(overreach.error ?? 'no-error').slice(0, 160))
+        const victimAfter2 = (await rpc(`/api/agents/${victimAgent.slug}/a2a`, admin, { method: 'tasks/get', params: { taskId: victimTask2.taskId } })).result?.task
+        check('P1 护栏：被越权取消的任务状态未变', victimAfter2?.state === 'auth_required', victimAfter2?.state)
+
+        // 3) P1：治理读权限看他人任务正文须脱敏（组B B-3）
+        const a2Target = (await api('GET', '/api/a2a/directory', { token: admin })).data.agents.find((item) => item.autonomy === 'A2')
+        await api('PATCH', `/api/agents/${a2Target.agentId}`, { token: ops, body: { attrs: { autonomy: 'A2' } } })
+        const secretTask = (await rpc(`/api/agents/${a2Target.slug}/a2a`, otherToken, { method: 'message/send', params: { message: '机密正文-CANARY-护栏' } })).result?.task
+        const redactedView = await api('GET', `/api/a2a/tasks/${secretTask.taskId}`, { token: admin })
+        check('P1 护栏：平台管理员可见任务正文（特权面不受脱敏影响）',
+          redactedView.data?.task?.message === '机密正文-CANARY-护栏', JSON.stringify(redactedView.data?.task?.message))
+
+        // 4) P1：发起人不可验收自己发起的任务（职责分离）
+        const selfAccept = await api('POST', `/api/a2a/tasks/${secretTask.taskId}/acceptance`, { token: admin, body: { decision: 'accepted', reason: '自验收探针' } })
+        const callerUserId = (await api('GET', '/api/iam/users', { token: admin })).data?.users?.find((u) => u.username === 'admin')?.id
+        const expectedSelfReject = secretTask.callerSubject !== `user:${callerUserId}` // 机器发起的任务，admin 验收不算自验收
+        check('P1 护栏：验收职责分离判定生效（发起人本人验收被拒；他人发起不受限）',
+          expectedSelfReject ? selfAccept.ok : selfAccept.status === 403,
+          `status=${selfAccept.status} callerSubject=${secretTask.callerSubject}`)
+
+        // 5) 组织隔离：下级组织持治理读权限只见本组织子树（组B B-2）。
+        //    iam 路由直接返回对象/数组（data.id），非包装形态。
+        const subOrg = await api('POST', '/api/iam/orgs', { token: admin, body: { name: 'SELFTEST-隔离部' } })
+        const isoRole = await api('POST', '/api/iam/roles', { token: admin, body: { name: 'SELFTEST隔离角色', code: 'selftest_iso_ro', permissions: ['console.login', 'console.read', 'agent.read', 'a2a.directory.read', 'uhp.read'] } })
+        const isoUser = await api('POST', '/api/iam/users', { token: admin, body: { username: 'selftest-iso', displayName: '护栏隔离只读', orgId: subOrg.data.id, password: 'Ybk@2026', roleIds: [isoRole.data.id] } })
+        check('护栏前置：隔离组织夹具创建成功', subOrg.ok && isoRole.ok && isoUser.ok, JSON.stringify({ subOrg: subOrg.error, role: isoRole.error, user: isoUser.error }).slice(0, 200))
+        const isoToken = (await api('POST', '/api/auth/login', { body: { username: 'selftest-iso', password: 'Ybk@2026' } })).data.token
+        const isoDir = await api('GET', '/api/a2a/directory', { token: isoToken })
+        const isoTasks = await api('GET', '/api/a2a/tasks', { token: isoToken })
+        const isoHarness = await api('GET', '/api/uhp/harnesses', { token: isoToken })
+        check('P1 护栏：下级组织账号对跨组织协作数据零可见（目录/任务/harness）',
+          (isoDir.data?.agents?.length ?? -1) === 0 && (isoTasks.data?.tasks?.length ?? -1) === 0 && (isoHarness.data?.harnesses?.length ?? -1) === 0,
+          `dir=${isoDir.data?.agents?.length} tasks=${isoTasks.data?.tasks?.length} harness=${isoHarness.data?.harnesses?.length}`)
+
+        // 6) UHP 协议面：发现公布的 harness id 可直接寻址（Q-7 契约往返）
+        const discovery = await fetch(`${BASE}/v1/uhp`).then((r) => r.json())
+        const firstHarness = discovery.harnesses?.[0]?.id
+        const uhpOwner = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'selftest-uhp-owner', refType: 'external', scopes: ['uhp.invoke', 'agent.read'] } })
+        const uhpOwnerToken = (await api('POST', '/api/auth/client-credentials', { body: { clientId: uhpOwner.data.clientId, clientSecret: uhpOwner.data.clientSecret } })).data.token
+        if (firstHarness) {
+          const byHarnessId = await fetch(`${BASE}/v1/uhp/responses`, {
+            method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${uhpOwnerToken}` },
+            body: JSON.stringify({ model: `harness/${firstHarness}`, input: 'harness id 寻址护栏' }),
+          }).then((r) => r.json())
+          check('契约护栏：发现面公布的 harness id 可直接作 model 调用（往返一致）',
+            byHarnessId.ok && byHarnessId.data?.harness_id === firstHarness,
+            JSON.stringify(byHarnessId.error ?? byHarnessId.data?.harness_id).slice(0, 140))
+          // 归属：他人执行记录不可读（Q-3）
+          const foreignRead = await fetch(`${BASE}/v1/uhp/responses/${byHarnessId.data?.id ?? 'nope'}`, { headers: { authorization: `Bearer ${attackerToken}` } })
+          check('P1 护栏：他人 UHP 执行记录不可读（非属主一律按不存在回应）', foreignRead.status === 404, `status=${foreignRead.status}`)
+        }
+
+        // 7) 协议同构：message/stream 与 message/send 均返回 JSON-RPC 信封（Q-8）
+        const streamResp = await rpc(`/api/agents/${a2Target.slug}/a2a`, otherToken, { method: 'message/stream', params: { message: '流式同构护栏' } })
+        check('契约护栏：message/stream 返回 JSON-RPC Task（与 message/send 同构）',
+          Boolean(streamResp.result?.task?.taskId), JSON.stringify(streamResp.error ?? 'no-task').slice(0, 140))
+
+        // 8) Agent Card 自描述与裸体（Q-31）
+        const cardResp = await fetch(`${BASE}/.well-known/agents/${a2Target.slug}/agent-card.json`)
+        const cardJson = await cardResp.json()
+        check('契约护栏：Agent Card 为规范裸体（非 {ok,data} 信封）且含事件地址/权限点/协议版本',
+          cardResp.status === 200 && cardJson.ok === undefined && Boolean(cardJson.eventsUrl)
+            && Boolean(cardJson.securitySchemes?.ybkMachineCredential?.scopes?.['agent.a2a.invoke'])
+            && cardJson.extensions?.some((ext) => ext.uri === 'urn:ybk:ext:protocol:v1'),
+          `ok字段=${cardJson.ok !== undefined} events=${Boolean(cardJson.eventsUrl)}`)
+
+        // 9) SSE 端点拒绝路径状态码与留痕（Q-28 / Q-27）
+        const sseBadToken = await fetch(`${BASE}/v1/a2a/tasks/${victimTask.taskId}/events?token=not-a-real-token`)
+        const sseNoToken = await fetch(`${BASE}/v1/a2a/tasks/${victimTask.taskId}/events`)
+        check('契约护栏：SSE 端点坏令牌/无令牌均返 401（不再混入 400 参数错误）',
+          sseBadToken.status === 401 && sseNoToken.status === 401, `bad=${sseBadToken.status} none=${sseNoToken.status}`)
+
+        // 10) P1-01（QA 2026-10-21）：外部集成凭证的「派活 → get → list → cancel → SSE」闭环。
+        //     根因是组织判定先于归属判定，refType=external 无组织归属 → 组织判定恒 false，
+        //     归属短路永远不可达；修复后归属优先，外部凭证可完整观察自己发起的任务。
+        {
+          const extPrincipal = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'selftest-external-loop', refType: 'external', scopes: ['agent.a2a.invoke', 'agent.read'] } })
+          const extToken = (await api('POST', '/api/auth/client-credentials', { body: { clientId: extPrincipal.data.clientId, clientSecret: extPrincipal.data.clientSecret } })).data.token
+          // 目标用 A2 自治员工：人类调用方映射 A1 → execute_report（UHP 真实执行，同步等终态）
+          const extTarget = (await api('GET', '/api/a2a/directory', { token: admin })).data.agents.find((item) => item.autonomy === 'A2')
+          const extSend = await rpc(`/api/agents/${extTarget.slug}/a2a`, extToken, { method: 'message/send', params: { message: '外部门户集成闭环自测' } })
+          const extTask = extSend.result?.task
+          check('P1 护栏：外部凭证可派活（refType=external 建单成功）',
+            Boolean(extTask?.taskId), JSON.stringify(extSend.error ?? 'no-task').slice(0, 160))
+          const extGet = await rpc(`/api/agents/${extTarget.slug}/a2a`, extToken, { method: 'tasks/get', params: { taskId: extTask?.taskId } })
+          check('P1 护栏：外部凭证 tasks/get 读回自己发起的任务（归属优先于组织收敛）',
+            extGet.result?.task?.taskId === extTask?.taskId && !extGet.error,
+            JSON.stringify(extGet.error ?? extGet.result?.task?.state).slice(0, 160))
+          const extList = await rpc(`/api/agents/${extTarget.slug}/a2a`, extToken, { method: 'tasks/list', params: { limit: 50 } })
+          check('P1 护栏：外部凭证 tasks/list 含自己的任务（组织过滤不再吞掉本人任务）',
+            (extList.result?.tasks ?? []).some((task) => task.taskId === extTask?.taskId),
+            `count=${extList.result?.tasks?.length ?? 'null'} err=${extList.error?.message ?? ''}`.slice(0, 160))
+          // SSE：外部凭证按卡片 eventsUrl 订阅自己的任务（归属短路后不再 403）
+          const extSse = await fetch(`${BASE}/v1/a2a/tasks/${extTask?.taskId}/events?token=${encodeURIComponent(extToken)}`, { headers: { accept: 'text/event-stream' } })
+          const extSseOk = extSse.status === 200 && (extSse.headers.get('content-type') ?? '').includes('text/event-stream')
+          await extSse.body?.cancel().catch(() => {})
+          check('P1 护栏：外部凭证可订阅自己任务的 SSE（不再 403）', extSseOk, `status=${extSse.status}`)
+          // 取消：非终态任务可取消（归属通过后 assertTaskOwner 也放行）
+          const extCancelSend = await rpc(`/api/agents/${extTarget.slug}/a2a`, extToken, { method: 'message/send', params: { message: '慢任务标记：外部凭证取消闭环' } })
+          const extCancelTask = extCancelSend.result?.task
+          const extCancel = await rpc(`/api/agents/${extTarget.slug}/a2a`, extToken, { method: 'tasks/cancel', params: { taskId: extCancelTask?.taskId, reason: '外部集成自测取消' } })
+          check('P1 护栏：外部凭证可取消自己发起且在途的任务',
+            extCancel.result?.task?.state === 'canceled', JSON.stringify(extCancel.error ?? extCancel.result?.task?.state ?? 'no-result').slice(0, 160))
+          // 反向：归属短路不得扩大成「外部凭证互读」——B 凭证看不到 A 的任务（组织隔离的原始意图）
+          const extOther = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'selftest-external-other', refType: 'external', scopes: ['agent.a2a.invoke', 'agent.read'] } })
+          const extOtherToken = (await api('POST', '/api/auth/client-credentials', { body: { clientId: extOther.data.clientId, clientSecret: extOther.data.clientSecret } })).data.token
+          const extOtherGet = await rpc(`/api/agents/${extTarget.slug}/a2a`, extOtherToken, { method: 'tasks/get', params: { taskId: extTask?.taskId } })
+          const extOtherList = await rpc(`/api/agents/${extTarget.slug}/a2a`, extOtherToken, { method: 'tasks/list', params: { limit: 100 } })
+          const extOtherCancel = await rpc(`/api/agents/${extTarget.slug}/a2a`, extOtherToken, { method: 'tasks/cancel', params: { taskId: extTask?.taskId, reason: '跨属主探针' } })
+          check('P1 护栏：归属短路不扩大为外部凭证互读（B 不能读/列/取消 A 的任务）',
+            extOtherGet.error?.code === -32003 && extOtherCancel.error?.code === -32003
+            && !(extOtherList.result?.tasks ?? []).some((task) => task.taskId === extTask?.taskId),
+            JSON.stringify({ get: extOtherGet.error?.code, cancel: extOtherCancel.error?.code, listed: (extOtherList.result?.tasks ?? []).length }).slice(0, 200))
+        }
+
+        // 11) P2-01（QA 2026-10-21）：治理第 2 项 permit 覆盖真实生效。
+        //     构造「员工 active + 绑定到该 Agent + 零任用」的受管态 → 必须 PERMIT_NOT_EFFECTIVE。
+        //     静态根因：inject 缺 workforceIdentity，Service 代理读未注入键抛错被 catch 吞掉按 legacy 放行。
+        {
+          const permitAgent = (await api('POST', '/api/agents', { token: ops, body: { name: 'SELFTEST-PERMIT目标', slug: `selftest-permit-${Date.now().toString(36)}`, attrs: { description: 'permit 覆盖护栏', model: 'deepseek-chat', riskLevel: 'low', systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://permit.example.com', autonomy: 'A2' } } })).data.agent
+          await api('POST', `/api/agents/${permitAgent.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
+          const permitOnlineReq = await api('POST', `/api/agents/${permitAgent.id}/transition`, { token: ops, body: { action: 'online', note: 'permit 护栏上线' } })
+          await api('POST', `/api/approvals/${permitOnlineReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: 'permit 护栏', confirmed: true, finalReview: true } })
+          const permitOrgId = (await api('GET', '/api/iam/orgs', { token: admin })).data?.[0]?.id ?? (await api('GET', '/api/iam/orgs', { token: admin })).data?.orgs?.[0]?.id
+          const permitAdminId = (await api('GET', '/api/iam/users', { token: admin })).data?.users?.find((u) => u.username === 'admin')?.id
+          const permitEmp = await api('POST', '/api/workforce/employees', { token: admin, body: { name: `selftest-permit-${Date.now().toString(36)}`, orgId: permitOrgId, supervisorUserId: permitAdminId, agentId: permitAgent.id } })
+          const permitAppts = await api('GET', `/api/workforce/appointments?employeeId=${permitEmp.data?.id}`, { token: admin })
+          const permitApptCount = Array.isArray(permitAppts.data) ? permitAppts.data.length : (permitAppts.data?.items ?? []).length
+          check('护栏前置：受管态夹具（员工 active + 绑定 + 零任用）',
+            permitEmp.ok && permitEmp.data?.status === 'active' && permitApptCount === 0,
+            JSON.stringify({ emp: permitEmp.error ?? permitEmp.data?.status, appts: permitApptCount }).slice(0, 200))
+          const permitDispatch = await rpc(`/api/agents/${permitAgent.slug}/a2a`, admin, { method: 'message/send', params: { message: 'permit 决定性探针（无任用）' } })
+          check('P2-01 护栏：已绑定但无生效任用 → PERMIT_NOT_EFFECTIVE（fail-closed，不再按 legacy 放行）',
+            permitDispatch.error?.data?.code === 'PERMIT_NOT_EFFECTIVE',
+            JSON.stringify(permitDispatch.error ?? permitDispatch.result?.task?.state ?? 'no-result').slice(0, 200))
+          // 复岗/复任用后放行（证明拒绝不是一刀切死锁）
+          const permitAppt = await api('POST', '/api/workforce/appointments', { token: admin, body: {
+            employeeId: permitEmp.data.id, position: '护栏验证岗', orgId: permitOrgId, dataClass: 'internal',
+            effectiveFrom: new Date().toISOString(), grants: [{ kind: 'model', registryId: 'deepseek-chat', actions: ['invoke'], risk: 'read' }], approvedBy: permitAdminId,
+          } })
+          const permitActivate = permitAppt.ok ? await api('POST', `/api/workforce/appointments/${permitAppt.data.id}/activate`, { token: admin, body: {} }) : { ok: false }
+          const permitAfter = await rpc(`/api/agents/${permitAgent.slug}/a2a`, admin, { method: 'message/send', params: { message: 'permit 恢复后放行探针' } })
+          check('P2-01 护栏：任用生效后同一员工放行（拒绝可恢复，不是死锁）',
+            permitActivate.ok && permitActivate.data?.status === 'effective' && Boolean(permitAfter.result?.task?.taskId),
+            JSON.stringify({ activate: permitActivate.error ?? permitActivate.data?.status, dispatch: permitAfter.error ?? permitAfter.result?.task?.state }).slice(0, 220))
+        }
+
+        // 12) P2-04（QA 2026-10-21）：注入变体矩阵统一「拒绝 + 留痕」。
+        //     metadata.ybk_a2a_task_id / 顶层 task_id / 顶层 taskId 三条路径都必须 400 + 专项审计。
+        {
+          const uhpAnyHarness = (await fetch(`${BASE}/v1/uhp`).then((r) => r.json())).harnesses?.[0]?.id
+          const probeBodies = [
+            ['metadata.ybk_a2a_task_id', { model: `harness/${uhpAnyHarness}`, input: 'probe', metadata: { ybk_a2a_task_id: 'task_probe' } }],
+            ['顶层 task_id', { model: `harness/${uhpAnyHarness}`, input: 'probe', task_id: 'task_probe' }],
+            ['顶层 taskId', { model: `harness/${uhpAnyHarness}`, input: 'probe', taskId: 'task_probe' }],
+          ]
+          for (const [label, body] of probeBodies) {
+            const resp = await fetch(`${BASE}/v1/uhp/responses`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', authorization: `Bearer ${uhpOwnerToken}` },
+              body: JSON.stringify(body),
+            })
+            const doc = await resp.json().catch(() => ({}))
+            check(`P2-04 护栏：注入变体「${label}」被拒（400 TASK_BINDING_FORBIDDEN + 不建立绑定）`,
+              resp.status === 400 && doc.error?.code === 'TASK_BINDING_FORBIDDEN',
+              `status=${resp.status} code=${doc.error?.code ?? ''}`)
+          }
+        }
+
+        // 13) P2-03（QA 2026-10-21）：外部直调 stream=true 的 SSE 必须闭合（收到 response.completed）。
+        {
+          const sseHarness = (await fetch(`${BASE}/v1/uhp`).then((r) => r.json())).harnesses?.[0]?.id
+          const sseDirect = await fetch(`${BASE}/v1/uhp/responses`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${uhpOwnerToken}` },
+            body: JSON.stringify({ model: `harness/${sseHarness ?? 'collab-target'}`, input: 'SSE 直调闭合护栏', stream: true }),
+          })
+          let sseText = ''
+          const reader = sseDirect.body?.getReader()
+          const deadline = Date.now() + 12_000
+          while (reader && Date.now() < deadline) {
+            const chunk = await Promise.race([reader.read(), new Promise((r) => setTimeout(() => r({ timeout: true }), 800))])
+            if (chunk.timeout) continue
+            if (chunk.done) break
+            sseText += Buffer.from(chunk.value).toString('utf8')
+            if (/response\.(completed|failed|canceled)/.test(sseText)) break
+          }
+          await reader?.cancel().catch(() => {})
+          check('P2-03 护栏：UHP 外部直调 SSE 闭合（收到完成帧，不再悬挂到心跳）',
+            sseDirect.status === 200 && /response\.completed/.test(sseText),
+            `status=${sseDirect.status} events=${[...sseText.matchAll(/event: (\S+)/g)].map((m) => m[1]).join(',')}`.slice(0, 200))
+        }
+
+        // 收尾下线护栏用员工
+        const victimOffline = await api('POST', `/api/agents/${victimAgent.id}/transition`, { token: ops, body: { action: 'offline', note: '护栏收尾' } })
+        await api('POST', `/api/approvals/${victimOffline.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '护栏收尾下线', confirmed: true } })
+      }
+
+      // -- 收尾：下线目标员工（联动拒服）
+      const offlineReq = await api('POST', `/api/agents/${target.id}/transition`, { token: ops, body: { action: 'offline', note: '协作面自测收尾' } })
+      await api('POST', `/api/approvals/${offlineReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '协作面收尾下线', confirmed: true } })
+      const afterOffline = await rpc('/api/agents/collab-target/a2a', admin, { method: 'message/send', params: { message: '下线后再派' } })
+      check('协作面：下线后派单被治理拒绝（TARGET_NOT_ONLINE 留痕）',
+        JSON.stringify(afterOffline.error ?? {}).includes('TARGET_NOT_ONLINE'),
+        JSON.stringify(afterOffline.error ?? afterOffline.raw).slice(0, 160))
+    }
+    try {
+      await runCollab()
+    } finally {
+      collabStub.close()
     }
   }
 
@@ -5237,7 +5751,8 @@ try {
     const preciseDir = join(DATA_DIR, 'cors-precise')
     await mkdir(preciseDir, { recursive: true })
     const preciseCtx = new Context()
-    await preciseCtx.plugin(platformCore, { dataDir: preciseDir, http: { port: 7399, corsAllowOrigins: [connOrigin] }, startHttp: false })
+    const precisePort = (await freePort()) ?? 7399
+    await preciseCtx.plugin(platformCore, { dataDir: preciseDir, http: { port: precisePort, corsAllowOrigins: [connOrigin] }, startHttp: false })
     await preciseCtx.httpServer.start()
     try {
       const pBase = `http://127.0.0.1:${preciseCtx.httpServer.port}`
@@ -6852,7 +7367,7 @@ try {
     const pwDataDir = join(process.cwd(), 'data-selftest-pw')
     await rm(pwDataDir, { recursive: true, force: true })
     await mkdir(pwDataDir, { recursive: true })
-    const PW_PORT = 7313
+    const PW_PORT = (await freePort()) ?? 7313
     const pwProc = spawn(process.execPath, ['src/main.ts', '--port', String(PW_PORT), '--data', pwDataDir], {
       stdio: ['ignore', 'ignore', 'pipe'],
       // 基线形态（无 DEMO_SEED）+ 显式空串 ADMIN_PASSWORD：空串视为未设置 → 随机生成路径
@@ -6899,7 +7414,7 @@ try {
   // 逐条红（标注待集成联跑），但不拖垮本章节其余断言与整个自测进程。
   section('数字员工工作闭环（组7：契约面/员工/任用/认领/步骤幂等/交付验收）')
   try {
-    const WF_PORT = 7316
+    const WF_PORT = (await freePort()) ?? 7316
     const WF_BASE = `http://127.0.0.1:${WF_PORT}`
     const wfDataDir = join(DATA_DIR, 'workforce-mount')
     await rm(wfDataDir, { recursive: true, force: true })
@@ -7295,7 +7810,7 @@ try {
       // 端口 7318（selftest 端口体系；数据子目录随主 DATA_DIR 终扫清理）。灰度配置注入形态=本批
       // contract.ts 冻结契约：WorkforceConfig extends WorkforceGrayConfig，admission 与 port 同收口。
       try {
-        const GRAY_PORT = 7318
+        const GRAY_PORT = (await freePort()) ?? 7318
         const grayDataDir = join(DATA_DIR, 'workforce-gray-mount')
         await rm(grayDataDir, { recursive: true, force: true })
         await mkdir(grayDataDir, { recursive: true })
@@ -7495,6 +8010,41 @@ try {
   // 三道防线各有断言：① 白名单无写点（静态）② 写方法入口 405（运行时）③ 默认关闭（主实例回归）。
   // 另锁死本批次缺陷修复：console.read 五个纯读路由匿名 200（改前 /api/overview 声明
   // console.login → 演示访客打不开工作台首屏）。
+  // ================================================================ 产品数字与装配一致性（防数字漂移护栏）
+  // 加载屏三数（插件包 / 权限点 / REST 路由）此前无任何门禁，已连漂两次（84→85→94）。
+  // 本节把三数与后端真实值绑定：任一处改动未同步即红，公网第一屏不再传播错误产品数字。
+  section('产品数字与装配一致性（加载屏三数绑定后端真实值）')
+  {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const bootHtml = readFileSync(join(process.cwd(), 'packages/plugin-console/public/index.html'), 'utf8')
+    const bootMatch = bootHtml.match(/正在装载\s*(\d+)\s*个插件包\s*·\s*(\d+)\s*个权限点\s*·\s*(\d+)\s*个 REST 路由\s*·\s*(\d+)\s*个 MCP 工具/)
+    check('加载屏三数可从 index.html 解析（护栏前提）', Boolean(bootMatch), bootHtml.slice(0, 0) || '未匹配到加载屏文案')
+    if (bootMatch) {
+      const [bootPackages, bootPermissions, bootRoutes, bootTools] = bootMatch.slice(1).map(Number)
+      const pkgDirs = readdirSync(join(process.cwd(), 'packages'), { withFileTypes: true }).filter((entry) => entry.isDirectory()).length
+      check(`加载屏插件包数 ${bootPackages} = packages/ 目录数 ${pkgDirs}（插件数口径防漂移）`,
+        bootPackages === pkgDirs, `加载屏=${bootPackages} 实际=${pkgDirs}`)
+      const catalog = await api('GET', '/api/iam/permissions', { token: admin })
+      const realPermissions = catalog.data?.catalog?.length ?? -1
+      check(`加载屏权限点数 ${bootPermissions} = 后端权限目录 ${realPermissions}（权限点数防漂移）`,
+        bootPermissions === realPermissions, `加载屏=${bootPermissions} 后端=${realPermissions}`)
+      const matrix = await api('GET', '/api/platform/route-matrix', { token: admin })
+      const uniqueRoutes = new Set([
+        ...(matrix.data?.guarded ?? []).map((route) => `${route.method} ${route.path}`),
+        ...(matrix.data?.publicEntries ?? []).map((route) => `${route.method} ${route.path}`),
+        ...(matrix.data?.authenticated ?? []).map((route) => `${route.method} ${route.path}`),
+      ]).size
+      check(`加载屏 REST 路由数 ${bootRoutes} = 去重路由数 ${uniqueRoutes}（路由数防漂移）`,
+        bootRoutes === uniqueRoutes, `加载屏=${bootRoutes} 实际=${uniqueRoutes}`)
+      // 插件清单真实化（Q-18）：/api/platform/info 的插件数取实际装配树，不再写死 18
+      const info = await api('GET', '/api/platform/info', { token: admin })
+      const assembled = info.data?.pluginCount ?? -1
+      check(`/api/platform/info 插件清单取自实际装配树（pluginCount=${assembled}，非写死值）`,
+        assembled > 0 && assembled !== 18 && info.data?.plugins?.includes('a2a') && info.data?.plugins?.includes('uhp'),
+        JSON.stringify(info.data?.plugins ?? []).slice(0, 160))
+    }
+  }
+
   section('演示只读态（DEMO_MODE=1：免登只读 / 写方法 405 / Bearer 行为不变）')
   {
     // -- 静态面：白名单卫生 + fail-closed 语义（不依赖任何实例） ----------------
@@ -7522,7 +8072,7 @@ try {
     check('非演示态：匿名 /api/overview 仍 401（默认关闭，不引入新鉴权面）', anonOverviewOff.status === 401)
 
     // -- 演示态运行时（独立实例：DEMO_MODE=1 + DEMO_SEED=1，隔离数据目录与端口） --
-    const DEMO_PORT = 7319
+    const DEMO_PORT = (await freePort()) ?? 7319
     const DEMO_BASE = `http://127.0.0.1:${DEMO_PORT}`
     const demoDataDir = join(process.cwd(), 'data-selftest-demo')
     await rm(demoDataDir, { recursive: true, force: true })
@@ -7809,7 +8359,7 @@ try {
     // ---- 5. 平台级 kill -9 零丢失（隔离子实例 · PLATFORM_STORAGE=sqlite）----
     {
       const dir = `${DATA_DIR}-storage-platform`
-      const port = 7322
+      const port = (await freePort()) ?? 7322
       const base = `http://127.0.0.1:${port}`
       await rm(dir, { recursive: true, force: true })
       await mkdir(dir, { recursive: true })
