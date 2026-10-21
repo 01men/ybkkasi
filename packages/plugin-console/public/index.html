@@ -25,7 +25,7 @@
       <div style="text-align:center;color:#0a5f87;max-width:520px;padding:0 24px">
         <img src="/ybk-mark.png" alt="元冰可" style="width:46px;height:46px;margin:0 auto 14px;border-radius:12px;display:block">
         <div style="font-size:15px;font-weight:600;letter-spacing:.02em" id="ybkBootTitle">正在加载控制台…</div>
-        <div style="margin-top:10px;font-size:13px;line-height:1.7;color:#4a6572" id="ybkBootStats">正在装载 27 个插件包 · 85 个权限点 · 354 个 REST 路由 · 83 个 MCP 工具<br>
+        <div style="margin-top:10px;font-size:13px;line-height:1.7;color:#4a6572" id="ybkBootStats">正在装载 27 个插件包 · 85 个权限点 · 354 个 REST 路由 · 86 个 MCP 工具<br>
           全程本地加载，数据不出你的浏览器</div>
         <div style="margin-top:16px;height:3px;width:180px;margin-left:auto;margin-right:auto;border-radius:2px;background:#dce6ea;overflow:hidden">
           <div style="width:40%;height:100%;border-radius:2px;background:#0a5f87;animation:ybkBootSlide 1.4s ease-in-out infinite"></div>
@@ -52,9 +52,9 @@
       var nav = (navigator.language || 'zh-CN').toLowerCase()
       var loc = pick === 'auto' || !pick ? (nav.indexOf('zh') === 0 ? 'zh' : nav.indexOf('ja') === 0 ? 'ja' : 'en') : pick.toLowerCase()
       var T = {
-        zh: ['正在加载控制台…', '正在装载 27 个插件包 · 85 个权限点 · 354 个 REST 路由 · 83 个 MCP 工具<br>全程本地加载，数据不出你的浏览器'],
-        en: ['Loading console…', 'Loading 27 plugin packages · 85 permission points · 354 REST routes · 83 MCP tools<br>Loaded entirely in your browser — no data leaves your machine'],
-        ja: ['コンソールを読み込み中…', '27 プラグイン・85 権限ポイント・354 REST ルート・83 MCP ツールを読み込み中<br>すべてブラウザ内で読み込み。データは端末外に出ません']
+        zh: ['正在加载控制台…', '正在装载 27 个插件包 · 85 个权限点 · 354 个 REST 路由 · 86 个 MCP 工具<br>全程本地加载，数据不出你的浏览器'],
+        en: ['Loading console…', 'Loading 27 plugin packages · 85 permission points · 354 REST routes · 86 MCP tools<br>Loaded entirely in your browser — no data leaves your machine'],
+        ja: ['コンソールを読み込み中…', '27 プラグイン・85 権限ポイント・354 REST ルート・86 MCP ツールを読み込み中<br>すべてブラウザ内で読み込み。データは端末外に出ません']
       }
       var t = T[loc] || T.zh
       var title = document.getElementById('ybkBootTitle')

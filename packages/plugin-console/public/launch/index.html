@@ -151,7 +151,7 @@ footer .links{display:flex;gap:20px;justify-content:center;margin-bottom:14px;fl
     <div class="m"><b>5</b><span>asset types</span></div>
     <div class="m"><b>85</b><span>permission points</span></div>
     <div class="m"><b>354</b><span>REST routes</span></div>
-    <div class="m"><b>83</b><span>MCP tools</span></div>
+    <div class="m"><b>86</b><span>MCP tools</span></div>
     <div class="m"><b>1486</b><span>assertions green</span></div>
     <div class="m"><b>0</b><span>added dependencies</span></div>
   </div>
@@ -196,7 +196,7 @@ footer .links{display:flex;gap:20px;justify-content:center;margin-bottom:14px;fl
   </div>
   <div class="cards">
     <div class="card"><h3><span class="dot"></span>Lifecycle state machine</h3><p>Draft → registered → active → deprecated → retired, with dependency topology so you can see the blast radius before you change anything.</p></div>
-    <div class="card"><h3><span class="dot"></span>85 permission points</h3><p>Fine-grained <code>resource.action</code> permissions enforced server-side on 354 REST routes and 83 MCP tools. Read and write are genuinely separated.</p></div>
+    <div class="card"><h3><span class="dot"></span>85 permission points</h3><p>Fine-grained <code>resource.action</code> permissions enforced server-side on 354 REST routes and 86 MCP tools. Read and write are genuinely separated.</p></div>
     <div class="card"><h3><span class="dot"></span>Immutable audit log</h3><p>Every mutation records actor, target, before/after and approval chain. Exports as JSON for your SIEM.</p></div>
     <div class="card"><h3><span class="dot"></span>Approval workflows</h3><p>Registering or promoting an asset routes through approvers. Demo data includes real approval chains.</p></div>
   </div>
@@ -255,16 +255,16 @@ footer .links{display:flex;gap:20px;justify-content:center;margin-bottom:14px;fl
     <h2>Runs on Node 22. No build step, no database server.</h2>
     <p>Native TypeScript executed directly by Node, with <code>node:sqlite</code> for storage. We added zero runtime dependencies — the audit log and the ledger are the product, not an afterthought.</p>
   </div>
-<pre><span class="c"># clone + run (no npm install needed)</span>
+<pre><span class="c"># clone + run (needs Node 22.6+)</span>
 git clone https://github.com/01men/ybkkasi.git
-cd ybkkasi &amp;&amp; node packages/plugin-console/src/index.ts
+cd ybkkasi &amp;&amp; npm install &amp;&amp; npm start   <span class="c"># → http://127.0.0.1:7300</span>
 
 <span class="c"># or with Docker</span>
 docker compose up -d          <span class="c"># Dockerfile + docker-compose.yml included</span>
 
 <span class="c"># verify it works</span>
 npm run selftest              <span class="c"># 1486 assertions</span></pre>
-  <p style="margin-top:14px;font-size:13.5px;color:var(--t3)">Also available as 83 MCP tools, so an agent can read its own governance state.</p>
+  <p style="margin-top:14px;font-size:13.5px;color:var(--t3)">Also available as 86 MCP tools, so an agent can read its own governance state.</p>
 </div></section>
 
 <hr class="sep">

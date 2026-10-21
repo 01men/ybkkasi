@@ -93,7 +93,7 @@ data/
 | 面 | 入口 | 说明 |
 | --- | --- | --- |
 | REST | `/api/*`（354 条去重路由） | 统一鉴权 + RBAC |
-| MCP | `/mcp`（83 个注册工具，全部声明最小权限 permission） | 平台即 MCP Server；dsh 宿主形态下工具对模型直接可见 |
+| MCP | `/mcp`（86 个注册工具，全部声明最小权限 permission） | 平台即 MCP Server；dsh 宿主形态下工具对模型直接可见 |
 | CLI | `dshctl.mjs`（16 组命令） | 机器可读输出优先 |
 | 控制台 | `/`（SPA，zh-CN/en-US/ja-JP 运行时切换） | `/docs` 仅公开白名单接入指引 |
 
