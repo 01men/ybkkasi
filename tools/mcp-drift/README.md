@@ -1,13 +1,13 @@
 # mcp-drift
 
-把「这台机器现在跑什么 MCP」导出成**可 review 的快照**，并检测与团队基线的漂移。
+把「这台机器现在跑什么 MCP、权限面被放宽到哪」导出成**可 review 的快照**，并检测与团队基线的漂移。
 
 零依赖，只用 Node 内置模块。Node >= 18。
 
 ## 为什么存在
 
-`dsh-mcp-manager` 把 MCP 的 roster、加载模式、工具过滤、destructive 策略管得很好，
-但这些开关**只存在于本机配置文件**。
+`dsh-mcp-manager` 把 MCP 的名册、加载模式、工具规则、破坏性工具策略管得很好，
+但这些开关**只存在于本机 profile 的 `cordis.patch.yml` 里**。
 
 于是这个场景无人能察觉：
 
@@ -21,14 +21,51 @@
 
 本工具不解决治理，只解决**让差异变得可见且可进 code review**。
 
+## 它读哪几个字段（这是最容易搞错的地方）
+
+`dsh-mcp-manager` 的策略**不在 MCP 行自己的 `config` 上**。MCP 行的 `config` 是连接配置
+（`command` / `args` / `url` / `env` / `headers`）。策略在**插件自己的设置节点**里，
+而那个节点的 Loader 行 id 就是 `mcp-manager`：
+
+```yaml
+- insert:
+    - id: mcp-manager                    # ← 策略在这里
+      name: '@guowenzhang/dsh-mcp-manager'
+      config:
+        loading: dynamic                 # eager | dynamic | lazy，全局，不分行
+        descriptions:
+          'global:context7': '查库文档'   # 行描述，按 rowKey
+        tools:                           # 按行的工具规则
+          'global:context7': ['get_*', '!delete_*']   # ! 前缀 = 隐藏
+          'preset:standard:mcp-github': ['list_*']
+        optimize:                        # 全局上下文预算策略
+          hideDestructive: true
+          annotations: true
+          search: true
+          namesOnly: true
+          pageSize: 10
+          maxTools: 200
+    - id: mcp-context7                   # ← 这只是连接配置，不含策略
+      name: '@upstash/context7-mcp'
+      config:
+        command: npx
+        args: [-y, '@upstash/context7-mcp']
+```
+
+`rowKey` 是 `global:<serverName>` 或 `preset:<presetId>:<serverName>`。
+`serverName` 的算法复刻自插件的 `serverNameFromCommand`：去 scope、去尾部
+`-mcp` / `-mcp-server` / `-server`、去版本、非字母数字转 `-`、截 32 字符。
+（`@upstash/context7-mcp` → `context7`；`@modelcontextprotocol/server-github` → `server-github`。）
+本工具同时把行 id 当作别名接受，避免改名导致的误报。
+
 ## 用法
 
 ```sh
 # 1. 生成基线（提交进仓库，作为团队约定）
-node mcp-drift.mjs snapshot --config ~/.dsh/cordis.patch.yml -o mcp-baseline.json
+node mcp-drift.mjs snapshot --config ~/.dsh/profiles/<profile>/cordis.patch.yml -o mcp-baseline.json
 
-# 2. 本机自检：有漂移就 exit 1
-node mcp-drift.mjs check --config ~/.dsh/cordis.patch.yml --baseline mcp-baseline.json
+# 2. 本机自检
+node mcp-drift.mjs check --config <同上> --baseline mcp-baseline.json
 
 # 3. 比对两份已保存的快照
 node mcp-drift.mjs diff --baseline base.json --current cur.json
@@ -40,68 +77,39 @@ CI 里一步到位：
 - run: node mcp-drift.mjs check --config cordis.patch.yml --baseline mcp-baseline.json
 ```
 
-基线缺失**不算漂移**，退出 0——第一次接入不该红。
+| 退出码 | 含义 |
+|---|---|
+| `0` | 无漂移；基线缺失也算 0（第一次接入不该红） |
+| `1` | 有漂移（含风险级）；`snapshot` 读到不完整策略面时同样 1 |
+| `2` | 参数缺失、文件不存在、YAML 解析失败 |
 
 ## 输出分级
 
 | 级别 | 含义 | 例子 |
 |---|---|---|
-| `[风险]` | 权限面被放宽，需人工确认 | 关闭了 destructive 过滤 / 新增基线外的 server / 启用了基线里关着的 server |
-| `[放宽]` | 约束减少 | 工具过滤少了条目 |
-| `[变更]` | 行为变化但不一定更危险 | 加载模式切换 / server 被关闭 |
+| `[风险]` | 权限面被放宽，需人工确认 | 全局 `hideDestructive` 被关 / 新增基线外的 server / 启用了基线里关着的 server / 基线里的 server 消失 |
+| `[放宽]` | 约束减少 | 工具规则少了条目 / 规则 key 匹配不到任何 server / `maxTools` 上限被移除 |
+| `[变更]` | 口径变化但未必放宽 | 加载模式改变 / server 被关闭 / server 改名 |
 
-退出码：有 `[风险]` 级漂移 → `1`，否则 `0`。
+## 设计约束
 
-## 两个刻意的设计约束
+**绝不静默降级。** 治理工具最危险的失败模式不是崩溃，是**报一个假的干净结果**：
 
-**1. 导出必须是结构化重建，不是行编辑。**
-`dsh-mcp-manager` 的 README 明确说全局行写操作会重写整个 Include 文件，注释和引号风格都会丢。
-如果快照也用行编辑产生，diff 里全是噪音，没人会 review，工具就白做了。
-所以输出是规范化 JSON：字段顺序固定、冗余字段剔除、`toolFilter` 排序、`rows` 按 `id` 排序。
+- 配置存在但解析不出映射 → 抛错退出，不当成「未配置」
+- 找不到设置节点 → 明确警告「本快照只含 server 名单，不代表权限面」，退出 1
+- 规则里含非字符串条目 → 报警告，不上报一份看起来正常的规则集
+- 规则 key 匹配不到任何 server 行（改名后策略静默失效）→ 单列 `ORPHAN_RULE_KEY`，不沉在警告里
+- YAML 用了锚点 / 多文档 / 块标量 → 报错，不猜
 
-**2. 解析失败必须响亮。**
-治理工具最危险的失败模式是**静默降级**：用户以为配了策略，实际没生效。
-因此 `config` 存在却解析不出映射时，工具**抛错退出**，而不是当成「未配置」继续跑。
-同理，`toolFilter: [a, b]` 会被真正解成数组——如果解成字符串，`Array.isArray` 判断失败，
-过滤器会被当成「没配」，一项权限放宽就被漏报了。
+**只读配置，比的是配置不是运行态。** 不校验 server 是否真实存在、是否可达、
+工具集合是否与声明一致——那是 `tools/list` 的事，不是这份快照的事。
 
-## 快照格式
+**`surfaceHash` 覆盖全局策略 + 每个启用行的 server 名与规则集。**
+两台机器的 hash 相同，说明权限面一致；不同就 diff 看差异。
 
-```json
-{
-  "$schema": "https://ybkkasi.com/schemas/mcp-roster-snapshot/v1",
-  "rows": [{
-    "id": "mcp-github",
-    "name": "@modelcontextprotocol/server-github",
-    "package": "@modelcontextprotocol/server-github",
-    "enabled": true,
-    "loadingMode": "lazy",
-    "hideDestructive": false,
-    "toolFilter": ["create_issue", "list_issues"],
-    "destructiveHint": false
-  }],
-  "summary": {
-    "total": 4, "enabled": 4,
-    "hideDestructiveOn": 1, "toolFiltered": 1,
-    "surfaceHash": "0e5f04e32f9441cd"
-  }
-}
-```
+## 已知边界
 
-`surfaceHash` 是权限面的指纹。两台机器的 hash 相同 = 权限面一致，可以直接对答案，
-不必逐行读 diff。
-
-## 边界（明确说清楚，不吹全能）
-
-- 只读 `cordis.patch.yml` 的 `insert` 段。不解析多文档、锚点、复杂嵌套块——遇到就报错，不猜。
-- `surfaceHash` 只覆盖 enabled 行，不含工具级 schema。工具集合变了 hash 不变。
-- 不校验 server 是否真实存在、是否可达。它比的是**配置**，不是**运行态**。
-- 与 dsh-mcp-manager 的配置耦合：`loadingMode` / `hideDestructive` / `toolFilter` 三个字段名
-  取自其 README 与 settings 定义。上游改名需同步。
-
-## 相关
-
-- 提问背景：https://github.com/zhang-guo-wen/dsh-mcp-manager/issues/2
-- 企业侧 AI 资产治理：https://ybkkasi.com · https://demo.ybkkasi.com
-
-MIT
+- 不解析多文档 / 锚点 / 复杂嵌套 flow 块，遇到直接报错
+- `serverName` 的推断字段名跟随上游 `src/mcp-spec.ts`，**上游改名需同步本工具**
+- 同一 server 名在多个 preset 下各有规则时，全部取出合并排序（不区分 plane，只做权限面判定）
+- 基线 JSON 是 `v2` schema；`v1` 快照（字段名错误的那版）不兼容，需重新生成
