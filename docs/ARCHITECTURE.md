@@ -92,7 +92,7 @@ data/
 
 | 面 | 入口 | 说明 |
 | --- | --- | --- |
-| REST | `/api/*`（448 条去重路由） | 统一鉴权 + RBAC |
+| REST | `/api/*`（450 条去重路由） | 统一鉴权 + RBAC |
 | MCP | `/mcp`（86 个注册工具，全部声明最小权限 permission） | 平台即 MCP Server；dsh 宿主形态下工具对模型直接可见 |
 | CLI | `dshctl.mjs`（16 组命令） | 机器可读输出优先 |
 | A2A | `/api/agents/:slug/a2a`（JSON-RPC）+ `/.well-known/*`（签名卡发现，规范裸体）+ `/v1/a2a/*`（SSE） | 数字员工互调协作面（plugin-a2a，见 docs/a2a-uhp-implementation.md） |
