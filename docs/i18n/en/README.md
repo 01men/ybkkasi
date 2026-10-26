@@ -28,7 +28,7 @@ The platform implements the internal design scheme "Enterprise Service Resource 
 
 ### 1.3 State of the current baseline (2026-10-15)
 
-The latest batches closed the digital-worker loop and a round of review hardening: the workforce domain gained a trusted-risk registration flow for MCP tools, REST/Panel invocation-surface parity, usage-reporting-on-behalf whitelisting, and a `workforce.admin` operations surface; the review-remediation batch added organization-isolation fail-closed semantics, per-tool minimal-permission declarations across the whole tool surface, a budget guard on model-channel fallback chains, and whitelist-based `/docs` publishing. Six-gate verification on that baseline: lint green · selftest ≥ 1,380 · drill ≥ 37 (as of the latest run). Earlier milestones — the Execution Hub, App SSO, NAS, connectors, and M0 itself — are in [Section 9](#9-release-history).
+The latest batches closed the digital-worker loop and a round of review hardening: the workforce domain gained a trusted-risk registration flow for MCP tools, REST/Panel invocation-surface parity, usage-reporting-on-behalf whitelisting, and a `workforce.admin` operations surface; the review-remediation batch added organization-isolation fail-closed semantics, per-tool minimal-permission declarations across the whole tool surface, a budget guard on model-channel fallback chains, and whitelist-based `/docs` publishing. Six-gate verification on that baseline: lint green · selftest 1,610 · drill ≥ 37 (as of the latest run). Earlier milestones — the Execution Hub, App SSO, NAS, connectors, and M0 itself — are in [Section 9](#9-release-history).
 
 ## 2. At a glance
 
@@ -87,8 +87,8 @@ The root README maintains a mapping from the design scheme's clauses to shipped 
 All figures are as of the 2026-10-15 source baseline; counts marked with an asterisk are "as of the latest run" by design.
 
 - **25** plugin entries in one dsh bundle install; **9** domain operations skills.
-- **82** registered MCP-facing tools, each with a declared minimal permission point*; the `console.login` baseline on `/mcp` tools/call is a fail-safe for undeclared tools only.
-- Quality gates: `npm run selftest` ≥ **1,380** assertions*, independent full-chain drill ≥ **37** steps*, `npm run lint:manifests` zero red.
+- **86** registered MCP-facing tools, each with a declared minimal permission point*; the `console.login` baseline on `/mcp` tools/call is a fail-safe for undeclared tools only.
+- Quality gates: `npm run selftest` **1,610** assertions*, independent full-chain drill ≥ **37** steps*, `npm run lint:manifests` zero red.
 - Usage event retention default **730** days; login/SSO failure lockout **5 failures / 15 minutes** per source with escalation up to 24 h; OIDC tokens **2 h** access / **7 days** refresh by default.
 - Internal cost figures are references in CNY only; no settlement amounts exist anywhere.
 
@@ -340,7 +340,7 @@ Event names (`platform.update.available`, `flow.*`), permission points (`iam.use
 ### 8.5 Honesty boundaries
 
 - Only implemented features are described in this documentation set; forward-looking items are labeled "Roadmap". Compliance certifications such as SOC 2 or ISO 27001 have **not** been obtained and appear only as roadmap items.
-- Quality-gate numbers (`npm run selftest`, drill counts) are quoted "as of the latest run"; historical counts are void. Recent six-gate verification: lint green · selftest ≥ 1,380 · drill ≥ 37.
+- Quality-gate numbers (`npm run selftest`, drill counts) are quoted "as of the latest run"; historical counts are void. Recent six-gate verification: lint green · selftest 1,610 · drill ≥ 37.
 - Region-specific compliance wording (GDPR, PDPA, DPDP, APPI, Privacy Act 1988) in the governance README is positioning guidance, not legal advice.
 
 ### 8.6 Runtime conventions and honest limitations
