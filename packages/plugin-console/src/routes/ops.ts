@@ -165,6 +165,9 @@ export function registerOpsRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   // -- feedback 归因守卫（W4）：X-On-Behalf-User 白名单收敛 ---------------------------------
   // 头值归一化：平台 userId 直查 → 钉钉 staffId 等三方标识经 identityLinks 反查回平台 userId
   // （镜像 plugin-nas resolveUser 口径；iam 注释：hermes X-On-Behalf-User 头即 staffId 口径）。
+  // attribution-only（MCP 治理契约 §4，2026-10-22）：本头仅作反馈「归因」（谁替谁说的话），
+  // 禁止作为授权事实——授权面身份一律取令牌解析结果（exchange.principal.unified）；
+  // 归因合法性由下方白名单守卫承担，本读取处行为保持不变。
   const resolveFeedbackOnBehalfUser = (raw: string): string | undefined => {
     const direct = ctx.iam.users().get(raw)
     if (direct) return direct.id

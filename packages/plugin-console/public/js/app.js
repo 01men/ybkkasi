@@ -1,10 +1,11 @@
 /** 应用外壳：路由 + 布局 + 侧边栏 + 顶栏 + ⌘K 命令面板。 */
 import { icon } from './icons.js'
-import { session, api, exchangeBridgeSession, demoStatus, BASE, IS_LOCAL_HOST, CONNECTION_NAME } from './api.js'
+import { session, api, exchangeBridgeSession, demoStatus, IS_LOCAL_HOST, CONNECTION_NAME } from './api.js'
 import { $, $$, h, toast, esc } from './ui.js'
 import { openCmdk } from './cmdk.js'
 import { replayPlatformTheme, PLATFORM_KEY } from './platform.js'
 import { resolveLanding, isBareLanding, LANDING_PREF_KEY } from './landing.js'
+import { resolvePanels } from './connections.js'
 import { consumeNextSources, exitWithNext } from './next-redirect.js'
 import rqI18n from './i18n.js'
 
@@ -49,6 +50,7 @@ const renderMcp = lazy('./pages/mcp.js', 'renderMcp')
 const renderNas = lazy('./pages/nas.js', 'renderNas')
 const renderNasAuthz = lazy('./pages/nas-authz.js', 'renderNasAuthz')
 const renderConnectors = lazy('./pages/connectors.js', 'renderConnectors')
+const renderPanels = lazy('./pages/panels.js', 'renderPanels')
 const renderSkills = lazy('./pages/skills.js', 'renderSkills')
 const renderAgents = lazy('./pages/agents.js', 'renderAgents')
 const renderA2a = lazy('./pages/a2a.js', 'renderA2a')
@@ -58,7 +60,6 @@ const renderApprovals = lazy('./pages/approvals.js', 'renderApprovals')
 const renderAssets = lazy('./pages/assets.js', 'renderAssets')
 const renderFinops = lazy('./pages/finops.js', 'renderFinops')
 const renderExec = lazy('./pages/exec.js', 'renderExec')
-const renderRegister = lazy('./pages/register.js', 'renderRegister')
 const renderPlatform = lazy('./pages/platform.js', 'renderPlatform')
 const renderConnect = lazy('./pages/connect.js', 'renderConnect')
 const renderConnections = lazy('./pages/connections.js', 'renderConnections')
@@ -70,33 +71,39 @@ const renderOauthError = lazy('./pages/oauth.js', 'renderOauthError')
 const renderOauthLogout = lazy('./pages/oauth.js', 'renderOauthLogout')
 import { mountUpdateBadge, openUpdateDrawer } from './update.js'
 
-// 导航分组（Kimi CIO 仪表盘设计适配，2026-10-14 · docs/internal/design-adaptation-spec-20261014.md §4）：
-// 主干四组「总览 / 资源 / 治理 / 企业」对齐设计稿信息架构；全部既有功能页保留入组。
+// 导航分组（2026-10-22 IA 收敛：总览 / 资源 / 协作与执行 / 治理 / 企业）。
+// 「协作与执行」独立成组：执行中枢（目标·任务·调度）、A2A 协作、UHP 执行是「让数字员工跑起来」
+// 的一条主线，混在资源台账里会被误读成又一类可盘点资产；资源组只留被管理对象本身。
+// 资产登记（#/register）已下线：登记入口分别落在各资源页自身的新建动作上，不再有独立的登记看板。
 const NAV = [
   { section: '总览', items: [
     { path: '#/dashboard', label: '工作台', icon: 'dashboard', perm: 'console.login' },
-    // 部门面板（review-dsh-agent-panel-v2）：独立零构建 SPA，经 ext 外链进入（/panel，挂载形态 /rq/panel/）
-    { ext: () => `${BASE}/panel/`, label: '部门面板', icon: 'users', perm: 'console.login', landing: 'panel' },
-    // 执行中枢：目标/项目/任务/调度四位一体（#/exec），工作台「目标与价值/行动项目」tab 的下钻落点
-    { path: '#/exec', label: '执行中枢', icon: 'target', perm: 'exec.read' },
+    // 部门面板（2026-10-22）：不再是硬编码外链，改为「宿主连接 × 部门」登记清单页（#/panels）。
+    // 只有登记过的面板才有一键入口——把「从哪个宿主进哪个部门」变成可管理的事实，而不是靠目标宿主记忆。
+    { path: '#/panels', label: '部门面板', icon: 'users', perm: 'panel.read' },
   ] },
   { section: '资源', items: [
     { path: '#/assets', label: '资产台账', icon: 'boxes', perm: 'usage.read' },
     { path: '#/skills', label: 'AI 市场', icon: 'store', perm: 'skill.read', badge: 'skills' },
     { path: '#/gateway', label: '模型网关', icon: 'route', perm: 'usage.read' },
-    { path: '#/register', label: '资产登记', icon: 'zap', perm: 'console.login' },
     { path: '#/agents', label: 'Agent 本体', icon: 'bot', perm: 'agent.read' },
-    // A2A 协作：数字员工跨运行时协作面（目录发现 / 任务追踪 / 履约与巡检），读权限随目录
-    { path: '#/a2a', label: 'A2A 协作', icon: 'flow', perm: 'a2a.directory.read' },
     { path: '#/apps', label: 'AI 应用', icon: 'app', perm: 'app.read' },
     { path: '#/mcp', label: 'MCP 服务', icon: 'plug', perm: 'mcp.service.read' },
     { path: '#/nas', label: 'NAS 存储', icon: 'server', perm: 'nas.read' },
-    { path: '#/nas-authz', label: '数据权限', icon: 'shield', perm: 'nas.authz.read' },
     { path: '#/connectors', label: '连接器', icon: 'plug', perm: 'connector.catalog.read' },
+  ] },
+  { section: '协作与执行', items: [
+    // 执行中枢：目标/项目/任务/调度四位一体（#/exec），工作台「目标与价值/行动项目」tab 的下钻落点
+    { path: '#/exec', label: '执行中枢', icon: 'target', perm: 'exec.read' },
+    // A2A 协作：数字员工跨运行时协作面（目录发现 / 任务追踪 / 履约与巡检），读权限随目录
+    { path: '#/a2a', label: 'A2A 协作', icon: 'flow', perm: 'a2a.directory.read' },
+    // UHP 执行：harnesses 注册表 + 执行记录（A2A 页的 UHP tab 的一级入口；同一页面不同落点）
+    { path: '#/a2a?tab=uhp', label: 'UHP 执行', icon: 'cpu', perm: 'uhp.read' },
   ] },
   { section: '治理', items: [
     { path: '#/usage', label: '用量与成本', icon: 'barChart3', perm: 'usage.read' },
     { path: '#/finops', label: '财务视图', icon: 'coins', perm: 'usage.read' },
+    { path: '#/nas-authz', label: '数据权限', icon: 'shield', perm: 'nas.authz.read' },
     { path: '#/approvals', label: '审批中心', icon: 'fileCheck', perm: 'approval.read', badge: 'approvals' },
     { path: '#/audit', label: '审计与告警', icon: 'shieldAlert', perm: 'audit.read', badge: 'alerts' },
     { path: '#/authn', label: '认证与令牌', icon: 'key', perm: 'authn.principal.read' },
@@ -181,13 +188,13 @@ function navigate() {
 
   const builders = {
     dashboard: renderDashboard,
-    register: renderRegister,
     iam: renderIam,
     authn: renderAuthn,
     mcp: renderMcp,
     nas: renderNas,
     'nas-authz': renderNasAuthz,
     connectors: renderConnectors,
+    panels: renderPanels,
     skills: renderSkills,
     agents: renderAgents,
     a2a: renderA2a,
@@ -246,12 +253,22 @@ function renderShell(page, params, builder) {
 
   // 侧边导航
   const nav = $('#nav')
+  // 高亮判定：同路径下「带查询」的项优先（如 #/a2a 与 #/a2a?tab=uhp 共存时只亮一个）
+  const isActive = (item) => {
+    if (!item.path) return false
+    const [itemPath, itemQuery] = item.path.split('?')
+    const [nowPath, nowQuery] = currentHash().split('?')
+    if (itemPath !== nowPath) return false
+    if (itemQuery) return itemQuery === (nowQuery ?? '')
+    if (!nowQuery) return true
+    return !NAV.some((group) => group.items.some((sibling) => sibling.path === `${nowPath}?${nowQuery}`))
+  }
   for (const section of NAV) {
     const visible = section.items.filter((item) => session.can(item.perm))
     if (!visible.length) continue
     const sec = h(`<div class="nav-section"><div class="nav-section-title">${esc(section.section)}</div></div>`)
     for (const item of visible) {
-      const active = item.path && currentHash().split('?')[0] === item.path
+      const active = isActive(item)
       const el = h(`<div class="nav-item ${active ? 'active' : ''}">${icon(item.icon)}<span>${esc(item.label)}</span><span class="nav-badge hidden"></span></div>`)
       el.onclick = () => {
         // 移动端抽屉导航（≤1024px）：选中即收起，避免遮挡落点内容
@@ -350,6 +367,13 @@ async function refreshBadges() {
 // 全局路由
 window.addEventListener('hashchange', navigate)
 
+/** 首个已登记且可达的面板地址（落地分诊用）；没有登记返回 ''。 */
+function firstRegisteredPanelUrl() {
+  const panel = resolvePanels(localStorage, new URL('.', document.baseURI).pathname.replace(/\/$/, ''))
+    .find((item) => item.available)
+  return panel?.url ?? ''
+}
+
 // 启动链：会话就绪 → 已登录态 next 消费 → 落地分诊 → 首帧渲染（docs/entry-switching.md）。
 // 会话链与部门面板同款：已有令牌 → 宿主 Cookie 直通（独立形态 /dsh-bridge/* 不存在，静默跳过）；
 // ?ticket= 由登录页消费（仅未登录落到登录页时生效）。
@@ -380,8 +404,11 @@ async function boot() {
     try { pref = localStorage.getItem(LANDING_PREF_KEY) ?? '' } catch { /* 忽略 */ }
     if (pref !== 'console') {
       try { localStorage.setItem(LANDING_PREF_KEY, 'panel') } catch { /* 忽略 */ }
-      location.replace(`${BASE}/panel/`)
-      return
+      // 面板入口以「宿主 × 部门」登记为准（#/panels）：有登记直达首个已登记面板，
+      // 没登记就停在登记页引导——不再硬跳裸 /panel/ 让业务同学落到目标宿主的默认部门。
+      const target = firstRegisteredPanelUrl()
+      if (target) { location.replace(target); return }
+      location.hash = '#/panels'
     }
   }
   navigate()

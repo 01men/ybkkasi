@@ -13,9 +13,10 @@ import { fileURLToPath } from 'node:url'
 import { existsSync, readdirSync, createReadStream, readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange, Collection, RecordBase, CallerInfo } from '../../platform-core/src/index.ts'
-import { createRestGate } from '../../platform-core/src/index.ts'
+import { createRestGate, lookupsFromHost, resolveUnifiedPrincipal, toCallerInfo, type UnifiedAuthMethod } from '../../platform-core/src/index.ts'
 import { createPluginContext, newId, platformVersionInfo, PlatformEvents } from '../../platform-core/src/index.ts'
-import { demoPrincipal, isDemoMode, DEMO_PRINCIPAL_ID, DEMO_READONLY_PERMISSIONS, READONLY_METHODS } from './demo-mode.ts'
+import type { VerifiedPrincipal } from '../../plugin-authn/src/index.ts'
+import { demoPrincipal, isDemoMode, DEMO_PRINCIPAL_ID, DEMO_PRINCIPAL_NAME, DEMO_READONLY_PERMISSIONS, READONLY_METHODS } from './demo-mode.ts'
 import { PermissionCatalog, type UserManageActor } from '../../plugin-iam/src/index.ts'
 import { ProviderAuthError } from '../../plugin-iam/src/providers.ts'
 import { normalizeLocale, readCatalogDir, DEFAULT_LOCALE, t } from '../../platform-i18n/src/index.ts'
@@ -29,6 +30,7 @@ import { registerDashboardRoutes } from './routes/dashboard.ts'
 import { registerIamRoutes } from './routes/iam.ts'
 import { registerAuthnRoutes } from './routes/authn.ts'
 import { registerMcpRoutes } from './routes/mcp.ts'
+import { registerMcpDataplaneRoutes } from './routes/mcp-dataplane.ts'
 import { registerSkillRoutes } from './routes/skills.ts'
 import { registerNasRoutes } from './routes/nas.ts'
 import { registerAgentRoutes } from './routes/agents.ts'
@@ -68,6 +70,8 @@ export const PUBLIC_PATHS = new Set([
   '/api/connect/enroll',
   // 平台授权直达：一次性短时票据回平台换取身份（票据本身即临时凭证）
   '/api/authn/entry-tickets/redeem',
+  // 委托令牌交换（MCP 治理契约 §3）：公开路径 + 自带 Bearer 校验（调用者令牌即授权事实）
+  '/api/authn/token/exchange',
   // 应用访客埋点 beacon（浏览器侧 PV/UV 上报）：1x1 GIF/JSON 免鉴权；响应恒定不泄露应用存在性
   '/api/apps/beacon',
   // 票据免登控制台：redeem 通过后直接建立控制台会话（门户/钉钉「打开即工作台」，零二次登录）
@@ -136,7 +140,23 @@ export function apply(ctx: Context) {
   const demo = isDemoMode()
 
   // -- 鉴权中间件 ---------------------------------------------------------
-  http.use((exchange) => {
+  // 统一 Principal 装配（MCP 治理契约 §2）：verify → resolveUnifiedPrincipal →
+  // exchange.principal = CallerInfo 兼容超集 + unified 字段（旧消费者零感知，新消费面读 unified）。
+  // 本中间件是 principal 的唯一权威写入点；反查接线：principalOf=authn.principals、
+  // orgOf=iam 用户 / resourceCore 资源归属 + iam 租户解析。
+  const principalLookups = lookupsFromHost({
+    principalsGet: (id) => ctx.authn.principals().get(id),
+    iamUserGet: (id) => ctx.iam.users().get(id),
+    resourceGet: (kind, id) => ctx.resourceCore.get(kind, id) as { orgId?: string } | undefined,
+    tenantOfOrg: (orgId) => ctx.iam.tenantOfOrg(orgId),
+  })
+  const assemblePrincipal = async (verified: VerifiedPrincipal, overrides?: { authMethod?: UnifiedAuthMethod }): Promise<CallerInfo> => {
+    const unified = await resolveUnifiedPrincipal(verified, principalLookups, overrides)
+    return { ...toCallerInfo(unified), unified } as unknown as CallerInfo
+  }
+
+  // 中间件为 async：统一 Principal 组装经 lookups 反查（await）；返回 true=已拦截，undefined=放行
+  http.use(async (exchange) => {
     // 取流自校验通道：?ticket=（一次性/10 分钟票据）与 ?sig=（签名分享链接，exp/sub/jti/sig 四参）——
     // 两者都是「URL 即凭证」，免 Bearer 头；真实性在 GET /fs/file 处理器内逐关验证（fail-closed）
     const nasFileStream = /^\/api\/nas\/[^/]+\/fs\/file$/.test(exchange.path)
@@ -154,8 +174,15 @@ export function apply(ctx: Context) {
         exchange.fail(405, 'DEMO_READONLY', t('演示模式为只读，不支持写操作。请自行部署后体验完整功能。'))
         return true
       }
-      const principal = demoPrincipal()
-      exchange.principal = { ...principal, permissions: [...principal.permissions] } as unknown as CallerInfo
+      // 演示态同样经统一 Principal 组装（authMethod='demo'）：unified 面与真实令牌同构，
+      // 权限集仍为白名单 .read 枚举，后续 requirePermission 照常生效。
+      const demoVerified = {
+        principal: { id: DEMO_PRINCIPAL_ID, type: 'human' as const, refType: 'user' as const, refId: DEMO_PRINCIPAL_ID, name: DEMO_PRINCIPAL_NAME },
+        token: { jti: DEMO_PRINCIPAL_ID, issuedBy: 'demo' },
+        scopes: [...DEMO_READONLY_PERMISSIONS],
+        actChain: [],
+      }
+      exchange.principal = await assemblePrincipal(demoVerified)
       return
     }
 
@@ -165,15 +192,7 @@ export function apply(ctx: Context) {
     }
     try {
       const verified = ctx.authn.verify(header.slice(7))
-      exchange.principal = {
-        kind: verified.principal.type,
-        principalId: verified.principal.id,
-        ...(verified.principal.type === 'human' && verified.principal.refId ? { userId: verified.principal.refId } : {}),
-        ...(verified.principal.type === 'machine' ? { refType: verified.principal.refType, refId: verified.principal.refId } : {}),
-        name: verified.principal.name,
-        permissions: verified.scopes,
-        actChain: verified.actChain,
-      } satisfies CallerInfo
+      exchange.principal = await assemblePrincipal(verified)
       return
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -184,6 +203,41 @@ export function apply(ctx: Context) {
 
   // R5 收敛：caller/requirePermission/guarded/body/changeLog 统一引 platform-core 共享实现（单点修复、单点审计）
   const { caller, requirePermission, guarded, body, changeLog } = createRestGate(ctx)
+
+  // -- 委托授权事实钩子（MCP 治理契约 §3，console 装配时注入；缺省 fail-closed 拒绝）----------
+  // 白名单通道：iam 管理员('*')直通；agent 目标/调用者凭证须与 subject 存在绑定（agentRegistry）；
+  // app 目标/凭证须 subject 为应用 owner（resourceCore，与 routes/apps.ts assertAppOwner 同口径）。
+  ctx.authn.setDelegationGuard((input) => {
+    const callerPrincipal = ctx.authn.principals().get(input.caller.principalId)
+    const callerScopes = callerPrincipal
+      ? (callerPrincipal.type === 'human' ? ctx.iam.userPermissions(callerPrincipal.refId ?? '') : ctx.authn.resolveMachineScopes(callerPrincipal))
+      : []
+    if (callerScopes.includes('*')) return true
+    // 自委托（机器调用者为自己换牌：sub=自身、act 链为空）：不引入他人身份，
+    // 授权面由 authn 侧 scopes 三方交集夹紧到调用者自身实时权限，不构成提权 → 放行。
+    if (!input.userId) return input.caller.kind === 'machine'
+    if (input.caller.kind === 'machine') {
+      // 机器凭证：仅可代「绑定本 agent 的真人 / 本 app owner」换取委托令牌
+      if (input.caller.refType === 'agent' && input.caller.refId) {
+        return ctx.agentRegistry.boundUsers(input.caller.refId).some((binding) => binding.userId === input.userId)
+      }
+      if (input.caller.refType === 'app' && input.caller.refId) {
+        return ctx.resourceCore.get('app', input.caller.refId)?.ownerId === input.userId
+      }
+      return false
+    }
+    // 人类调用者：subject 缺省为本人；代他人换取仅 '*' 管理员通道放行（上方已返回）
+    if (callerPrincipal?.type === 'human' && callerPrincipal.refId !== input.userId) return false
+    if (!input.targetPrincipalId) return false
+    const target = ctx.authn.principals().get(input.targetPrincipalId)
+    if (target?.refType === 'agent' && target.refId) {
+      return ctx.agentRegistry.boundUsers(target.refId).some((binding) => binding.userId === input.userId)
+    }
+    if (target?.refType === 'app' && target.refId) {
+      return ctx.resourceCore.get('app', target.refId)?.ownerId === input.userId
+    }
+    return false
+  })
 
   /**
    * SSO 管理守卫工厂（app/agent 两侧路由共用，授权口径统一在 AppRegistryService.ssoManageDecision）：
@@ -222,18 +276,72 @@ export function apply(ctx: Context) {
   const agentSsoGuard = ssoManageGuard('agent')
   const appSsoGuard = ssoManageGuard('app')
 
+  // -- 资源限定 scope 的服务存在性校验端口（W3-T5 契约 §12） ------------------
+  // 机器凭证附加 scope 形如 mcp.service:<slug>.invoke / mcp.tool:<slug>:<tool>.invoke：
+  // 端口接线后，签发期即拒「指向不存在服务」的错配 scope（此前只校验形态）。
+  ctx.authn.setMcpServiceExistsCheck((slug: string) => {
+    try {
+      return ctx.mcpRegistry.services().all().some((service) => service.slug === slug)
+    } catch {
+      return true // 端口不可用时 fail-open：形态校验已在签发侧生效
+    }
+  })
+
   // -- 拓扑节点名称补全（skill 等非 resource-core 类型） ----------------------
+  // W2 能力绑定补边 {app→mcp, kind:'capability'} 后，依赖图出现 type='mcp' 的裸节点
+  // （resource-core 未注册该类型 → name=id / status=unknown），与 mcp_service 同源补全。
+  // W4 交付审计：契约承诺「App → Agent → MCP 穿透」——agent→mcp 边由「权限组授予」派生
+  // （授权事实在 MCP 权限组，非 resource-core 依赖边），故在装配层按权限组合成子节点。
+  const MCP_STATUS_LABELS: Record<string, string> = {
+    online: '在线', gray: '灰度发布', offline: '已下线', draft: '草稿', verifying: '验证中', unhealthy: '异常',
+  }
+  const agentCapabilityChildren = (agentId: string): any[] => {
+    try {
+      const children: any[] = []
+      const seen = new Set<string>()
+      for (const group of ctx.mcpRegistry.permGroups().all()) {
+        const granted = (group.subjects ?? []).some((subject) => subject.type === 'agent' && subject.id === agentId)
+        if (!granted) continue
+        for (const serviceId of Object.keys(group.policies ?? {})) {
+          if (seen.has(serviceId)) continue
+          seen.add(serviceId)
+          const service = ctx.mcpRegistry.services().get(serviceId)
+          children.push({
+            type: 'mcp',
+            id: serviceId,
+            name: service?.name ?? serviceId,
+            status: service?.status ?? 'unknown',
+            statusLabel: MCP_STATUS_LABELS[service?.status ?? ''] ?? t('外部节点'),
+            children: [],
+            edge: 'grant',
+            grantName: group.name,
+          })
+        }
+      }
+      return children
+    } catch {
+      return []
+    }
+  }
   const enrichTopology = (node: any): any => ({
     ...node,
     name: node.type === 'skill'
       ? ctx.skillHub.skills().get(node.id)?.name ?? node.name
-      : node.type === 'mcp_service'
+      : node.type === 'mcp_service' || node.type === 'mcp'
         ? ctx.mcpRegistry.services().get(node.id)?.name ?? node.name
         : node.name,
     status: node.type === 'skill'
       ? ctx.skillHub.skills().get(node.id)?.status ?? node.status
-      : node.status,
-    children: node.children.map(enrichTopology),
+      : node.type === 'mcp'
+        ? ctx.mcpRegistry.services().get(node.id)?.status ?? node.status
+        : node.status,
+    statusLabel: node.type === 'mcp'
+      ? MCP_STATUS_LABELS[ctx.mcpRegistry.services().get(node.id)?.status ?? ''] ?? node.statusLabel
+      : node.statusLabel,
+    children: [
+      ...node.children.map(enrichTopology),
+      ...(node.type === 'agent' ? agentCapabilityChildren(node.id) : []),
+    ],
   })
 
 
@@ -258,6 +366,10 @@ export function apply(ctx: Context) {
   // -- Fleet 六类资产统一台账（设计适配规格 5.2，2026-10-14） --------------------
   registerFleetRoutes(ctx, { http, guarded, body, changeLog, caller })
   registerBridgeRoutes(ctx, { http, guarded, body, changeLog, caller })
+
+  // -- MCP 服务级数据面（W2-T3 契约 §7/§8）：POST /mcp/services/:slug（+/mcp/s/:id 别名），
+  //    自管 Bearer 认证 + aud 强校验 + authorizedToolsFor 工具过滤，经 ctx.mcpRegistry.invoke 全链
+  registerMcpDataplaneRoutes(ctx, { http })
 
   // -- 第三方插件市场（v1.2）：已迁移 routes/market.ts（OPT-P1-01 首段） ------
   registerMarketRoutes(ctx, { http, guarded, body, changeLog, caller })

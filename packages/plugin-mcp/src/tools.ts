@@ -126,9 +126,12 @@ export function apply(ctx: Context) {
     },
   }))
 
+  // 【兼容层（MCP 治理契约 §9，W2-T3）】行为不变：Agent 标准默认路径是服务级数据面
+  // POST /mcp/services/:serviceSlug（委托令牌 aud=mcp:service:<slug>，见 plugin-console
+  // routes/mcp-dataplane.ts）。本工具仅供存量 Agent 工具面调用方过渡使用。
   t.register(defineTool({
     name: 'mcp_invoke',
-    description: '通过 MCP 网关调用工具（统一鉴权/限流/审计）。调用方身份由服务端从令牌解析。',
+    description: '通过 MCP 网关调用工具（统一鉴权/限流/审计）。调用方身份由服务端从令牌解析。（兼容层：Agent 标准默认路径是 POST /mcp/services/<服务slug> 服务级数据面）',
     permission: 'mcp.invoke',
     parameters: {
       serviceId: { type: 'string', required: true, description: '服务 ID' },

@@ -7,8 +7,10 @@
  * index.ts、经依赖注入。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { CallerInfo, HttpExchange } from '../../../platform-core/src/index.ts'
+import type { CallerInfo, HttpExchange, UnifiedPrincipal } from '../../../platform-core/src/index.ts'
+import { toInvokeCaller } from '../../../platform-core/src/index.ts'
 import { workRefFromArgs } from '../../../plugin-mcp/src/tools.ts'
+import { plainSensitiveHeaderViolation } from '../../../plugin-mcp/src/secret-broker.ts'
 import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
@@ -21,15 +23,38 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   const { guarded, body, changeLog, caller, maskServiceHeaders } = deps
 
   /**
-   * MCP 网关调用方身份解析：权限组 subjects 以 agent/app 资源 ID 授权，
-   * 机器令牌需经 principal 的 refType/refId 反查归属资源，否则 agent 主体永远命中不了。
+   * MCP 网关调用方身份解析（MCP 治理契约 §2，W2-T3 收敛）：优先读鉴权中间件写入的
+   * exchange.principal.unified 经 toInvokeCaller 投影——与平台 /mcp bridge、服务级数据面
+   * （routes/mcp-dataplane.ts）单点同源，消除最后一份手工映射；unified 缺席（理论不可达，
+   * 中间件恒写入）回落既有手工映射保底，行为不变。权限组 subjects 以 agent/app 资源 ID
+   * 授权，机器令牌须经 principal 的 refType/refId 反查归属资源，否则 agent 主体命中不了。
    */
-  const resolveMcpCaller = (info: CallerInfo): { type: 'user' | 'agent' | 'app'; id: string; name: string } => {
+  const resolveMcpCaller = (info: CallerInfo): { type: 'user' | 'agent' | 'app'; id: string; name: string; onBehalfOf?: string; actChain?: Array<{ name: string; type: string }>; subjects?: Array<{ type: 'user' | 'agent' | 'app'; id: string }> } => {
+    const unified = (info as { unified?: UnifiedPrincipal }).unified
+    if (unified) return toInvokeCaller(unified)
     if (info.kind === 'human') return { type: 'user', id: info.userId ?? info.principalId, name: info.name }
     const principal = ctx.authn.principals().get(info.principalId)
     if (principal?.refType === 'agent' && principal.refId) return { type: 'agent', id: principal.refId, name: info.name }
     if (principal?.refType === 'app' && principal.refId) return { type: 'app', id: principal.refId, name: info.name }
     return { type: 'app', id: info.principalId, name: info.name }
+  }
+
+  /**
+   * Secret Broker 取用（W1-T2 §6）：与 riskRegistry 同款结构化取用——console 的 inject 清单
+   * 未含 secretBroker，cordis 严格注入下直访 ctx.secretBroker 会被拦（without inject）。
+   */
+  const credentials = () => {
+    const broker = ctx.mcpRegistry.secretBroker()
+    if (!broker) throw new Error(t('Secret Broker 未装配（请确认 plugin-mcp 版本）'))
+    return broker
+  }
+
+  /** 明文敏感头写入门禁（契约 §6）：命中即 400 SENSITIVE_HEADERS_FORBIDDEN，引导走 credential API。 */
+  const rejectPlainSensitiveHeaders = (exchange: HttpExchange, headers: Record<string, string> | undefined): boolean => {
+    const violations = plainSensitiveHeaderViolation(headers)
+    if (violations.length === 0) return false
+    exchange.fail(400, 'SENSITIVE_HEADERS_FORBIDDEN', t('请求头含敏感键（{keys}），禁止明文写入服务记录；请改用 PUT /api/mcp/services/:id/credential 下发凭证（迁移期逃生门：env MCP_ALLOW_PLAIN_HEADERS=1）', { keys: violations.join('、') }))
+    return true
   }
   // -- MCP ----------------------------------------------------------------
   guarded('GET', '/api/mcp/services', 'mcp.service.read', () => ({
@@ -38,7 +63,10 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   }))
 
   guarded('POST', '/api/mcp/services', 'mcp.service.write', (exchange) => {
-    const input = body<{ name: string; slug?: string; description?: string; icon?: string; endpoint?: string; transport?: 'stdio' | 'sse' | 'http'; mode?: 'hosted' | 'external'; orgId?: string; headers?: Record<string, string>; tools?: Array<{ name: string; description: string; riskLevel?: 'read' | 'write' | 'admin' | 'unknown'; inputSchema?: Record<string, unknown> }> }>(exchange)
+    const input = body<{ name: string; slug?: string; description?: string; icon?: string; endpoint?: string; transport?: 'stdio' | 'sse' | 'http'; mode?: 'hosted' | 'external'; orgId?: string; headers?: Record<string, string>; tools?: Array<{ name: string; description: string; riskLevel?: 'read' | 'write' | 'admin' | 'unknown'; inputSchema?: Record<string, unknown> }>; ownerEntity?: { type: 'platform' | 'app' | 'agent' | 'connector'; id?: string }; capabilityId?: string; exposureMode?: 'gateway' | 'direct' | 'internal'; dataClass?: 'public' | 'internal' | 'confidential'; environment?: 'dev' | 'staging' | 'prod'; visibility?: 'org' | 'tenant' | 'cross-org'; credentialRef?: string }>(exchange)
+    // 契约 §6：显式写路径敏感 headers 一律拒绝（明文密钥不入业务集合）；
+    // /api/mcp/import 为连接器桥接机器流程，走 importServices「导入即入保险箱」语义
+    if (rejectPlainSensitiveHeaders(exchange, input.headers)) return
     // orgId 缺省回落根组织（与 /api/mcp/import 同口径）：外部推送方（机器凭证）无需 iam.org.read 即可注册
     const orgId = input.orgId ?? ctx.iam.orgs().findOne((org) => org.parentId === null)?.id
     const service = ctx.mcpRegistry.createService({
@@ -85,7 +113,10 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   })
 
   guarded('PATCH', '/api/mcp/services/:id', 'mcp.service.write', (exchange) => {
-    const service = ctx.mcpRegistry.updateService(exchange.params['id']!, body(exchange))
+    const patch = body<{ headers?: Record<string, string> } & Record<string, unknown>>(exchange)
+    // 契约 §6：PATCH 写入敏感 headers 同样拒绝（明文迁移未完成前不给明文回潮入口）
+    if (rejectPlainSensitiveHeaders(exchange, patch.headers)) return
+    const service = ctx.mcpRegistry.updateService(exchange.params['id']!, patch)
     changeLog(exchange, 'mcp.service.update', 'mcp_service', service.id, service.name)
     return maskServiceHeaders(service)
   })
@@ -174,6 +205,78 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
     })
   })
 
+  // -- W1-T2 MCP 治理：归属指派 / 治理待办 / 下游凭证（契约 §5/§6） --------------------------
+  /** 归属指派（§5）：type=app/agent 时校验资源存在（resourceCore 已在 console inject 清单）。 */
+  guarded('POST', '/api/mcp/services/:id/owner-entity', 'mcp.service.write', (exchange) => {
+    const id = exchange.params['id']!
+    const input = body<{ type: 'platform' | 'app' | 'agent' | 'connector'; id?: string }>(exchange)
+    if (input.type === 'app' || input.type === 'agent') {
+      // connector 形态本期无 resource-core spec，不做资源存在性校验（W2-T4 能力绑定将回写 app 归属）
+      const spec = ctx.resourceCore.typeSpec(input.type)
+      const entity = spec && input.id ? ctx.resourceCore.get(input.type, input.id) : undefined
+      if (!entity) throw new Error(t('{type} 资源不存在或未指定 id：{id}', { type: input.type, id: input.id ?? '' }))
+    }
+    const service = ctx.mcpRegistry.setOwnerEntity(id, input.id ? { type: input.type, id: input.id } : { type: input.type })
+    changeLog(exchange, 'mcp.owner_entity.set', 'mcp_service', id, service.name, `owner=${input.type}${input.id ? `:${input.id}` : ''}`)
+    return maskServiceHeaders(service)
+  })
+
+  /** 治理待办摘要（§5，只读）：unowned / 明文敏感头 / 非 gateway 暴露 + 总量。 */
+  guarded('GET', '/api/mcp/governance/summary', 'mcp.service.read', () => ctx.mcpRegistry.governanceSummary())
+
+  /**
+   * 下游凭证保存（§6）：值写 SecretBroker 密钥文件（0600），服务记录只回写 credentialRef 引用；
+   * env: 形态不落明文（secret 必须缺省）；credentialRef 与 secret 均缺省 = 清空（删凭证文件 + 清字段）。
+   * 任何响应与 changeLog 绝不出现 secret 原文。
+   */
+  guarded('PUT', '/api/mcp/services/:id/credential', 'mcp.service.write', (exchange) => {
+    const id = exchange.params['id']!
+    const service = ctx.mcpRegistry.services().get(id)
+    if (!service) throw new Error(t('MCP 服务不存在：{id}', { id }))
+    const input = body<{ credentialRef?: string; headerName?: string; secret?: string }>(exchange)
+    if (!input.credentialRef?.trim() && !input.secret?.trim()) {
+      credentials().delete(id)
+      ctx.mcpRegistry.services().update(id, { credentialRef: undefined })
+      changeLog(exchange, 'mcp.credential.clear', 'mcp_service', id, service.name)
+      return { cleared: true, hasSecret: false }
+    }
+    const description = credentials().put({
+      serviceId: id,
+      ...(input.credentialRef?.trim() ? { credentialRef: input.credentialRef.trim() } : {}),
+      ...(input.headerName?.trim() ? { headerName: input.headerName.trim() } : {}),
+      ...(input.secret?.trim() ? { secret: input.secret } : {}),
+    })
+    ctx.mcpRegistry.services().update(id, { credentialRef: description.credentialRef })
+    changeLog(exchange, 'mcp.credential.put', 'mcp_service', id, service.name, `ref=${description.credentialRef} headers=${description.headerNames.join(',')}`)
+    return { credentialRef: description.credentialRef, headerName: description.headerNames[0], hasSecret: true, updatedAt: description.updatedAt }
+  })
+
+  /** 凭证描述（§6，只读）：只有引用与元数据，永不返回 secret 原文。 */
+  guarded('GET', '/api/mcp/services/:id/credential', 'mcp.service.read', (exchange) => {
+    const id = exchange.params['id']!
+    const service = ctx.mcpRegistry.services().get(id)
+    if (!service) throw new Error(t('MCP 服务不存在：{id}', { id }))
+    const description = credentials().describe(id)
+    return {
+      credentialRef: service.credentialRef ?? description?.credentialRef,
+      headerName: description?.headerNames[0],
+      hasSecret: Boolean(description && description.headerNames.length > 0),
+      updatedAt: description?.updatedAt,
+    }
+  })
+
+  /** 明文敏感头迁移（§6）：dryRun 预检报告；执行态逐服务迁入 SecretBroker 并从 headers 删除敏感键。 */
+  guarded('POST', '/api/mcp/credentials/migrate', 'mcp.service.write', (exchange) => {
+    const input = body<{ dryRun?: boolean }>(exchange)
+    const result = ctx.mcpRegistry.migratePlainHeaders({ dryRun: input.dryRun === true })
+    if (!result.dryRun) {
+      for (const item of result.candidates) {
+        changeLog(exchange, 'mcp.credential.migrate', 'mcp_service', item.serviceId, item.serviceName, `keys=${item.keys.join(',')}`)
+      }
+    }
+    return result
+  })
+
   guarded('GET', '/api/mcp/perm-groups', 'mcp.service.read', () => ({ groups: ctx.mcpRegistry.permGroups().all() }))
 
   guarded('POST', '/api/mcp/perm-groups', 'mcp.permgroup.write', (exchange) => {
@@ -206,14 +309,47 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   // W2（D11 additive）：REST 面与工具面同一套 work 引用白名单口径（workRefFromArgs）——
   // 仅 permitId/runId/stepKey 三键作索引透传（空串剔除、其余键一律忽略），授权事实一律服务端回查；
   // 身份解析链不动（仍令牌解析 resolveMcpCaller，不接受请求参数自报身份）。
+  // 【兼容层（MCP 治理契约 §9，W2-T3）】行为不变：Agent 标准默认路径是服务级数据面
+  // POST /mcp/services/:serviceSlug（委托令牌 aud=mcp:service:<slug>，见 routes/mcp-dataplane.ts），
+  // 本端点仅供存量 REST 调用方过渡使用。
+  // W3-T5（契约 §11/§12/§13/§14）：统一 Principal 事实附加投影（org/租户/委托链用户/scopes/
+  // 审批引用）供 PDP org-constraint 与 iam-permission 第一层消费；traceId 从 X-Trace-Id 头取
+  // （32hex 形态校验，非法即由网关入口新生成），body.approvalId 供 cross-org 审批引用。
   guarded('POST', '/api/mcp/invoke', 'mcp.invoke', async (exchange) => {
-    const input = body<{ serviceId: string; tool: string; args?: Record<string, unknown>; work?: { permitId?: string; runId?: string; stepKey?: string } }>(exchange)
+    const input = body<{ serviceId: string; tool: string; args?: Record<string, unknown>; work?: { permitId?: string; runId?: string; stepKey?: string }; approvalId?: string }>(exchange)
     const info = caller(exchange)
+    const unified = (info as { unified?: UnifiedPrincipal }).unified
+    const headerTraceId = String(exchange.headers['x-trace-id'] ?? '')
     return await ctx.mcpRegistry.invoke({
       ...resolveMcpCaller(info),
       ...(info.actChain.length > 0 ? { actChain: info.actChain } : {}),
       ...(info.actChain.length > 0 ? { onBehalfOf: info.actChain[0]!.name } : {}),
+      ...(unified?.orgId !== undefined ? { orgId: unified.orgId } : {}),
+      ...(unified?.tenantId !== undefined ? { tenantId: unified.tenantId } : {}),
+      ...(unified?.subjectUserId !== undefined ? { subjectUserId: unified.subjectUserId } : {}),
+      ...(unified ? { scopes: [...unified.scopes] } : {}),
+      ...(/^[0-9a-f]{32}$/.test(headerTraceId) ? { traceId: headerTraceId } : {}),
+      ...(typeof input.approvalId === 'string' && input.approvalId.trim() !== '' ? { approvalId: input.approvalId.trim() } : {}),
     }, input.serviceId, input.tool, input.args ?? {}, workRefFromArgs(input.work))
+  })
+
+  // -- W3-T5（契约 §12/§14）：资源限定 scope 模板 / 策略模拟（dry 语义，不落库） ---------------
+  /** scope 模板（§12）：按权限组 policies 生成建议资源限定 scope 集（控制台 W3-T6 消费展示）。 */
+  guarded('POST', '/api/mcp/perm-groups/:id/scope-template', 'mcp.permgroup.read', (exchange) => {
+    return ctx.mcpRegistry.scopeTemplate(exchange.params['id']!)
+  })
+
+  /** 策略模拟（§14）：body=完整权限组草稿，不落库，返回影响报告四维 + 主体展开。 */
+  guarded('POST', '/api/mcp/perm-groups/dry-run', 'mcp.permgroup.write', (exchange) => {
+    const input = body<{ name?: string; policies: Record<string, { allowedTools: '*' | string[]; constraints?: { readOnly?: boolean } }>; subjects?: Array<{ type: 'user_group' | 'agent' | 'app'; id: string; name?: string }> }>(exchange)
+    return ctx.mcpRegistry.dryRunPermGroup({
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      policies: Object.fromEntries(Object.entries(input.policies ?? {}).map(([serviceId, policy]) => [
+        serviceId,
+        { allowedTools: policy.allowedTools, constraints: policy.constraints ?? {} },
+      ])),
+      ...(input.subjects !== undefined ? { subjects: input.subjects } : {}),
+    })
   })
 
   // -- MCP 工具风险登记（W 批次 W1 · V11 根治：登记→两级审批→生效→重审清单→退场） ------------

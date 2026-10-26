@@ -221,17 +221,64 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   }
 
   guarded('POST', '/api/iam/users/:id/bindings', 'iam.user.write', manageScope((exchange) => {
-    const input = body<{ provider: 'dingtalk' | 'feishu' | 'wecom'; unionId: string; displayName?: string; verifyCode?: string }>(exchange)
+    const input = body<{ provider: 'dingtalk' | 'feishu' | 'wecom'; unionId: string; displayName?: string; verifyCode?: string; corpId?: string }>(exchange)
     const user = ctx.iam.bindThirdParty(exchange.params['id']!, { ...input, displayName: input.displayName ?? input.unionId }, manageActor(exchange))
     changeLog(exchange, 'iam.user.bind', 'user', user.id, user.displayName, input.provider)
     return decorateUser(ctx, user)
   }))
 
-  guarded('DELETE', '/api/iam/users/:id/bindings/:provider', 'iam.user.write', manageScope((exchange) => {
+  // 解绑三方身份：`?corpId=` 限定到单一主体（多主体部署下只解绑该企业），缺省=该 provider 全部。
+  // 解绑会写入 bindingExemptions（连接器同步不再自动补回），并在审计 detail 里写明主体与豁免事实。
+  guarded('DELETE', '/api/iam/users/:id/bindings/:provider', 'iam.user.write', manageScope(async (exchange) => {
     const { verifyCode } = body<{ verifyCode: string }>(exchange)
-    const user = ctx.iam.unbindThirdParty(exchange.params['id']!, exchange.params['provider']! as 'dingtalk', verifyCode, manageActor(exchange))
-    changeLog(exchange, 'iam.user.unbind', 'user', user.id, user.displayName, exchange.params['provider'])
+    const provider = exchange.params['provider']! as 'dingtalk' | 'feishu' | 'wecom'
+    const corpId = exchange.query.get('corpId') ?? undefined
+    const before = ctx.iam.users().get(exchange.params['id']!)
+    if (!before) {
+      exchange.fail(404, 'NOT_FOUND', t('账号不存在：{id}', { id: exchange.params['id']! }))
+      return
+    }
+    // 解绑前快照被移除的身份，用于审计可追溯（解绑后投影已重建，无法反查）
+    const removed = ctx.iam.identityLinks().find((link) => link.userId === before.id
+      && link.provider === provider
+      && (corpId === undefined || (link.corpId ?? '') === corpId))
+      .map((link) => `${link.providerUserId}@${link.corpId || '-'}`)
+    const user = ctx.iam.unbindThirdParty(before.id, provider, verifyCode, manageActor(exchange), corpId)
+    changeLog(exchange, 'iam.user.unbind', 'user', user.id, user.displayName,
+      t('{provider}｜主体 {corp}｜移除 {links}｜已豁免同步自动补绑', {
+        provider,
+        corp: corpId ?? t('全部主体'),
+        links: removed.join(', ') || '—',
+      }))
     return decorateUser(ctx, user)
+  }))
+
+  /**
+   * 更换三方身份：解绑既有（写入豁免）→ 返回绑定入口所需上下文。
+   * 不直接在同一请求里完成「先解后绑」——绑定必须走扫码授权（拿到的 unionId 只有 IdP 能给），
+   * 服务端提前解绑会让用户在授权失败时白丢已有绑定。前端拿到本响应后立刻发起扫码授权，
+   * 授权成功由 bindThirdParty/linkIdentity 清豁免并建立新链（旧链已解，一人一号不会被自己挡住）。
+   */
+  guarded('POST', '/api/iam/users/:id/bindings/:provider/replace', 'iam.user.write', manageScope(async (exchange) => {
+    const { verifyCode, corpId } = body<{ verifyCode: string; corpId?: string }>(exchange)
+    const provider = exchange.params['provider']! as 'dingtalk' | 'feishu' | 'wecom'
+    const before = ctx.iam.users().get(exchange.params['id']!)
+    if (!before) {
+      exchange.fail(404, 'NOT_FOUND', t('账号不存在：{id}', { id: exchange.params['id']! }))
+      return
+    }
+    const removed = ctx.iam.identityLinks().find((link) => link.userId === before.id
+      && link.provider === provider
+      && (corpId === undefined || (link.corpId ?? '') === corpId))
+      .map((link) => `${link.providerUserId}@${link.corpId || '-'}`)
+    if (removed.length === 0) {
+      exchange.fail(400, 'BAD_REQUEST', t('该账号未绑定{provider}身份，无需更换', { provider }))
+      return
+    }
+    const user = ctx.iam.unbindThirdParty(before.id, provider, verifyCode, manageActor(exchange), corpId)
+    changeLog(exchange, 'iam.user.unbind', 'user', user.id, user.displayName,
+      t('更换前置解绑：{provider}｜主体 {corp}｜移除 {links}', { provider, corp: corpId ?? t('全部主体'), links: removed.join(', ') }))
+    return { user: decorateUser(ctx, user), removed, bindPath: '/api/auth/sso/bind/authorize' }
   }))
 
   // R4 删除面：物理删除仅限已注销账号（deactivate 软删除先行，双保险防误删在职账号）

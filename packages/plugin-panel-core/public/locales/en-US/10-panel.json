@@ -203,5 +203,13 @@
   "场景": "Scenes",
   "同事": "Colleagues",
   "无匹配结果": "No matches",
-  "请求失败（{status}）": "Request failed ({status})"
+  "请求失败（{status}）": "Request failed ({status})",
+  "更换绑定": "Replace binding",
+  "解除绑定": "Unbind",
+  "解除钉钉绑定": "Unbind DingTalk",
+  "已解除钉钉绑定": "DingTalk binding removed",
+  "即将跳转钉钉授权页，完成即绑定新身份": "Redirecting to DingTalk authorization; finish it to bind the new identity",
+  "6 位验证码（演示环境可填 123456）": "6-digit code (use 123456 in demo)",
+  "该操作会改变你的登录方式，需二次确认。": "This changes how you sign in; please confirm.",
+  "频道名必填": "Channel name is required"
 }

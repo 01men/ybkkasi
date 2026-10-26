@@ -18,7 +18,18 @@ export function registerAuditRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
       result: exchange.query.get('result') ?? undefined,
       q: exchange.query.get('q') ?? undefined,
       since: exchange.query.get('since') ?? undefined,
+      // 全链 trace 精确检索（W3-T5 契约 §14）：与 mcp.invoked 落审计的 traceId 维度对齐
+      traceId: exchange.query.get('traceId') ?? undefined,
       limit: Number(exchange.query.get('limit') ?? 100),
+    })
+  })
+
+  // ndjson 流式导出（W3-T5 契约 §14）：append-only 导出，行序=时间序，附尾行 _chainTip；
+  // 权限点同既有审计读点。处理器直接写响应（guard 侧 writableEnded 判定自然跳过 ok 包装）。
+  guarded('GET', '/api/audit/export', 'audit.read', (exchange) => {
+    ctx.audit.exportNdjson(exchange, {
+      since: exchange.query.get('since') ?? undefined,
+      until: exchange.query.get('until') ?? undefined,
     })
   })
 

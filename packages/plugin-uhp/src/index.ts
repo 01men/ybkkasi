@@ -65,7 +65,6 @@ export interface UhpHarnessRecord extends RecordBase {
   model: string
   /** 可选渠道组 slug（配置则走 invokeWithFallback 降级链）。 */
   channelGroup?: string
-  systemPromptVersion?: string
   /** MCP 权限组白名单（工具面授权投影声明；v1 内置 harness 不执行工具，见文件头诚实边界）。 */
   toolPermGroupIds: string[]
   /** 步数预算（v1 单步执行，此为上限声明与巡检展示口径）。 */
@@ -205,7 +204,6 @@ export class UhpGatewayService extends Service {
     agentId: string
     model: string
     channelGroup?: string
-    systemPromptVersion?: string
     toolPermGroupIds?: string[]
     stepBudget?: number
     timeBudgetMs?: number
@@ -228,7 +226,6 @@ export class UhpGatewayService extends Service {
         agentId: input.agentId,
         model: input.model,
         ...(input.channelGroup !== undefined ? { channelGroup: input.channelGroup } : {}),
-        ...(input.systemPromptVersion !== undefined ? { systemPromptVersion: input.systemPromptVersion } : {}),
         toolPermGroupIds: input.toolPermGroupIds ?? existing.toolPermGroupIds,
         stepBudget,
         timeBudgetMs,
@@ -243,7 +240,6 @@ export class UhpGatewayService extends Service {
       agentId: input.agentId,
       model: input.model,
       ...(input.channelGroup ? { channelGroup: input.channelGroup } : {}),
-      ...(input.systemPromptVersion ? { systemPromptVersion: input.systemPromptVersion } : {}),
       toolPermGroupIds: input.toolPermGroupIds ?? [],
       stepBudget,
       timeBudgetMs,
@@ -969,7 +965,7 @@ export function apply(ctx: Context) {
   })
   gate.guarded('POST', '/api/uhp/harnesses', 'uhp.admin', (exchange) => {
     const input = gate.body<{
-      id?: string; agentId: string; model: string; channelGroup?: string; systemPromptVersion?: string
+      id?: string; agentId: string; model: string; channelGroup?: string
       toolPermGroupIds?: string[]; stepBudget?: number; timeBudgetMs?: number; dataClassCeiling?: DataClass; enabled?: boolean
     }>(exchange)
     const record = gateway.upsertHarness({ ...input, createdBy: gate.actorOf(exchange) })
@@ -988,7 +984,6 @@ export function apply(ctx: Context) {
       agentId: String(input['agentId'] ?? existing.agentId),
       model: String(input['model'] ?? existing.model),
       channelGroup: input['channelGroup'] !== undefined ? String(input['channelGroup']) : existing.channelGroup,
-      systemPromptVersion: input['systemPromptVersion'] !== undefined ? String(input['systemPromptVersion']) : existing.systemPromptVersion,
       toolPermGroupIds: Array.isArray(input['toolPermGroupIds']) ? (input['toolPermGroupIds'] as string[]) : existing.toolPermGroupIds,
       stepBudget: input['stepBudget'] !== undefined ? Number(input['stepBudget']) : existing.stepBudget,
       timeBudgetMs: input['timeBudgetMs'] !== undefined ? Number(input['timeBudgetMs']) : existing.timeBudgetMs,

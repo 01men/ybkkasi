@@ -1537,6 +1537,9 @@ export function apply(ctx: Context) {
 /**
  * OBO 身份链解析（Q-6）：令牌 act 链中含 type=human 的条目即为「代表该人类行事」——
  * 返回真实发起人 principalId 与完整链，供任务记录/审计/dispatch 透传；非 OBO 令牌返回 undefined。
+ * MCP 治理（契约 §2/§4，2026-10-22）：与 platform-core humanDelegatorOf 语义对齐——链首
+ * （数组首位，issueOnBehalfOf 语义「父链+父主体」的发起人）human 条目即真实发起人；身份事实
+ * 只取令牌解析结果（自校验 verify），禁止从请求参数/header 声明。对外行为不变。
  */
 function actChainOf(ctx: Context, exchange: HttpExchange): { principalId: string; actChain: Array<{ principalId: string; name: string; type: string }> } | undefined {
   const header = String(exchange.headers['authorization'] ?? '')

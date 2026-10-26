@@ -607,7 +607,7 @@ async function mountCollabSessions() {
         <div class="fs-13" style="font-weight:500">${esc(dept.label ?? dept.id)}</div>
         <div class="fs-11 text-3 ellipsis">${esc(rqI18n.t('{name} · 数字员工 {n} 位{suffix}', { name: dept.org?.name ?? rqI18n.t('未绑定组织'), n: (dept.agents ?? []).length, suffix: dept.allowed === false ? rqI18n.t(' · 无访问权限') : '' }))}</div>
       </div>
-      ${dept.allowed === false ? '' : `<a class="fs-11" style="color:var(--brand-600);flex-shrink:0" href="${BASE}/panel/" target="_top" rel="noopener">进入面板 ›</a>`}
+      ${dept.allowed === false ? '' : `<a class="fs-11" style="color:var(--brand-600);flex-shrink:0" href="${BASE}/panel/?dept=${encodeURIComponent(dept.id)}" target="_top" rel="noopener">进入面板 ›</a>`}
     </div>`).join('')
 }
 

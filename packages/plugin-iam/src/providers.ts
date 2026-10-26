@@ -55,6 +55,12 @@ export interface IdentityProviderAdapter {
   getUserInfo(tokenSet: ProviderTokenSet): Promise<unknown>
   /** 原始档案 → 归一化档案（三家差异的最终收敛点）。 */
   normalizeProfile(raw: unknown): NormalizedProfile
+  /**
+   * 登录可用性预检（可选）：服务端拉取一次授权页，识别 IdP 侧的应用级拒绝
+   * （钉钉 900103「应用不存在」= 该 AppKey 未在登录应用/未开通扫码登录）。
+   * 返回 ok=false 时前端不整页跳转，直接展示可执行的修复指引。
+   */
+  probeAuthorize?(redirectUri: string): Promise<{ ok: boolean; code?: string; message?: string }>
 }
 
 /** 钉钉连接器凭证（真实模式必需；缺省降级 mock）。 */
@@ -176,6 +182,42 @@ export class RealDingTalkAuthAdapter implements IdentityProviderAdapter {
     })
     if (options?.promptConsent) params.set('prompt', 'consent')
     return `https://login.dingtalk.com/oauth2/auth?${params}`
+  }
+
+  /**
+   * 登录可用性预检：拉取一次授权页，识别 IdP 侧应用级拒绝。
+   * 钉钉把「AppKey 不属于该登录应用 / 未开通扫码登录」表现为 HTTP 200 的
+   * `__ERROR_PAGE_VARS`（errorCode 900103「应用不存在」），用户在浏览器里只看到一张
+   * 无法自救的错误页；服务端先探一次，就能在登录页给出「去开发者后台开哪一项」的指引。
+   * 网络失败/页面结构变化一律视为 ok（预检不作为登录门禁，只做增强）。
+   */
+  async probeAuthorize(redirectUri: string): Promise<{ ok: boolean; code?: string; message?: string }> {
+    const params = new URLSearchParams({
+      client_id: this.credentials.appKey,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid corpid',
+      state: 'probe',
+    })
+    try {
+      const response = await fetch(`https://login.dingtalk.com/oauth2/auth?${params}`, {
+        headers: { 'user-agent': 'dsh-ops-authorize-probe' },
+        signal: AbortSignal.timeout(5000),
+      })
+      const html = await response.text()
+      const match = /errorCode:\s*'([^']+)'[\s\S]*?errorMsg:\s*'((?:[^'\\]|\\.)*)'/.exec(html)
+      if (!match) return { ok: true }
+      const raw = match[2].replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      // 钉钉错误页的 errorMsg 随界面语言变化（中文「应用不存在」/英文 Application does not exist），
+      // 统一按错误码给中文原因，避免把 IdP 原文直接抛给用户。
+      const known: Record<string, string> = {
+        '900103': t('钉钉应用不存在：当前 AppKey 不是该企业已开通扫码登录的应用（或被删除/停用）'),
+        '900108': t('钉钉应用未开通登录能力：需在开发者后台为企业内部应用开启「登录与分享」'),
+      }
+      return { ok: false, code: match[1], message: known[match[1]] ?? raw }
+    } catch {
+      return { ok: true }
+    }
   }
 
   async exchangeCode(code: string): Promise<ProviderTokenSet> {

@@ -12,6 +12,7 @@ import { $, esc, toast } from '../ui.js'
 import {
   loadConnections, upsertConnection, removeConnection, activeConnection, setActiveId, LOCAL_ID,
 } from '../connections.js'
+import { loadPanelDepts, renderPanelRegistry, openPanelEditor } from './panels.js'
 import rqI18n from '../i18n.js'
 
 /** 本机连接的展示地址（页面源 + 部署前缀）。 */
@@ -20,6 +21,8 @@ const PAGE_BASE = location.origin + new URL('.', document.baseURI).pathname.repl
 export function renderConnections(content, params, { standalone = false } = {}) {
   const mount = () => loadConnections(localStorage)
   const active = () => activeConnection(localStorage, new URL('.', document.baseURI).pathname.replace(/\/$/, ''))
+  // 面板部门目录：登记弹窗的部门下拉（面板服务不可用时退化为手工填标识）
+  let panelDepts = []
 
   const switchTo = (id) => {
     setActiveId(localStorage, id)
@@ -69,6 +72,8 @@ export function renderConnections(content, params, { standalone = false } = {}) 
             </div>
             <div class="form-hint" style="margin-top:8px">目标宿主需与本控台同代版本（数据面默认放行跨域）；登录账号、组织与权限均为目标宿主侧数据，切换后需按目标宿主重新登录。</div>
           </div>
+          ${standalone ? '' : `
+          <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px" id="conn-panels"></div>`}
         </div>
       </div>
       ${standalone ? '<div style="margin-top:16px"><a class="fs-13" style="color:var(--brand-500);cursor:pointer" id="conn-back">← 返回登录</a></div></div>' : ''}
@@ -83,6 +88,14 @@ export function renderConnections(content, params, { standalone = false } = {}) 
       toast(rqI18n.t('已保存连接「{name}」，点击其「切换」启用', { name: result.connection.name }))
       render()
     })
+
+    // 面板登记区（宿主 × 部门）：只有在这里登记过的面板，控制台「部门面板」才有一键入口。
+    // 独立登录形态（无会话）不渲染——登记是登录后的管理动作。
+    const panelsHost = $('#conn-panels')
+    if (panelsHost) {
+      panelsHost.innerHTML = '<div class="fs-12 text-4">正在读取面板部门目录…</div>'
+      renderPanelRegistry(panelsHost, { depts: panelDepts, onChange: render })
+    }
 
     wireRows(render)
   }
@@ -175,5 +188,13 @@ export function renderConnections(content, params, { standalone = false } = {}) 
     })
   }
 
+  // 部门目录（面板服务）异步取回后重渲染一次：登记弹窗的部门下拉才有内容，取不到按手工输入降级
+  if (!standalone) {
+    void loadPanelDepts().then((depts) => {
+      if (!depts.length) return
+      panelDepts = depts
+      render()
+    })
+  }
   render()
 }

@@ -8,7 +8,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
-import { PlatformEvents, newId, scanSensitiveKeys, maskSensitivePayload, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { PlatformEvents, newId, sha256Hex, scanSensitiveKeys, maskSensitivePayload, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
 import { t } from '../../platform-i18n/src/index.ts'
 import * as auditTools from './tools.ts'
 
@@ -52,6 +52,19 @@ export interface AuditLogRecord extends RecordBase {
   /** 证据锚点（IAW 交接 5-1，additive）：直接内联（invoke 类结论事件）或引用证据登记 id。 */
   evidence?: EvidenceAnchor[]
   evidenceIds?: string[]
+  // -- 冷热分层与哈希链（W3-T5，契约 §14，additive） --
+  /** 全链 trace id（可选）：MCP 网关调用等带 trace 的事件随记录落此维度，GET /api/audit/logs?traceId= 精确检索。 */
+  traceId?: string
+  /** 哈希链前驱（record() 单点计算）：链首记录为空串。 */
+  prevHash?: string
+  /** 本记录哈希：sha256(prevHash + canonicalJSON(本记录业务字段))——canonicalJSON 键序稳定，
+   *  且排除 createdAt/updatedAt（insert 期注入，非业务事实）与 prevHash/hash 自身；校验口径见 record()。 */
+  hash?: string
+  /** 策略决策 id（W3-T5 契约 §11/§16，additive）：PDP 裁决 id（pd_ 前缀）——回答「为什么被允许」。
+   *  与 mcp:calls 的热数据同源；热数据滚动清理后审计侧仍可回查决策依据。 */
+  decisionId?: string
+  /** 策略决策原因（结构化文本，additive）：deny 原因可检索（如 ORG_SCOPE_DENIED / RISK_UNREGISTERED）。 */
+  decisionReasons?: string[]
 }
 
 /** 证据登记（IAW 交接 5-1）：锚点包独立落库发 id，会话消息/审计事件以 evidenceId 引用。 */
@@ -126,6 +139,40 @@ export interface ApprovalRecord extends RecordBase {
 export type ApprovalExecutor = (payload: Record<string, unknown>, approverId: string) => Promise<unknown>
 
 // ---------------------------------------------------------------------------
+// 哈希链（W3-T5，契约 §14）：canonicalJSON（键序稳定序列化）
+// ---------------------------------------------------------------------------
+
+/**
+ * canonicalJSON：递归键排序的稳定序列化（同一条记录任意时刻重算结果逐字节一致）。
+ * 数组保序；exclude 键（如 hash 自身）在对象层剔除。
+ */
+export function canonicalJson(value: unknown, exclude: string[] = []): string {
+  const skip = new Set(exclude)
+  const walk = (input: unknown): string => {
+    if (input === null) return 'null'
+    if (input === undefined) return 'null'
+    if (typeof input !== 'object') return JSON.stringify(input) ?? 'null'
+    if (Array.isArray(input)) return `[${input.map(walk).join(',')}]`
+    // 键序稳定 + 与 JSON.stringify 语义对齐：值为 undefined 的键直接跳过（JSON 落盘同样丢弃
+    // 该键）。若渲染为 null，则「内存对象重算的哈希」与「落盘记录重算的哈希」分叉——
+    // 哈希链对最关键的 MCP 调用记录将不可校验（W4 安全审计 P0-1 根因）。
+    const keys = Object.keys(input as Record<string, unknown>)
+      .filter((key) => !skip.has(key) && (input as Record<string, unknown>)[key] !== undefined)
+      .sort()
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${walk((input as Record<string, unknown>)[key])}`).join(',')}}`
+  }
+  return walk(value)
+}
+
+/** 审计哈希链记录参与哈希的字段口径：业务字段全量，排除落库期注入的 createdAt/updatedAt 与链字段自身。 */
+const AUDIT_HASH_EXCLUDE = ['createdAt', 'updatedAt', 'prevHash', 'hash']
+
+/** 按记录重算哈希（校验面与写入面单点同源）：sha256(prevHash + canonicalJSON(业务字段))。 */
+export function auditHashOf(record: { prevHash?: string; hash?: string; [key: string]: unknown }, prevHash: string): string {
+  return sha256Hex(prevHash + canonicalJson(record, AUDIT_HASH_EXCLUDE))
+}
+
+// ---------------------------------------------------------------------------
 // 审批负载卫生与独立规则源（OPT-P2-02，2026-09-12）
 // ---------------------------------------------------------------------------
 
@@ -176,6 +223,9 @@ export class AuditService extends Service {
   private deniedCounter = new Map<string, number[]>()
   /** REL-11 读侧加固：已发过 warning 的脏成本资源（进程内去重，防告警风暴）。 */
   private warnedDirtyCostResources = new Set<string>()
+  /** 哈希链链首（W3-T5 §14）：启动时取集合最后一条的 hash 续链（重启不破链）。 */
+  private chainTip = ''
+  private chainReady = false
 
   constructor(ctx: Context) {
     super(ctx, 'audit')
@@ -210,6 +260,8 @@ export class AuditService extends Service {
     })
     ctx.platformBus.on(PlatformEvents.McpDeployed, auditOf('change', 'mcp.service.deploy'))
     ctx.platformBus.on(PlatformEvents.McpOfflined, auditOf('change', 'mcp.service.offline'))
+    // W1-T2（MCP 治理 §6）：Secret Broker 凭证读取留痕（payload 仅 serviceId/credentialRef 元数据，零明文）
+    ctx.platformBus.on(PlatformEvents.McpSecretAccess, auditOf('change', 'mcp.credential.access'))
     ctx.platformBus.on(PlatformEvents.McpUnhealthy, (payload) => {
       const p = payload as { serviceId: string; name: string; consecutiveFails: number }
       this.record({
@@ -220,13 +272,21 @@ export class AuditService extends Service {
       this.evaluateAlerts('mcp_unhealthy', p)
     })
     ctx.platformBus.on(PlatformEvents.McpInvoked, (payload) => {
-      const p = payload as { ok: boolean; latencyMs: number; serviceId: string; name: string; callerName: string; errorRate?: number }
+      const p = payload as { ok: boolean; latencyMs: number; serviceId: string; name: string; callerName: string; errorRate?: number; traceId?: string; decisionId?: string; decisionReasons?: string[]; status?: string }
+      // 结果分档（W4 安全审计 P0-4）：策略拒绝（denied）与上游故障（error）必须可区分——
+      // 否则「为什么被允许/拒绝」在审计里退化为同一种失败。
+      const result: 'ok' | 'denied' | 'error' = p.ok ? 'ok' : p.status === 'denied' ? 'denied' : 'error'
       this.record({
         type: 'invoke', actorType: p.callerType ?? 'machine', actorId: p.callerId ?? '', actorName: p.callerName ?? '',
         action: 'mcp.gateway.invoke', resourceType: 'mcp_service', resourceId: p.serviceId, resourceName: p.name,
-        result: p.ok ? 'ok' : 'error',
-        detail: `latency=${p.latencyMs}ms${p.ok ? '' : ' 调用失败'}`,
+        result,
+        detail: `latency=${p.latencyMs}ms${p.ok ? '' : result === 'denied' ? ' 策略拒绝' : ' 调用失败'}`,
         actChain: p.actChain,
+        // 全链 trace（W3-T5 §14，可选维度）：随 mcp.invoked payload v2 落审计，支持 ?traceId= 还原调用链
+        ...(p.traceId ? { traceId: p.traceId } : {}),
+        // 决策依据（W3-T5 §11/§16）：allow/deny 均可回查「为什么被允许/拒绝」
+        ...(p.decisionId ? { decisionId: p.decisionId } : {}),
+        ...(p.decisionReasons?.length ? { decisionReasons: p.decisionReasons } : {}),
       })
     })
     // 连接器纳管（open-connector 融合）：invoke 日志透传 actChain + runId（runId 无独立字段，进 resourceId）
@@ -449,8 +509,49 @@ export class AuditService extends Service {
 
   // -- 审计日志 -----------------------------------------------------------
 
+  /**
+   * 唯一写入点（append-only）：单点计算哈希链——hash = sha256(prevHash + canonicalJSON(业务字段))，
+   * 链首 prevHash=''。启动续链：首次写入前取集合最后一条的 hash 作链首（重启/换进程不破链，
+   * 集合无清理逻辑，天然全序）。校验口径：对存量记录 strip prevHash/hash 后重算并与 hash 比对
+   * （auditHashOf 导出，W4 验收/外部分析共用同一实现）。
+   */
   record(entry: Omit<AuditLogRecord, 'id' | 'createdAt' | 'updatedAt'>): AuditLogRecord {
-    return this.logs().insert({ id: newId('log'), ...entry })
+    if (!this.chainReady) {
+      const all = this.logs().all()
+      this.chainTip = all.length > 0 ? String(all[all.length - 1]!.hash ?? '') : ''
+      this.chainReady = true
+    }
+    const prevHash = this.chainTip
+    const record = { id: newId('log'), ...entry }
+    const hash = auditHashOf(record, prevHash)
+    this.chainTip = hash
+    return this.logs().insert({ ...record, prevHash, hash } as AuditLogRecord)
+  }
+
+  /** 当前链尾哈希（ndjson 导出附尾行 _chainTip；外部对账入口）。 */
+  chainTipHash(): string {
+    if (!this.chainReady) {
+      const all = this.logs().all()
+      return all.length > 0 ? String(all[all.length - 1]!.hash ?? '') : ''
+    }
+    return this.chainTip
+  }
+
+  /**
+   * ndjson 流式导出（契约 §14，append-only 导出）：行序=时间序（createdAt 升序），
+   * 每行一条完整审计记录（含 prevHash/hash 可校验），尾行 {"_chainTip": "<lastHash>"}。
+   * 直接写响应（Content-Type application/x-ndjson），权限点同既有 audit.read。
+   */
+  exportNdjson(exchange: { res: { writeHead(status: number, headers: Record<string, string>): unknown; end(text?: string): unknown } }, filter: { since?: string; until?: string } = {}): void {
+    const rows = this.logs().find((log) => {
+      if (filter.since && log.createdAt < filter.since) return false
+      if (filter.until && log.createdAt > filter.until) return false
+      return true
+    }).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    const lines = rows.map((row) => JSON.stringify(row))
+    lines.push(JSON.stringify({ _chainTip: this.chainTipHash() }))
+    exchange.res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' })
+    exchange.res.end(`${lines.join('\n')}\n`)
   }
 
   // -- 证据锚点（IAW 交接 5-1） ---------------------------------------------
@@ -572,6 +673,8 @@ export class AuditService extends Service {
     q?: string
     since?: string
     sceneCode?: string
+    /** 全链 trace 精确匹配（W3-T5 §14）：与 mcp.invoked 落审计的 traceId 维度对齐。 */
+    traceId?: string
     limit?: number
   }): { total: number; items: AuditLogRecord[] } {
     const all = this.logs().find((log) => {
@@ -582,6 +685,7 @@ export class AuditService extends Service {
       if (filter.result && log.result !== filter.result) return false
       if (filter.since && log.createdAt < filter.since) return false
       if (filter.sceneCode && log.sceneCode !== filter.sceneCode) return false
+      if (filter.traceId && log.traceId !== filter.traceId) return false
       if (filter.q && !`${log.action} ${log.actorName} ${log.resourceName} ${log.detail}`.toLowerCase().includes(filter.q.toLowerCase())) return false
       return true
     })

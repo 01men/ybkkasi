@@ -1091,22 +1091,6 @@ textarea.form-control { height: auto; min-height: 88px; padding: 9px 12px; resiz
 .az-op-check input { accent-color: var(--brand-500); margin: 0; }
 .az-op-check code { font-family: var(--mono); font-size: var(--fs-10-5); color: var(--text-4); }
 
-/* ============ 资产登记引导（WP-08/E1） ============ */
-.reg-tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-.reg-tile {
-  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);
-  padding: 16px; cursor: pointer; transition: all 0.18s;
-}
-.reg-tile:hover { border-color: var(--brand-300); box-shadow: var(--shadow-s); transform: translateY(-2px); background: var(--surface); }
-.reg-tile:focus-visible { outline: 2px solid var(--brand-300); outline-offset: 1px; }
-.reg-tile-disabled { opacity: 0.62; }
-.reg-tile-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.reg-tile-icon { color: var(--brand-500); display: flex; }
-.reg-tile-title { font-size: var(--fs-14); font-weight: 600; }
-.reg-tile-desc { font-size: var(--fs-12); color: var(--text-3); margin-top: 4px; line-height: 1.55; }
-.reg-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
-@media (max-width: 720px) { .reg-form { grid-template-columns: 1fr; } }
-
 /* ============ 资产目录瘦身（WP-12）：筛选 chips + 单栏卡片流 ============ */
 /* .chip 样式已上收到上方「chips（过滤胶囊）」单一声明（2026-10-14 设计适配收敛） */
 .asset-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 4px 0 12px; }

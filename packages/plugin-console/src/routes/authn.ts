@@ -6,6 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { AppRegistryService } from '../../../plugin-app/src/index.ts'
+import { DelegationError } from '../../../plugin-authn/src/index.ts'
 import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
@@ -113,6 +114,53 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
     changeLog(exchange, 'authn.token.issue', 'token', record.jti, record.jti, input.reason ?? '')
     return { token, jti: record.jti, expiresAt: record.expiresAt }
   })
+
+  // 委托令牌交换（MCP 治理契约 §3，RFC 8693 风格）：公开路径 + 自带 Bearer 校验
+  // （仿 /api/auth/client-credentials 的公开端点模式，白名单见 plugin-console/src/index.ts PUBLIC_PATHS）。
+  // 授权事实校验由 console 装配处注入的 delegationGuard 承担（agent bindings / app owner / iam 管理员），
+  // 未装配一律 fail-closed 拒绝。错误以 extra.reason 带稳定原因码（DELEGATION_*，文案面沿用 FORBIDDEN/BAD_REQUEST）。
+  http.register('POST', '/api/authn/token/exchange', async (exchange) => {
+    const header = String(exchange.headers['authorization'] ?? '')
+    if (!header.startsWith('Bearer ')) {
+      exchange.fail(401, 'UNAUTHORIZED', t('缺少 Bearer 令牌：令牌交换以调用者令牌为授权事实'))
+      return
+    }
+    let caller
+    try {
+      caller = ctx.authn.verify(header.slice(7))
+    } catch (error) {
+      exchange.fail(401, 'TOKEN_INVALID', error instanceof Error ? error.message : String(error))
+      return
+    }
+    const input = body<{ userId?: string; targetPrincipalId?: string; audience?: string; scopes?: string[]; ttlSeconds?: number }>(exchange)
+    if (!input.audience) {
+      exchange.fail(400, 'BAD_REQUEST', t('audience 必填（mcp:service:<slug> 或 plugin:<id>）'))
+      return
+    }
+    try {
+      const result = await ctx.authn.exchangeDelegatedToken({
+        caller,
+        ...(input.userId !== undefined ? { userId: input.userId } : {}),
+        ...(input.targetPrincipalId !== undefined ? { targetPrincipalId: input.targetPrincipalId } : {}),
+        audience: input.audience,
+        ...(input.scopes !== undefined ? { scopes: input.scopes } : {}),
+        ...(input.ttlSeconds !== undefined ? { ttlSeconds: input.ttlSeconds } : {}),
+      })
+      exchange.ok({
+        access_token: result.token,
+        token_type: 'Bearer',
+        expires_in: Math.max(1, Math.round((new Date(result.record.expiresAt).getTime() - new Date(result.record.issuedAt).getTime()) / 1000)),
+        scope: result.record.scopes.join(' '),
+        issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const code = error instanceof DelegationError ? error.code : 'DELEGATION_FAILED'
+      const forbidden = code === 'DELEGATION_DENIED' || code === 'DELEGATION_GUARD_UNAVAILABLE'
+      if (forbidden) exchange.fail(403, 'FORBIDDEN', message, { reason: code })
+      else exchange.fail(400, 'BAD_REQUEST', message, { reason: code })
+    }
+  }, { access: 'public' })
 
   // 受众校验自检（令牌内省：验证 aud 收紧语义，供运维与联调使用）
   http.register('POST', '/api/authn/verify-audience', async (exchange) => {

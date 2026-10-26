@@ -13,7 +13,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
-import { newId, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { newId, wrapPolicyDecision, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
 import { t } from '../../platform-i18n/src/index.ts'
 import {
   AUTHZ_OPS, HIGH_RISK_OPS,
@@ -71,6 +71,8 @@ export interface AuthzDecisionRecord extends RecordBase {
   override: boolean
   observeOnly: boolean
   highRisk: boolean
+  /** 平台统一决策表达（W3-T5 契约 §11，additive）：既有引擎结论经 wrapPolicyDecision 包装的决策 id。 */
+  decisionId?: string
 }
 
 /** 版本乐观锁冲突（REST 层映射 409）。 */
@@ -411,6 +413,9 @@ export class NasAuthzService extends Service {
       },
     )
     const enriched = { ...decision, ...(user ? { userName: user.displayName } : {}), ...(nas?.name ? { nasName: nas.name } : {}) }
+    // 统一决策表达（W3-T5 契约 §11）：引擎结论经 wrapPolicyDecision 包装取 decisionId，
+    // 随既有判定留痕（nas.authz.decision → nas:authzDecisions）落账——不重写引擎，决策可回查
+    const policyDecision = wrapPolicyDecision(decision.decision === 'allow', decision.reasons)
     // 留痕与告警（fire-and-forget；deny 全量、高危 op 全量留痕）
     const highRisk = HIGH_RISK_OPS.has(op)
     if (decision.decision === 'deny' || highRisk) {
@@ -419,6 +424,7 @@ export class NasAuthzService extends Service {
         op, paths, decision: decision.decision, ...(decision.role !== undefined ? { role: decision.role } : {}),
         scope: decision.scope, reasons: decision.reasons, ...(decision.ruleId !== undefined ? { ruleId: decision.ruleId } : {}),
         caller, override: input.override === true, observeOnly: rules.observeOnly, highRisk,
+        decisionId: policyDecision.decisionId,
       } satisfies Omit<AuthzDecisionRecord, 'id' | 'createdAt' | 'updatedAt'>)
     }
     if (decision.decision === 'deny' && rules.observeOnly === false) {

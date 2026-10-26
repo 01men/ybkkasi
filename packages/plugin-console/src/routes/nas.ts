@@ -5,8 +5,8 @@
 import { extname } from 'node:path'
 import { createReadStream } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
-import type { HttpExchange } from '../../../platform-core/src/index.ts'
-import { newId } from '../../../platform-core/src/index.ts'
+import type { CallerInfo, HttpExchange, UnifiedPrincipal } from '../../../platform-core/src/index.ts'
+import { humanDelegatorOf, newId } from '../../../platform-core/src/index.ts'
 import { ShareLinkError, SHARE_LINK_TTL_PRESETS } from '../../../plugin-nas/src/share-link.ts'
 import { RulesVersionConflictError } from '../../../plugin-nas/src/authz.ts'
 import { t } from '../../../platform-i18n/src/index.ts'
@@ -626,38 +626,69 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
   })
 
   // -- NAS 数据权限（plugin-nas/nasAuthz，dev-plan-nas-authz §2.3）------------------------
-  // 判定/申请类端点的真实用户身份支持 X-On-Behalf-User 头（网关/hermes 透传），与 body.userId 等价；
   // 身份永不进模型工具参数（P0-2 教训）。
-  const onBehalfUser = (exchange: HttpExchange): string | undefined => {
+  //
+  // OBO 授权事实降级（MCP 治理契约 §4，2026-10-22）：授权身份优先取令牌统一 principal 的
+  // 委托链（unified.humanDelegatorOf，source='token'）；无委托链才回落 X-On-Behalf-User 头
+  // （source='header-legacy'，迁移期兼容，网关/hermes 存量调用方零感知）。
+  // X-On-Behalf-User 头自此只是「降级来源的身份声明」，不再是权威授权事实——伪造头不能越过
+  // 令牌委托链（有链时头被忽略）；env NAS_OBO_HEADER_STRICT=1 可整体关闭 header 通道（纯 header
+  // 请求 403，默认关闭）。delegationSource 随响应/审计 detail 附注，供迁移观测。
+  type OnBehalfIdentity = { userId: string; source: 'token' | 'header-legacy' } | { blocked: true }
+  const onBehalfIdentity = (exchange: HttpExchange): OnBehalfIdentity | undefined => {
+    const info = caller(exchange) as CallerInfo & { unified?: UnifiedPrincipal }
+    const delegator = info.unified ? humanDelegatorOf(info.unified) : null
+    if (delegator?.userId) return { userId: delegator.userId, source: 'token' }
     const header = exchange.headers['x-on-behalf-user']
     const value = Array.isArray(header) ? header[0] : header
-    return value && String(value).trim() !== '' ? String(value).trim() : undefined
+    const raw = value && String(value).trim() !== '' ? String(value).trim() : undefined
+    if (!raw) return undefined
+    if (process.env['NAS_OBO_HEADER_STRICT'] === '1') return { blocked: true }
+    return { userId: raw, source: 'header-legacy' }
   }
 
   guarded('POST', '/api/nas/authz/check', 'nas.authz.check', async (exchange) => {
     const input = body<{ nasId: string; userId?: string; paths: string[] | string; op: string; override?: boolean }>(exchange)
     if (!input.nasId) throw new Error(t('缺少 nasId'))
-    const userId = onBehalfUser(exchange) ?? input.userId
+    const obo = onBehalfIdentity(exchange)
+    if (obo && 'blocked' in obo) {
+      exchange.fail(403, 'FORBIDDEN', t('X-On-Behalf-User 头通道已关闭（NAS_OBO_HEADER_STRICT=1）：请改用委托令牌'))
+      return
+    }
+    const userId = obo?.userId ?? input.userId
     if (!userId) throw new Error(t('缺少 userId（或 X-On-Behalf-User 头）'))
     const info = caller(exchange)
     if (input.override === true) {
       // 破窗：仅持 nas.authz.write 的运维可强制 P 判定（强制留痕在 nasAuthz 内完成）
       if (!requirePermission(exchange, 'nas.authz.write')) return
     }
-    return ctx.nasAuthz.check({
-      nasId: String(input.nasId), userId: String(userId),
-      paths: Array.isArray(input.paths) ? input.paths : [String(input.paths ?? '')],
-      op: String(input.op) as never,
-      ...(input.override !== undefined ? { override: input.override === true } : {}),
-      caller: info.name,
-    })
+    return {
+      ...await ctx.nasAuthz.check({
+        nasId: String(input.nasId), userId: String(userId),
+        paths: Array.isArray(input.paths) ? input.paths : [String(input.paths ?? '')],
+        op: String(input.op) as never,
+        ...(input.override !== undefined ? { override: input.override === true } : {}),
+        caller: info.name,
+      }),
+      // 契约 §4 迁移观测：身份事实来源随判定结果附注（token=令牌委托链；header-legacy=降级头）
+      ...(obo ? { delegationSource: obo.source, onBehalfUserId: userId } : {}),
+    }
   })
 
-  guarded('GET', '/api/nas/authz/scope', 'nas.authz.check', (exchange) => {
+  guarded('GET', '/api/nas/authz/scope', 'nas.authz.check', async (exchange) => {
     const nasId = exchange.query.get('nasId')
-    const userId = onBehalfUser(exchange) ?? exchange.query.get('userId') ?? ''
+    const obo = onBehalfIdentity(exchange)
+    if (obo && 'blocked' in obo) {
+      exchange.fail(403, 'FORBIDDEN', t('X-On-Behalf-User 头通道已关闭（NAS_OBO_HEADER_STRICT=1）：请改用委托令牌'))
+      return
+    }
+    const userId = obo?.userId ?? exchange.query.get('userId') ?? ''
     if (!nasId || !userId) throw new Error(t('缺少 nasId 或 userId 查询参数'))
-    return ctx.nasAuthz.scopeOf(nasId, userId)
+    return {
+      ...await ctx.nasAuthz.scopeOf(nasId, userId),
+      // 契约 §4 迁移观测：数据范围身份事实来源（token=令牌委托链；header-legacy=降级头）
+      ...(obo ? { delegationSource: obo.source, onBehalfUserId: userId } : {}),
+    }
   })
 
   guarded('GET', '/api/nas/authz/rules', 'nas.authz.read', () => ctx.nasAuthz.getRules())
@@ -708,7 +739,12 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
         exchange.fail(400, 'BAD_REQUEST', t('share 申请缺少 nasId/path'))
         return
       }
-      const userId = onBehalfUser(exchange) ?? input.userId
+      const obo = onBehalfIdentity(exchange)
+      if (obo && 'blocked' in obo) {
+        exchange.fail(403, 'FORBIDDEN', t('X-On-Behalf-User 头通道已关闭（NAS_OBO_HEADER_STRICT=1）：请改用委托令牌'))
+        return
+      }
+      const userId = obo?.userId ?? input.userId
       if (!userId) {
         exchange.fail(400, 'BAD_REQUEST', t('缺少 userId（或 X-On-Behalf-User 头）'))
         return
@@ -719,7 +755,8 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
           ...(input.reason !== undefined ? { reason: String(input.reason) } : {}),
         })
         changeLog(exchange, 'nas.authz.share_request', 'nas_authz_rules', request.approvalId, t('share 分享申请'),
-          t('审批人路由：{approver}', { approver: request.escalated ? t('resource_admin 兜底') : request.approverSuggestion.orgName ?? '' }))
+          t('审批人路由：{approver}', { approver: request.escalated ? t('resource_admin 兜底') : request.approverSuggestion.orgName ?? '' })
+            + (obo ? t('；身份来源：{source}', { source: obo.source }) : ''))
         exchange.ok({ kind: 'approval', ...request })
       } catch (error) {
         exchange.fail(400, 'BAD_REQUEST', error instanceof Error ? error.message : String(error))

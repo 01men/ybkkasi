@@ -13,7 +13,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
-import { PlatformEvents, newId, sha256Hex, scanSensitiveKeys, type Collection, type RecordBase, type ToolPrincipal } from '../../platform-core/src/index.ts'
+import { PlatformEvents, newId, sha256Hex, scanSensitiveKeys, wrapPolicyDecision, type Collection, type RecordBase, type ToolPrincipal } from '../../platform-core/src/index.ts'
 import { t } from '../../platform-i18n/src/index.ts'
 import { OcClient, OC_VERSION_PIN, type OcConnectionSummary, type OcRunLog, type OcTokenPolicy } from './client.ts'
 import { OcError } from './errors.ts'
@@ -1492,12 +1492,15 @@ export class ConnectorHubService extends Service {
 
       // invoke 审计事件（audit 插件订阅落 invoke 日志，透传 actChain + runId）
       const finalLatencyMs = Date.now() - started
+      // 统一决策表达（W3-T5 契约 §11）：既有放行出口经 wrapPolicyDecision 包装，决策 id 随事件落账
+      const allowDecision = wrapPolicyDecision(true, [`权限组 ${group.name} 授权命中（${action.service}/${action.id}）`])
       this.ctx.platformBus.emit(PlatformEvents.ConnectorInvoked, {
         ok: true, service: action.service, actionId: action.id, runId,
         serviceRisk: action.riskLevel, permGroupId: group.id,
         callerType: caller.type, callerId: caller.id, callerName: caller.name,
         latencyMs: finalLatencyMs, actChain: caller.actChain,
         auditPersisted, metered,
+        decisionId: allowDecision.decisionId, decisionReasons: allowDecision.reasons,
       })
       // 延迟告警口径：单次耗时直评（规则播种见 seedConnectorDemo 的 connector_latency 条目）
       this.ctx.audit.evaluateAlerts('connector_latency', {
@@ -1566,10 +1569,14 @@ export class ConnectorHubService extends Service {
   }
 
   private emitDeniedEvent(caller: InvokeCaller, actionId: string, reason: string, startedAt: number, isError = false): void {
+    // 统一决策表达（W3-T5 契约 §11）：既有拒绝出口经 wrapPolicyDecision 包装，decisionId/reasons
+    // additive 附进 connector.invoked 审计事件（audit 订阅对未知字段零感知）——决策可回查，引擎不重写
+    const policyDecision = wrapPolicyDecision(false, [reason])
     this.ctx.platformBus.emit(PlatformEvents.ConnectorInvoked, {
       ok: false, actionId, service: actionId.split('.')[0] ?? '',
       callerType: caller.type, callerId: caller.id, callerName: caller.name,
       error: reason, latencyMs: Date.now() - startedAt, actChain: caller.actChain, failed: isError,
+      decisionId: policyDecision.decisionId, decisionReasons: policyDecision.reasons,
     })
   }
 

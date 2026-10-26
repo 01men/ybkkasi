@@ -1,6 +1,7 @@
 /** 登录页：账号密码 / 三方扫码（按平台连接器配置显隐）/ 票据免登（?ticket= 一次性参数）。 */
-import { api, session, entryTicketSession, BASE, CONNECTION_NAME, IS_LOCAL_HOST } from '../api.js'
+import { api, session, entryTicketSession, CONNECTION_NAME, IS_LOCAL_HOST } from '../api.js'
 import { resolveLanding, LANDING_PREF_KEY } from '../landing.js'
+import { resolvePanels } from '../connections.js'
 import { consumeNextSources, exitWithNext } from '../next-redirect.js'
 import { icon } from '../icons.js'
 import { h, $, esc, toast } from '../ui.js'
@@ -159,7 +160,15 @@ export function renderLogin(app) {
     if (await exitWithNext({ sameOrigin: nextDestination, crossOrigin: crossNextDestination, api })) return
     if (resolveLanding(session.user) === 'panel') {
       try { localStorage.setItem(LANDING_PREF_KEY, 'panel') } catch { /* 忽略 */ }
-      location.assign(`${BASE}/panel/`)
+      // 面板入口以「宿主 × 部门」登记为准（#/panels）：有登记直达首个已登记面板，
+      // 没登记停在登记页引导（与 app.js 启动分诊同规则）。
+      // 挂载前缀取页面自身路径，不用 api.js 的 BASE——BASE 在远程宿主连接下是完整
+      // 远端地址（http://host:port/rq），当成本机前缀会把「本机登记」拼成坏 URL。
+      const mountBase = new URL('.', document.baseURI).pathname.replace(/\/$/, '')
+      const registered = resolvePanels(localStorage, mountBase).find((panel) => panel.available)
+      if (registered) { location.assign(registered.url); return }
+      location.hash = '#/panels'
+      window.dispatchEvent(new Event('hashchange'))
       return
     }
     location.hash = '#/dashboard'
@@ -184,11 +193,42 @@ export function renderLogin(app) {
   const LAST_SSO_CONFIG_KEY = 'heng_ops_last_sso_config'
   let preferredConfigId = ''
   try { preferredConfigId = localStorage.getItem(LAST_SSO_CONFIG_KEY) ?? '' } catch { /* 忽略 */ }
+  // 三方登录入口按平台配置显隐：未启用任何登录连接器时仅展示账号密码
+  // 钉钉扫码为平台默认登录方式：连接器可用即默认选中（用户已手动切换则不覆盖）
+  let loginTabTouched = false
+  const switchLoginTab = (name) => {
+    app.querySelectorAll('#login-tabs .segmented-item').forEach((item) => item.classList.toggle('active', item.dataset.tab === name))
+    const isPassword = name === 'password'
+    tabPassword.style.display = isPassword ? '' : 'none'
+    tabDing.style.display = isPassword ? 'none' : ''
+  }
   // 发起整页跳转授权：单一主入口，不再要求在平台侧预选企业主体
+  // blocked=授权页侧应用级拒绝（钉钉 900103「应用不存在」）：跳到该地址只会看到错误页，
+  // 这里直接就地给出「去开发者后台开哪一项」的指引，并切回账号密码兜底，不让登录彻底走死。
+  const dingBlockedNotice = (message) => {
+    // 幂等：重复点击「扫码」不应把同一条提示堆叠多份
+    const previous = $('#ding-blocked-notice')
+    if (previous) previous.remove()
+    $('#ding-step-authorize').insertAdjacentHTML('afterbegin', `
+      <div class="muted-box mb-14" id="ding-blocked-notice" style="display:flex;gap:8px;border-color:#fcd34d;background:#fffbeb">
+        ${icon('alert', 15)}
+        <span class="fs-12">钉钉扫码登录未就绪${message ? `：${esc(message)}` : ''}。<br>
+        请管理员在<b>钉钉开发者后台 → 该企业内部应用 → 登录与分享</b>中补充回调域名 <code class="mono">${esc(location.host)}</code>，
+        并确认 <b>AppKey</b> 与「登录应用」一致；配好后刷新本页即可扫码。当前可先用<b>账号密码</b>登录。</span>
+      </div>`)
+  }
   const startDingOauth = async (btn, configId) => {
     btn.classList.add('btn-loading')
     try {
       const auth = await api.post('/api/auth/sso/authorize', { provider: 'dingtalk', scene: 'web_qr', ...(configId ? { configId } : {}) })
+      if (auth.blocked) {
+        dingBlockedNotice(auth.blocked.message)
+        // 用户手动切回账号密码：置 touched，避免 providers 回来后再把 tab 拨回扫码
+        loginTabTouched = true
+        switchLoginTab('password')
+        toast(rqI18n.t('钉钉扫码登录未就绪，已切换到账号密码登录'), 'error')
+        return
+      }
       if (!auth.authorizeUrl) throw new Error('身份源未返回授权地址（可能为 mock 模式），请改用手动输入授权码')
       try { localStorage.setItem(LAST_SSO_CONFIG_KEY, configId ?? '') } catch { /* 忽略 */ }
       // 跨源自举回跳（G1）：整页跳转会离开本页，跨源目的地暂存给 SSO 回调脚本消费
@@ -218,15 +258,7 @@ export function renderLogin(app) {
       el.onclick = () => void startDingOauth($('#ding-oauth-go'), el.dataset.configId || undefined)
     })
   }
-  // 三方登录入口按平台配置显隐：未启用任何登录连接器时仅展示账号密码
-  // 钉钉扫码为平台默认登录方式：连接器可用即默认选中（用户已手动切换则不覆盖）
-  let loginTabTouched = false
-  const switchLoginTab = (name) => {
-    app.querySelectorAll('#login-tabs .segmented-item').forEach((item) => item.classList.toggle('active', item.dataset.tab === name))
-    const isPassword = name === 'password'
-    tabPassword.style.display = isPassword ? '' : 'none'
-    tabDing.style.display = isPassword ? 'none' : ''
-  }
+  // 三方登录入口按平台配置显隐 → 见上方 switchLoginTab/loginTabTouched 声明
   void api.get('/api/auth/providers').then((data) => {
     const dingtalkProviders = (data?.providers ?? []).filter((item) => item.provider === 'dingtalk')
     if (!dingtalkProviders.length) {

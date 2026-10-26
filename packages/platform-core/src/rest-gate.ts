@@ -13,6 +13,7 @@
  */
 import type { HttpExchange, HttpHandler, RouteAuthDecl } from './http.ts'
 import type { WorkCallerRef } from './workforce-port.ts'
+import { toWorkCallerRef, unifiedFromCaller } from './principal.ts'
 import { t } from '../../platform-i18n/src/index.ts'
 
 /** 调用方身份（console 鉴权中间件写入 exchange.principal 的完整结构） */
@@ -65,15 +66,29 @@ export interface RestGate {
  * 前端 session.can()（plugin-console/public/js/api.js）有同款镜像规则，两处须同步改。
  */
 const IMPLIED_POINTS: Record<string, string> = { 'console.read': 'console.login' }
+// 蕴含表导出（W3-T5）：/mcp bridge tools/list 过滤等非 REST 面与 REST requirePermission
+// 单点同源（此前 platform-core 冻结期只能借桩 host 探针间接取布尔，现可直接消费）
+export { IMPLIED_POINTS }
+
+/**
+ * 权限点判定的共享纯函数（MCP 治理契约 §8/§11，W3-T5 导出）：与 requirePermission
+ * 同一判定面（'*' 直通 / 点直持 / 蕴含表命中），供非 REST 面（如 /mcp bridge 的
+ * tools/list 过滤探针）单点复用——蕴含表是本模块常量，导出后不再需要借
+ * createRestGate 的桩 host 间接取布尔（platform-core 冻结期的过渡实现已可替换）。
+ */
+export function permissionPointAllows(permissions: string[], point: string): boolean {
+  const impliedBy = IMPLIED_POINTS[point]
+  return permissions.includes('*') || permissions.includes(point)
+    || (impliedBy !== undefined && permissions.includes(impliedBy))
+}
 
 export function createRestGate(ctx: RestGateHost): RestGate {
   const caller = (exchange: HttpExchange): CallerInfo => exchange.principal as CallerInfo
 
   const requirePermission = (exchange: HttpExchange, point: string): boolean => {
     const info = caller(exchange)
-    const impliedBy = IMPLIED_POINTS[point]
-    if (info.permissions.includes('*') || info.permissions.includes(point)
-      || (impliedBy !== undefined && info.permissions.includes(impliedBy))) return true
+    // 判定面单点收敛（W3-T5）：蕴含表与布尔判定在上方 permissionPointAllows，本处只补副作用
+    if (permissionPointAllows(info.permissions, point)) return true
     ctx.platformBus.emit('audit.authz.denied', {
       actorId: info.userId ?? info.principalId,
       actorName: info.name,
@@ -132,14 +147,10 @@ export function createRestGate(ctx: RestGateHost): RestGate {
  * workforce 窄端口（ctx.workforcePolicy / gateManagedWork / workforce.claimWork）：
  * 身份一律取自令牌解析结果，禁止从请求体/查询参数组装。字段一一映射，
  * 缺省字段不产出（保持 WorkCallerRef 可选项语义）。不改动既有 RestGate 行为。
+ *
+ * MCP 治理收敛（契约 §2）：映射实现单点迁至 principal.ts（toWorkCallerRef），
+ * 本函数仅做 CallerInfo → 统一主体的形状对齐后委托，对外行为不变。
  */
 export function workCallerOf(info: CallerInfo): WorkCallerRef {
-  return {
-    kind: info.kind,
-    principalId: info.principalId,
-    ...(info.userId !== undefined ? { userId: info.userId } : {}),
-    ...(info.refType !== undefined ? { refType: info.refType } : {}),
-    ...(info.refId !== undefined ? { refId: info.refId } : {}),
-    ...(info.name ? { name: info.name } : {}),
-  }
+  return toWorkCallerRef(unifiedFromCaller(info))
 }

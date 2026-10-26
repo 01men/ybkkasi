@@ -8,7 +8,7 @@
  * 粒子星尘、数字滚动与滚动显现（IntersectionObserver）；rAF 循环以 canvas 脱离文档为退出条件。
  */
 import { icon } from '../icons.js'
-import { BASE, session } from '../api.js'
+import { session } from '../api.js'
 import { $, $$ } from '../ui.js'
 
 /** 生态树数据：平台 → 三域 → 资源叶（与控制台导航同源的 12 个能力面） */
@@ -58,7 +58,7 @@ export function renderHome(app) {
         <a href="#sec-start">快速开始</a>
       </div>
       <div class="home-nav-cta">
-        <a class="home-btn home-btn-ghost" href="${BASE}/panel/" style="height:38px;padding:0 16px;font-size:13.5px">部门面板</a>
+        <a class="home-btn home-btn-ghost" href="#/panels" style="height:38px;padding:0 16px;font-size:13.5px">部门面板</a>
         <a class="home-btn home-btn-primary" href="#/login" id="home-login-btn" style="height:38px;padding:0 18px;font-size:13.5px">${loginLabel}</a>
       </div>
       <button class="home-nav-toggle" id="home-nav-toggle" aria-label="打开菜单" aria-expanded="false">${icon('menu', 20)}</button>
@@ -217,7 +217,7 @@ export function renderHome(app) {
         </div>
         <div class="home-cta-actions home-reveal">
           <a class="home-btn home-btn-green" href="#/login">${loginLabel}</a>
-          <a class="home-btn home-btn-light" href="${BASE}/panel/">进入部门面板</a>
+          <a class="home-btn home-btn-light" href="#/panels">进入部门面板</a>
         </div>
         <div class="home-cta-note home-reveal">首次部署：平台管理员初始口令见服务器 data/admin-initial-password.txt，登录后请立即修改。</div>
       </div>
@@ -237,7 +237,7 @@ export function renderHome(app) {
           <a href="#sec-features">产品能力</a>
           <a href="#sec-arch">架构理念</a>
           <a href="#sec-start">快速开始</a>
-          <a href="${BASE}/panel/">部门面板</a>
+          <a href="#/panels">部门面板</a>
         </div>
       </div>
       <div class="home-footer-meta">

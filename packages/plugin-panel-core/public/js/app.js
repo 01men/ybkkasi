@@ -5,6 +5,7 @@
  */
 import { api, session, setBase as apiSetBase, ApiError } from './api.js'
 import { setBase as depsSetBase, ui as uiDep, realtime as realtimeDep } from './deps.js'
+import { requestedDept, resolveDept } from './dept.js'
 import rqI18n from './i18n.js'
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,8 @@ const state = {
   hostBridge: false,
   depts: [],
   dept: localStorage.getItem('panel_dept') ?? 'mfg',
+  /** 深链指定的部门（?dept=）：init 拉回部门清单后校验可用性再采用。 */
+  deptRequested: '',
   overview: null,
   industries: [],
   industry: null,
@@ -93,6 +96,10 @@ export function start({ base, hostBridge = false }) {
   apiSetBase(base)
   depsSetBase(base)
   state.hostBridge = hostBridge
+  // 深链部门（?dept=mfg）：控制台「部门面板」登记项直达某个部门的看板。
+  // 解析与越权回落规则在 dept.js（纯函数，随包单测）：参数优先于本地记忆，
+  // 但写入记忆仍按用户自己的选择——深链只影响本次进入。
+  state.deptRequested = requestedDept(location.search)
   if (!session.token) {
     renderLoginGuide()
     return
@@ -134,7 +141,9 @@ async function init() {
     state.industries = indRes.industries
     // 部门范围权限（账号组织打通）：无权限的部门不可作为当前部门
     const allowedDepts = state.depts.filter((dept) => dept.allowed !== false)
-    if (!allowedDepts.some((dept) => dept.id === state.dept)) state.dept = allowedDepts[0]?.id ?? state.dept
+    // 深链优先；不存在或超出范围静默回落（不把越权尝试暴露成错误）
+    state.dept = resolveDept({ requested: state.deptRequested, remembered: state.dept, allowedDepts })
+    state.deptRequested = ''
     state.industry = state.industries.find((item) => item.state === 'active') ?? null
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -1004,7 +1013,10 @@ async function showBind() {
       <div class="st-d">${bound
         ? esc(rqI18n.t('已绑定：{name}（{corp}）', { name: bound.displayName, corp: bound.corpId }))
         : '点击下方按钮，在钉钉中完成扫码授权即可。绑定后面板消息可同步钉钉群、场景卡可推送钉钉。'}</div>
-      ${bound ? '' : '<div style="margin-top:8px"><button class="btn dd" id="bindStart">📱 去钉钉扫码绑定</button></div>'}</div></div>
+      ${bound ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn dd" id="bindReplace">🔄 ${esc(rqI18n.t('更换绑定'))}</button>
+        <button class="btn" id="bindUnbind" style="background:#fff;color:#b42318;border-color:#f3c0bd">${esc(rqI18n.t('解除绑定'))}</button>
+      </div>` : '<div style="margin-top:8px"><button class="btn dd" id="bindStart">📱 去钉钉扫码绑定</button></div>'}</div></div>
     <div class="step"><div class="no">3</div><div>
       <div class="st-t">频道群桥（管理员）</div>
       <div class="st-d">在频道旁「⇄钉钉」处绑定钉钉群会话（openConversationId + robotCode）后，开启「钉钉同步」的消息将投递到群。</div></div></div>
@@ -1029,6 +1041,68 @@ async function showBind() {
       }
     }
   }
+
+  // 解绑 / 更换（自助，POST /api/auth/sso/unbind：只作用于当前登录人，不要求 iam.user.write）
+  // 更换 = 先解绑再扫码绑定：绑定必须由钉钉授权给出 unionId，服务端不能代为完成。
+  const unbindSelf = async () => {
+    const code = await selfVerifyCode(rqI18n.t('解除钉钉绑定'))
+    if (!code) return false
+    try {
+      await api.post('/api/auth/sso/unbind', { provider: 'dingtalk', verifyCode: code })
+      void toast(rqI18n.t('已解除钉钉绑定'))
+      return true
+    } catch (error) {
+      void toast(error.message, 'error')
+      return false
+    }
+  }
+  document.getElementById('bindUnbind')?.addEventListener('click', async () => {
+    if (!await unbindSelf()) return
+    hideModal()
+    void refreshDingtalk()
+  })
+  document.getElementById('bindReplace')?.addEventListener('click', async () => {
+    if (!await unbindSelf()) return
+    hideModal()
+    try {
+      const authorize = await api.post('/api/auth/sso/bind/authorize', { provider: 'dingtalk' })
+      const url = authorize.redirectUrl ?? authorize.url ?? authorize.redirect_uri
+      if (!url) { void toast(rqI18n.t('平台未返回授权地址，请检查钉钉连接器登录配置'), 'error'); return }
+      void toast(rqI18n.t('即将跳转钉钉授权页，完成即绑定新身份'))
+      setTimeout(() => { location.assign(url) }, 600)
+    } catch (error) {
+      void toast(error.message, 'error')
+    }
+  })
+}
+
+/** 本人操作的三方绑定类动作的二次验证码弹窗（取消返回 ''）。 */
+function selfVerifyCode(title) {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (code) => { if (settled) return; settled = true; resolve(code) }
+    showModal(title, `
+      <div class="form-item">
+        <label class="form-label">${esc(rqI18n.t('二次验证码'))}</label>
+        <input class="input" id="selfVerifyCode" placeholder="${esc(rqI18n.t('6 位验证码（演示环境可填 123456）'))}">
+        <div class="form-hint">${esc(rqI18n.t('该操作会改变你的登录方式，需二次确认。'))}</div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button class="btn" id="selfVerifyCancel">${esc(rqI18n.t('取消'))}</button>
+        <button class="btn primary" id="selfVerifyOk">${esc(rqI18n.t('确认'))}</button>
+      </div>`)
+    document.getElementById('selfVerifyCancel').onclick = () => { finish(''); hideModal() }
+    document.getElementById('selfVerifyOk').onclick = () => {
+      const code = (document.getElementById('selfVerifyCode')?.value ?? '').trim()
+      finish(code)
+      hideModal()
+    }
+    // 右上角 ✕ 与遮罩点击走 init() 里已绑定的 hideModal（不覆盖全局绑定）；
+    // 这里只在遮罩被点时让外层 Promise 落地，避免调用方永久挂起。
+    document.getElementById('mask').addEventListener('click', (event) => {
+      if (event.target.id === 'mask') finish('')
+    }, { once: true })
+  })
 }
 
 // ---------------------------------------------------------------------------

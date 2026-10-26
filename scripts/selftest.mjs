@@ -695,19 +695,116 @@ try {
   const bindOk = await api('POST', '/api/auth/sso/bind', { body: { pendingTicket: pending.data.pendingTicket, username: 'dev', password: 'Ybk@2026' } })
   check('绑定已有账号并登录', bindOk.ok && bindOk.data.user.username === 'dev')
 
-  // 唯一约束：已绑定的三方身份（dd_u003→dev）再绑定他人 → 引擎级拒绝
+  // 唯一约束：已绑定的三方身份（dd_u003→dev）再绑定他人 → 拒绝。
+  // 2026-10-22 解绑能力上线后服务层新增了「先判后写」的可读前置错误（引擎唯一约束仍兜底），
+  // 两种文案都算命中一人一号：断言只认语义，不认实现路径。
   const opsUser = (await api('GET', '/api/iam/users?q=' + encodeURIComponent('韩若飞'), { token: admin })).data.users[0]
   const dupBind = await api('POST', `/api/iam/users/${opsUser.id}/bindings`, {
     token: admin,
     body: { provider: 'dingtalk', unionId: 'dd_u003', displayName: '周既白', verifyCode: '123456' },
   })
-  check('一人一号：身份绑定第二个账号被拒（引擎唯一约束）', !dupBind.ok && JSON.stringify(dupBind.error).includes('唯一约束'))
+  check('一人一号：身份绑定第二个账号被拒（唯一约束/一人一号）',
+    !dupBind.ok && /唯一约束|一人一号/.test(JSON.stringify(dupBind.error)), dupBind.error?.message)
 
   // 未命中 → 注册新账号分支
   const authorize5 = await api('POST', '/api/auth/sso/authorize', { body: { provider: 'dingtalk', scene: 'web_qr' } })
   const pending3 = await api('POST', '/api/auth/sso', { body: { provider: 'dingtalk', code: 'DD0006', state: authorize5.data.state } })
   const register = await api('POST', '/api/auth/sso/register', { body: { pendingTicket: pending3.data.pendingTicket } })
   check('三方身份注册新账号并登录', register.ok && register.data.user.username === 'dingtalk_dd_u006')
+
+  // ---- 解绑 / 更换（2026-10-22）------------------------------------------------
+  // 覆盖四个必须成立的行为：① 解绑真的落到事实源且不留投影；② 连接器同步不会把人工解绑的
+  // 绑定自动补回（否则用户看到「点了没反应」）；③ 反锁定护栏拦住「解完就登不进来」；
+  // ④ 本人自助解绑不需要 iam.user.write。
+  // 全部在专用测试账号上进行（不动 linxm 等既有账号的绑定——后续用例依赖它们）。
+  {
+    const unbindOrg = (await api('GET', '/api/iam/orgs', { token: admin })).data[0]
+    // 专用账号：管理员建号并显式设口令（passwordKnown=true），再手工绑一个钉钉身份
+    const probe = await api('POST', '/api/iam/users', {
+      token: admin,
+      body: { username: 'unbind_probe', displayName: '解绑探针', orgId: unbindOrg.id, password: 'Ybk@2026', email: 'unbind_probe@yuanbingke.com' },
+    })
+    const probeId = probe.data.id
+    // 先绑两个主体（多主体并存），再逐个解绑验证粒度
+    await api('POST', `/api/iam/users/${probeId}/bindings`, {
+      token: admin, body: { provider: 'dingtalk', unionId: 'probe_u001', displayName: '探针身份', corpId: 'probe-corp', verifyCode: '123456' },
+    })
+    await api('POST', `/api/iam/users/${probeId}/bindings`, {
+      token: admin, body: { provider: 'dingtalk', unionId: 'probe_u002', displayName: '探针身份2', corpId: 'probe-corp2', verifyCode: '123456' },
+    })
+    const twoSubjects = (await api('GET', '/api/iam/users?q=unbind_probe', { token: admin })).data.users[0]
+    const beforeUnbind = twoSubjects
+    const unbound = await api('DELETE', `/api/iam/users/${probeId}/bindings/dingtalk?corpId=probe-corp`, { token: admin, body: { verifyCode: '123456' } })
+    const afterUnbind = (await api('GET', '/api/iam/users?q=unbind_probe', { token: admin })).data.users[0]
+    check('解绑三方身份：只移除目标主体 + 写入同步豁免（另一主体保留）',
+      (beforeUnbind.bindings?.length ?? 0) === 2 && unbound.ok && (afterUnbind.bindings ?? []).length === 1
+      && afterUnbind.bindings[0].corpId === 'probe-corp2'
+      && (afterUnbind.bindingExemptions ?? []).includes('dingtalk|probe-corp'),
+      `before=${beforeUnbind.bindings?.length} after=${JSON.stringify(afterUnbind.bindings)} exempt=${JSON.stringify(afterUnbind.bindingExemptions)}`)
+    // 解绑另一个主体后全部清空
+    await api('DELETE', `/api/iam/users/${probeId}/bindings/dingtalk?corpId=probe-corp2`, { token: admin, body: { verifyCode: '123456' } })
+    const afterScoped = (await api('GET', '/api/iam/users?q=unbind_probe', { token: admin })).data.users[0]
+    check('多主体解绑按 corpId 精确生效（逐个解除后清空）',
+      (afterScoped.bindings ?? []).length === 0, JSON.stringify(afterScoped.bindings))
+    // 重新绑定应清除豁免（人工意图覆盖解绑决定）
+    const rebind = await api('POST', `/api/iam/users/${probeId}/bindings`, {
+      token: admin, body: { provider: 'dingtalk', unionId: 'probe_u001', displayName: '探针身份', corpId: 'probe-corp', verifyCode: '123456' },
+    })
+    const afterRebind = (await api('GET', '/api/iam/users?q=unbind_probe', { token: admin })).data.users[0]
+    check('重新绑定清除该主体的同步豁免（恢复自动绑定语义）',
+      rebind.ok && !(afterRebind.bindingExemptions ?? []).includes('dingtalk|probe-corp')
+      && (afterRebind.bindings ?? []).some((b) => b.corpId === 'probe-corp'),
+      JSON.stringify({ exempt: afterRebind.bindingExemptions, bindings: afterRebind.bindings }))
+
+    // 反锁定 + 同步不补回：通讯录同步创建的账号（口令为随机值且未下发）不能被解掉唯一登录方式；
+    // 解绑后同步也不得把它重新绑回来（豁免生效）。
+    const syncCfg = (await api('GET', '/api/iam/connectors', { token: admin })).data.configs.find((c) => c.provider === 'dingtalk')
+    await api('POST', `/api/iam/connectors/${syncCfg.id}/sync`, { token: admin })
+    const syncedUser = (await api('GET', '/api/iam/users?q=dd0007', { token: admin })).data.users[0]
+    const blockedUnbind = await api('DELETE', `/api/iam/users/${syncedUser.id}/bindings/dingtalk`, {
+      token: admin, body: { verifyCode: '123456' },
+    })
+    const stillBound = (await api('GET', '/api/iam/users?q=dd0007', { token: admin })).data.users[0]
+    check('反锁定：唯一登录方式被拒解绑且绑定完好（先判后删，无中间态）',
+      !blockedUnbind.ok && /唯一的登录方式/.test(JSON.stringify(blockedUnbind.error))
+      && (stillBound.bindings ?? []).length === 1,
+      `${blockedUnbind.error?.message} / bindings=${JSON.stringify(stillBound.bindings)}`)
+    await api('POST', `/api/iam/users/${syncedUser.id}/reset-password`, { token: admin, body: {} })
+    const unboundAfterPw = await api('DELETE', `/api/iam/users/${syncedUser.id}/bindings/dingtalk`, { token: admin, body: { verifyCode: '123456' } })
+    check('设口令后同一账号可正常解绑（护栏只拦真正的锁死）', unboundAfterPw.ok, JSON.stringify(unboundAfterPw.error))
+    const syncRes = await api('POST', `/api/iam/connectors/${syncCfg.id}/sync`, { token: admin })
+    const afterResync = (await api('GET', '/api/iam/users?q=dd0007', { token: admin })).data.users[0]
+    check('解绑后连接器同步不会自动补回绑定（bindingExemptions 生效）',
+      syncRes.ok && (afterResync.bindings ?? []).length === 0, JSON.stringify(afterResync.bindings))
+
+    // 本人自助解绑：普通成员（无 iam.user.write）也能解除自己的绑定。
+    // 用专用探针账号（普通成员角色）做，不动 linxm 的既有绑定——后续用例依赖它。
+    const memberRole = (await api('GET', '/api/iam/roles', { token: admin })).data.roles.find((r) => r.code === 'member')
+    const memberProbe = await api('POST', '/api/iam/users', {
+      token: admin,
+      body: {
+        username: 'unbind_member', displayName: '自助解绑探针', orgId: unbindOrg.id,
+        password: 'Ybk@2026', email: 'unbind_member@yuanbingke.com', roleIds: [memberRole.id],
+      },
+    })
+    const memberId = memberProbe.data?.id
+    if (!memberId) {
+      check('本人自助解绑不需要 iam.user.write（面板侧解绑入口的权限前提）', false, `建号失败：${JSON.stringify(memberProbe.error)}`)
+    } else {
+      await api('POST', `/api/iam/users/${memberId}/bindings`, {
+        token: admin, body: { provider: 'dingtalk', unionId: 'probe_u003', displayName: '成员探针身份', corpId: 'probe-corp', verifyCode: '123456' },
+      })
+      const memberLogin = await api('POST', '/api/auth/login', { body: { username: 'unbind_member', password: 'Ybk@2026' } })
+      const memberToken = memberLogin.data.token
+      const hasWrite = (memberLogin.data.user.permissions ?? []).includes('iam.user.write')
+      const selfUnbind = await api('POST', '/api/auth/sso/unbind', {
+        token: memberToken, body: { provider: 'dingtalk', corpId: 'probe-corp', verifyCode: '123456' },
+      })
+      check('本人自助解绑不需要 iam.user.write（面板侧解绑入口的权限前提）',
+        !hasWrite && selfUnbind.ok && (selfUnbind.data?.bindings ?? []).length === 0,
+        `hasWrite=${hasWrite} ${JSON.stringify(selfUnbind.error ?? selfUnbind.data?.bindings)}`)
+    }
+  }
 
   const devLogin = await api('POST', '/api/auth/login', { body: { username: 'dev', password: 'Ybk@2026' } })
   check('开发者登录', devLogin.ok)
@@ -1467,13 +1564,27 @@ try {
       Array.isArray(parsedMapSeq) && parsedMapSeq[0]?.name === '现场复核' && parsedMapSeq[0]?.actorType === 'human',
       JSON.stringify(parsedMapSeq))
   }
-  section('前端命令面板路由索引（组6：cmdk 页面索引补六路由）')
+  section('前端命令面板路由索引（cmdk 页面索引 + IA 收敛）')
   {
     const cmdkSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'cmdk.js'), 'utf8')
-    const requiredHashes = ['#/nas', '#/nas-authz', '#/finops', '#/connectors', '#/register', '#/connections']
+    const requiredHashes = ['#/nas', '#/nas-authz', '#/finops', '#/connectors', '#/connections', '#/exec', '#/a2a']
     const missingHashes = requiredHashes.filter((hash) => !cmdkSrc.includes(`hash: '${hash}'`))
-    check('前端：cmdk 静态索引含 NAS/数据权限/财务视图/连接器/资产登记/宿主连接六路由（缺一即红）',
+    check('前端：cmdk 静态索引含 NAS/数据权限/财务视图/连接器/宿主连接/执行中枢/A2A 路由（缺一即红）',
       missingHashes.length === 0, `缺失：${missingHashes.join(', ')}`)
+    // IA 收敛（2026-10-22）：资产登记入口下线；A2A/UHP 独立成「协作与执行」一级分类，不再挂在资源组
+    const appSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'app.js'), 'utf8')
+    const nav = appSrc.slice(appSrc.indexOf('const NAV = ['), appSrc.indexOf('const app = $('))
+    const registerGone = !cmdkSrc.includes(`hash: '#/register'`) && !nav.includes(`'#/register'`)
+    check('前端 IA：资产登记（#/register）已从导航与命令面板下线', registerGone)
+    const collabGroup = nav.slice(nav.indexOf("section: '协作与执行'"), nav.indexOf("section: '治理'"))
+    check('前端 IA：「协作与执行」独立一级分类承载 执行中枢 / A2A 协作 / UHP 执行',
+      nav.includes("section: '协作与执行'")
+      && collabGroup.includes("'#/exec'") && collabGroup.includes("'#/a2a'") && collabGroup.includes("'#/a2a?tab=uhp'"))
+    const resourceGroup = nav.slice(nav.indexOf("section: '资源'"), nav.indexOf("section: '协作与执行'"))
+    check('前端 IA：A2A 与数据权限已不在资源组（A2A 迁协作与执行、数据权限迁治理）',
+      !resourceGroup.includes("'#/a2a") && !resourceGroup.includes("'#/nas-authz'"))
+    const governGroup = nav.slice(nav.indexOf("section: '治理'"), nav.indexOf("section: '企业'"))
+    check('前端 IA：数据权限（#/nas-authz）归入治理分类', governGroup.includes("'#/nas-authz'"))
   }
 
   // ================================================================ 交接 F 清单 M 节：scenegraph 校验器口径对齐原文
@@ -2127,19 +2238,29 @@ try {
   const tbInvoke = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: impR.serviceId, tool: 'tb_query_task', args: { id: 't-1' } } })
   check('导入服务真实调用（SSE 响应 + 会话复用）', tbInvoke.ok && tbInvoke.data.ok === true && JSON.stringify(tbInvoke.data.result).includes('sse-echo:tb_query_task'), JSON.stringify(tbInvoke).slice(0, 300))
 
-  // 3. headers 透传（Authorization）
+  // 3. 凭证与下游认证头（W1 治理 2026-10-22：导入敏感头自动入 SecretBroker，凭证也可经 API 显式下发）
   const authConfig = JSON.stringify({ mcpServers: { 'authed-mcp': { type: 'http', url: `http://127.0.0.1:${ssePort}/api/mcp`, headers: { Authorization: 'Bearer tk-123' } } } })
-  const impAuth = await api('POST', '/api/mcp/import', { token: admin, body: { config: authConfig } })
+  const impPlain = await api('POST', '/api/mcp/import', { token: admin, body: { config: authConfig } })
+  check('导入携带明文敏感头 → 自动入保险箱（brokered 标记）', impPlain.ok && impPlain.data.results[0].ok === true && impPlain.data.results[0].brokered === true, JSON.stringify(impPlain).slice(0, 300))
+  const plainSvc = (await api('GET', '/api/mcp/services', { token: admin })).data.services.find((s) => s.id === impPlain.data.results[0].serviceId)
+  check('自动入保险箱后服务记录零敏感头且带 credentialRef', plainSvc && !plainSvc.headers?.Authorization && plainSvc.credentialRef === 'local:', JSON.stringify(plainSvc?.headers ?? {}))
+  const impAuth = await api('POST', '/api/mcp/import', { token: admin, body: { config: JSON.stringify({ mcpServers: { 'authed-mcp-clean': { type: 'http', url: `http://127.0.0.1:${ssePort}/api/mcp` } } }) } })
+  check('无头干净配置导入成功', impAuth.ok && impAuth.data.results[0].ok, JSON.stringify(impAuth).slice(0, 300))
+  const authSvcId = impAuth.data.results[0].serviceId
+  const credPut = await api('PUT', `/api/mcp/services/${authSvcId}/credential`, { token: admin, body: { credentialRef: 'local:', headerName: 'Authorization', secret: 'Bearer tk-123' } })
+  check('凭证经 Secret Broker 下发（响应不回显明文）', credPut.ok && !JSON.stringify(credPut.data).includes('tk-123'), JSON.stringify(credPut).slice(0, 300))
   await api('POST', '/api/mcp/perm-groups', { token: admin, body: {
-    name: 'authed 全放行', policies: { [impAuth.data.results[0].serviceId]: { allowedTools: '*', constraints: { readOnly: true } } },
+    name: 'authed 全放行', policies: { [authSvcId]: { allowedTools: '*', constraints: { readOnly: true } } },
     subjects: [{ type: 'user', id: adminLogin.data.user.id, name: 'admin' }],
   } })
-  const authInvoke = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: impAuth.data.results[0].serviceId, tool: 'tb_query_task', args: {} } })
-  check('导入的认证头透传到远端（Authorization）', authInvoke.ok && authInvoke.data.ok === true && JSON.stringify(authInvoke.data.result).includes('auth:Bearer tk-123'), JSON.stringify(authInvoke).slice(0, 300))
-  const whoamiInvoke = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: impAuth.data.results[0].serviceId, tool: 'whoami', args: {} } })
+  const authInvoke = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: authSvcId, tool: 'tb_query_task', args: {} } })
+  check('Broker 凭证注入透传到远端（Authorization）', authInvoke.ok && authInvoke.data.ok === true && JSON.stringify(authInvoke.data.result).includes('auth:Bearer tk-123'), JSON.stringify(authInvoke).slice(0, 300))
+  const whoamiInvoke = await api('POST', '/api/mcp/invoke', { token: admin, body: { serviceId: authSvcId, tool: 'whoami', args: {} } })
   check('清单外工具被网关拒绝（导入不越权）', whoamiInvoke.data?.status === 'denied', JSON.stringify(whoamiInvoke).slice(0, 200))
-  const authSvc = (await api('GET', '/api/mcp/services', { token: admin })).data.services.find((s) => s.id === impAuth.data.results[0].serviceId)
-  check('认证头列表回显脱敏', authSvc?.headers?.Authorization && !String(authSvc.headers.Authorization).includes('tk-123'), JSON.stringify(authSvc?.headers))
+  const credGet = await api('GET', `/api/mcp/services/${authSvcId}/credential`, { token: admin })
+  check('凭证回显仅元数据（hasSecret 且零明文）', credGet.ok && credGet.data?.hasSecret === true && !JSON.stringify(credGet.data).includes('tk-123'), JSON.stringify(credGet).slice(0, 300))
+  const authSvc = (await api('GET', '/api/mcp/services', { token: admin })).data.services.find((s) => s.id === authSvcId)
+  check('服务记录零敏感头且带 credentialRef', authSvc && !authSvc.headers?.Authorization && !!authSvc.credentialRef, JSON.stringify(authSvc?.headers ?? {}))
 
   // 4. stdio/command 本地形态不支持
   const impStdio = await api('POST', '/api/mcp/import', { token: admin, body: { config: JSON.stringify({ mcpServers: { 'local-tools': { command: 'npx', args: ['-y', 'some-mcp'] } } }) } })
@@ -2646,7 +2767,7 @@ try {
   const onlineTooEarly = await api('POST', `/api/agents/${selfAgent.id}/transition`, { token: ops, body: { action: 'online' } })
   check('缺治理属性不可上线（校验）', !onlineTooEarly.ok)
 
-  await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'] } } })
+  await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { dataClass: 'internal', trialGroups: ['灰度试点组'] } } })
   // QA-04 回归（外部 QA-20261014）：update 校验合并后的完整 attrs，required 与 create 同等强制
   const clearRequiredDesc = await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { description: '' } } })
   check('QA-04 回归：PATCH 清空必填描述被 400 拒绝（update 不得绕过 required）',
@@ -2745,7 +2866,7 @@ try {
       check('A2A：测试 Agent 注册', a2aCreate.ok && Boolean(a2aCreate.data?.agent?.id), JSON.stringify(a2aCreate.error))
       if (!a2aCreate.ok || !a2aCreate.data?.agent?.id) return
       const a2aAgent = a2aCreate.data.agent
-      await api('PATCH', `/api/agents/${a2aAgent.id}`, { token: ops, body: { attrs: { systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://a2a-selftest.example.com/chat' } } })
+      await api('PATCH', `/api/agents/${a2aAgent.id}`, { token: ops, body: { attrs: { dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://a2a-selftest.example.com/chat' } } })
       const a2aTrial = await api('POST', `/api/agents/${a2aAgent.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
       check('A2A：测试 Agent 进入试运行', a2aTrial.ok && a2aTrial.data.status === 'trial', JSON.stringify(a2aTrial.error))
       const a2aOnlineReq = await api('POST', `/api/agents/${a2aAgent.id}/transition`, { token: ops, body: { action: 'online', note: 'A2A 自测上线' } })
@@ -2818,7 +2939,7 @@ try {
       check('协作面：deepseek-chat 重指本段 stub', modelPoint.ok, JSON.stringify(modelPoint.error))
 
       // -- 目标员工注册上线（A0 默认自治） + 协作调用方员工（机器凭证，可授 agent.a2a.invoke）
-      const targetCreate = await api('POST', '/api/agents', { token: ops, body: { name: '协作目标员工', slug: 'collab-target', attrs: { description: 'A2A/UHP 协作面端到端自测目标', model: 'deepseek-chat', riskLevel: 'low', systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://collab.example.com/chat' } } })
+      const targetCreate = await api('POST', '/api/agents', { token: ops, body: { name: '协作目标员工', slug: 'collab-target', attrs: { description: 'A2A/UHP 协作面端到端自测目标', model: 'deepseek-chat', riskLevel: 'low', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://collab.example.com/chat' } } })
       check('协作面：目标员工注册', targetCreate.ok && Boolean(targetCreate.data?.agent?.id), JSON.stringify(targetCreate.error))
       const target = targetCreate.data.agent
       const targetTrial = await api('POST', `/api/agents/${target.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
@@ -3026,7 +3147,7 @@ try {
         const attacker = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'selftest-hijack', refType: 'external', scopes: ['uhp.invoke'] } })
         const attackerToken = (await api('POST', '/api/auth/client-credentials', { body: { clientId: attacker.data.clientId, clientSecret: attacker.data.clientSecret } })).data.token
         // 造一条「人在环审批等待中」的受害任务（A1 目标 × 人类发起 → execute_confirm）
-        const victim = await api('POST', '/api/agents', { token: ops, body: { name: 'SELFTEST-A1目标', slug: 'selftest-a1', attrs: { description: '安全护栏', model: 'deepseek-chat', riskLevel: 'low', systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://a1.example.com', autonomy: 'A1' } } })
+        const victim = await api('POST', '/api/agents', { token: ops, body: { name: 'SELFTEST-A1目标', slug: 'selftest-a1', attrs: { description: '安全护栏', model: 'deepseek-chat', riskLevel: 'low', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://a1.example.com', autonomy: 'A1' } } })
         const victimAgent = victim.data.agent
         await api('POST', `/api/agents/${victimAgent.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
         const victimOnline = await api('POST', `/api/agents/${victimAgent.id}/transition`, { token: ops, body: { action: 'online' } })
@@ -3175,7 +3296,7 @@ try {
         //     构造「员工 active + 绑定到该 Agent + 零任用」的受管态 → 必须 PERMIT_NOT_EFFECTIVE。
         //     静态根因：inject 缺 workforceIdentity，Service 代理读未注入键抛错被 catch 吞掉按 legacy 放行。
         {
-          const permitAgent = (await api('POST', '/api/agents', { token: ops, body: { name: 'SELFTEST-PERMIT目标', slug: `selftest-permit-${Date.now().toString(36)}`, attrs: { description: 'permit 覆盖护栏', model: 'deepseek-chat', riskLevel: 'low', systemPromptVersion: 'v1', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://permit.example.com', autonomy: 'A2' } } })).data.agent
+          const permitAgent = (await api('POST', '/api/agents', { token: ops, body: { name: 'SELFTEST-PERMIT目标', slug: `selftest-permit-${Date.now().toString(36)}`, attrs: { description: 'permit 覆盖护栏', model: 'deepseek-chat', riskLevel: 'low', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://permit.example.com', autonomy: 'A2' } } })).data.agent
           await api('POST', `/api/agents/${permitAgent.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
           const permitOnlineReq = await api('POST', `/api/agents/${permitAgent.id}/transition`, { token: ops, body: { action: 'online', note: 'permit 护栏上线' } })
           await api('POST', `/api/approvals/${permitOnlineReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: 'permit 护栏', confirmed: true, finalReview: true } })
@@ -3375,7 +3496,7 @@ try {
   const oidcAgentCreate = await api('POST', '/api/agents', { token: ops, body: { name: 'SSO 自测机器人', attrs: { description: 'OIDC-agent 关联自测', model: 'deepseek-chat', riskLevel: 'low', avatar: '🔑' } } })
   check('注册 SSO 自测 Agent（owner=资源管理员）', oidcAgentCreate.ok, JSON.stringify(oidcAgentCreate.error))
   const oidcAgentId = oidcAgentCreate.data.agent.id
-  await api('PATCH', `/api/agents/${oidcAgentId}`, { token: ops, body: { attrs: { systemPromptVersion: 'v1', dataClass: 'internal' } } })
+  await api('PATCH', `/api/agents/${oidcAgentId}`, { token: ops, body: { attrs: { dataClass: 'internal' } } })
   const oidcGateNone = await api('POST', `/api/agents/${oidcAgentId}/transition`, { token: ops, body: { action: 'online' } })
   check('Agent 上线门禁：无 OIDC 客户端且无 entryUrl 被拒并指路', !oidcGateNone.ok && JSON.stringify(oidcGateNone.error).includes('身份纳管'), JSON.stringify(oidcGateNone.error))
   const oidcIssue = await api('POST', `/api/agents/${oidcAgentId}/sso-client`, { token: ops, body: { redirectUris: ['http://127.0.0.1:3080/auth/oidc/callback'] } })
@@ -5454,7 +5575,7 @@ try {
   // ================================================================ 审批深化（WP-10/L1）与目录筛选（WP-12）
   section('审批 SLA 与公司级终审（WP-10：二次确认强制 / 终审可追溯 / 调用水印 / SLA 看板）')
   {
-    const probe = await api('POST', '/api/agents', { token: admin, body: { name: '终审探针Agent', attrs: { description: 'WP-10 审批治理验证', model: 'deepseek-chat', riskLevel: 'medium', entryUrl: 'http://127.0.0.1:3080/', systemPromptVersion: 'v1.0', dataClass: 'internal', avatar: '🛡️' } } })
+    const probe = await api('POST', '/api/agents', { token: admin, body: { name: '终审探针Agent', attrs: { description: 'WP-10 审批治理验证', model: 'deepseek-chat', riskLevel: 'medium', entryUrl: 'http://127.0.0.1:3080/', dataClass: 'internal', avatar: '🛡️' } } })
     check('终审探针：注册（entryUrl 免登通道过上线门禁）', probe.ok, JSON.stringify(probe.error))
     const onlineReq = await api('POST', `/api/agents/${probe.data.agent.id}/transition`, { token: admin, body: { action: 'online', note: 'WP-10 二次确认验证' } })
     check('终审探针：L4 上线审批单为高风险', onlineReq.ok && onlineReq.data.approval?.status === 'pending' && onlineReq.data.approval.riskLevel === 'high', JSON.stringify(onlineReq.data?.approval ?? onlineReq.error))
@@ -5471,7 +5592,7 @@ try {
       JSON.stringify(finalAudit.data?.total))
 
     // 组2：approval_decide 工具桥 confirmed/finalReview 透传（服务端 high+approve+非 confirmed 拦截门禁不变）
-    const toolProbe = await api('POST', '/api/agents', { token: admin, body: { name: '工具桥审批探针Agent', attrs: { description: '组2 approval_decide 工具链验证', model: 'deepseek-chat', riskLevel: 'medium', entryUrl: 'http://127.0.0.1:3080/', systemPromptVersion: 'v1.0', dataClass: 'internal', avatar: '🧪' } } })
+    const toolProbe = await api('POST', '/api/agents', { token: admin, body: { name: '工具桥审批探针Agent', attrs: { description: '组2 approval_decide 工具链验证', model: 'deepseek-chat', riskLevel: 'medium', entryUrl: 'http://127.0.0.1:3080/', dataClass: 'internal', avatar: '🧪' } } })
     const toolOnlineReq = await api('POST', `/api/agents/${toolProbe.data.agent.id}/transition`, { token: admin, body: { action: 'online', note: '组2 工具桥二次确认验证' } })
     check('组2 前置：工具桥审批探针 L4 高风险审批单就绪',
       toolOnlineReq.ok && toolOnlineReq.data.approval?.status === 'pending' && toolOnlineReq.data.approval.riskLevel === 'high', JSON.stringify(toolOnlineReq.error ?? toolOnlineReq.data?.approval?.id))
@@ -5792,14 +5913,25 @@ try {
   const connectionsTest = spawn(process.execPath, ['packages/plugin-console/public/js/connections.test.mjs'], { stdio: 'pipe' })
   await new Promise((resolve) => connectionsTest.on('close', resolve))
   check('连接管理纯函数随包单测全绿（node --test）', connectionsTest.exitCode === 0, `exit=${connectionsTest.exitCode}`)
+  // 面板部门深链决议：面板 SPA 是 ES module（jsdom 跑不了），决议逻辑单列成纯函数直测
+  const deptTest = spawn(process.execPath, ['packages/plugin-panel-core/public/js/dept.test.mjs'], { stdio: 'pipe' })
+  await new Promise((resolve) => deptTest.on('close', resolve))
+  check('部门深链决议纯函数随包单测全绿（dept.test.mjs）', deptTest.exitCode === 0, `exit=${deptTest.exitCode}`)
   const apiSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'api.js'), 'utf8')
   check('api.js 动态 BASE + 会话按连接隔离 + 桥接直通仅本机（连接切换的三个承重点）',
     apiSrc.includes('activeConnection(localStorage, MOUNT)') && apiSrc.includes('TOKEN_NS') && apiSrc.includes('IS_LOCAL_HOST'))
   const appConnSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'app.js'), 'utf8')
   check('控制台接线：#/connections 会话前置独立渲染 + 外壳内 builders + 顶栏远程指示',
     appConnSrc.includes("page === 'connections'") && appConnSrc.includes('connections: renderConnections') && appConnSrc.includes('conn-indicator'))
-  check('app.js 显式 import BASE（缺失时 NAV「部门面板」ext 点击 ReferenceError → 无响应，c0fca1a 回归守卫）',
-    /import\s*\{[^}]*\bBASE\b[^}]*\}\s*from\s*'\.\/api\.js'/.test(appConnSrc))
+  // 面板入口不再硬编码 `${BASE}/panel/`：改为「宿主连接 × 部门」登记页（#/panels），
+  // 落地分诊只跳已登记且可达的面板。守两件事：NAV 指向登记页、分诊用 resolvePanels 而非裸路径。
+  check('app.js：NAV 部门面板指向登记页 #/panels（不再硬编码 /panel/ 外链）',
+    appConnSrc.includes("path: '#/panels'") && !appConnSrc.includes('`${BASE}/panel/`'))
+  check('app.js：落地分诊按已登记面板跳转（resolvePanels + firstRegisteredPanelUrl）',
+    appConnSrc.includes('firstRegisteredPanelUrl()') && appConnSrc.includes('resolvePanels(localStorage'))
+  const loginPageSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'pages', 'login.js'), 'utf8')
+  check('登录成功出口：面板分诊同样走登记项（无登记落 #/panels 引导，不裸跳 /panel/）',
+    loginPageSrc.includes('resolvePanels(localStorage') && loginPageSrc.includes("location.hash = '#/panels'"))
   // QA-02 回归（外部 QA-20261014）：工作台 CTA 按权限渲染 + 页面级错误兜底（拒绝留白）
   const dashSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'pages', 'dashboard.js'), 'utf8')
   check('QA-02 回归：工作台 CTA 按权限渲染（处理审批/查看 Agent/用量明细不再对无权角色裸露）',
@@ -7125,7 +7257,7 @@ try {
     check('E3：同小时桶重复指派不重复唤醒（幂等键去重）', exPendingAfterReassign.length === 0, `pending=${exPendingAfterReassign.length}`)
     // 跨主体二唤（语义变更依据同上：租约幂等化——附录 A 决策 3，2026-10-15 总负责人裁决）：
     // coalesce 仅限同主体；换派第二 Agent 后再唤，不满足同主体条件 → 仍进延迟队列
-    const exAgentBReg = await api('POST', '/api/agents', { token: admin, body: { name: '自测跨主体二唤机器人', attrs: { description: 'E2/E3 跨主体二唤场景专用', model: 'deepseek-chat', riskLevel: 'low', systemPromptVersion: 'prompt-v3.2', dataClass: 'internal', entryUrl: 'https://bot.example.com/g7-cross-wake' } } })
+    const exAgentBReg = await api('POST', '/api/agents', { token: admin, body: { name: '自测跨主体二唤机器人', attrs: { description: 'E2/E3 跨主体二唤场景专用', model: 'deepseek-chat', riskLevel: 'low', dataClass: 'internal', entryUrl: 'https://bot.example.com/g7-cross-wake' } } })
     const exAgentB = exAgentBReg.data?.agent
     if (exAgentB?.id) {
       // 运行态（draft→online 为 L4）：发起上线审批并由异人批准（R12 职责分离，借 E6/市场既有模式；
@@ -8148,6 +8280,262 @@ try {
     await rm(demoDataDir, { recursive: true, force: true }).catch(() => {})
   }
 
+  // ================================================================ MCP 治理（W1-T1）：委托令牌与统一 Principal
+  section('MCP 治理：委托令牌与统一 Principal')
+  {
+    const govAdminLogin = await api('POST', '/api/auth/login', { body: { username: 'admin', password: 'Ybk@2026' } })
+    check('治理自测：管理员登录', govAdminLogin.ok)
+    const govAdmin = govAdminLogin.data.token
+    const govAdminUid = govAdminLogin.data.user.id
+    const govOrgId = govAdminLogin.data.user.orgId
+
+    // —— 准备：Agent 注册（颁发机器凭证）+ 绑定管理员真人（guard 绑定通道的事实源）——
+    const govAgentRes = await api('POST', '/api/agents', { token: govAdmin, body: { name: 'MCP 治理自测机器人', attrs: { description: '委托令牌与统一 Principal 端到端自测专用', model: 'deepseek-chat', riskLevel: 'low', avatar: '🛡️' } } })
+    const govAgent = govAgentRes.data.agent
+    const govBound = await api('POST', `/api/agents/${govAgent.id}/bindings`, { token: govAdmin, body: { userId: govAdminUid } })
+    check('治理自测：Agent 注册并绑定真人', govAgentRes.ok && govBound.ok)
+    const govPrincipals = (await api('GET', '/api/authn/principals', { token: govAdmin })).data.principals
+    const govAgentPrincipal = govPrincipals.find((p) => p.refType === 'agent' && p.refId === govAgent.id)
+    check('治理自测：Agent 机器主体存在（refType=agent）', Boolean(govAgentPrincipal))
+
+    // —— 人类登录令牌 → exchange 到绑定 agent：aud=mcp:service:x，RFC 8693 形态 ——
+    const govExchange = await api('POST', '/api/authn/token/exchange', { token: govAdmin, body: { targetPrincipalId: govAgentPrincipal.id, audience: 'mcp:service:selftest-gov', scopes: ['usage.write', 'iam.user.write'] } })
+    check('委托令牌交换（人类→绑定 agent，RFC 8693 形态，默认 TTL 900s）',
+      govExchange.ok && Boolean(govExchange.data?.access_token) && govExchange.data?.token_type === 'Bearer'
+      && govExchange.data?.expires_in === 900 && govExchange.data?.issued_token_type === 'urn:ietf:params:oauth:token-type:access_token',
+      JSON.stringify(govExchange.error))
+    const govDelegated = govExchange.data?.access_token
+    check('委托令牌 scopes 三方交集收敛（iam.user.write 不在目标主体即剔除）',
+      govExchange.ok && String(govExchange.data?.scope ?? '').split(' ').filter(Boolean).sort().join(',') === 'usage.write',
+      String(govExchange.data?.scope))
+
+    // —— verify：sub=user、act 含 agent；委托令牌打 /api/auth/me 返回身份链 ——
+    const govMe = await api('GET', '/api/auth/me', { token: govDelegated })
+    check('委托令牌 /api/auth/me：sub=用户（kind=human）且 act=链首 human + agent',
+      govMe.ok && govMe.data.kind === 'human' && govMe.data.userId === govAdminUid
+      && Array.isArray(govMe.data.actChain) && govMe.data.actChain.length === 2
+      && govMe.data.actChain[0].type === 'human' && govMe.data.actChain[1].type === 'machine',
+      JSON.stringify(govMe.data))
+
+    // —— 机器（agent 凭证）+ userId 换取 sub=该用户 的委托令牌（act=调用者主体）——
+    const govCc = await api('POST', '/api/auth/client-credentials', { body: { clientId: govAgentRes.data.credential.clientId, clientSecret: govAgentRes.data.credential.clientSecret } })
+    check('治理自测：Agent 机器凭证登录', govCc.ok)
+    const govMachExchange = await api('POST', '/api/authn/token/exchange', { token: govCc.data.token, body: { userId: govAdminUid, audience: 'mcp:service:selftest-gov', scopes: ['usage.write'] } })
+    check('机器凭证携 userId 换取委托令牌（guard 绑定通道放行）',
+      govMachExchange.ok && Boolean(govMachExchange.data?.access_token), JSON.stringify(govMachExchange.error))
+    const govMachMe = await api('GET', '/api/auth/me', { token: govMachExchange.data?.access_token })
+    check('机器换取的委托令牌：sub=该用户、act=调用者 agent',
+      govMachMe.ok && govMachMe.data.userId === govAdminUid && (govMachMe.data.actChain ?? []).some((entry) => entry.type === 'machine'),
+      JSON.stringify(govMachMe.data))
+
+    // —— guard 拒绝 / audience 形态强校验 ——
+    const govOtherUid = (await api('POST', '/api/auth/login', { body: { username: 'yqz', password: 'Ybk@2026' } })).data?.user?.id
+    const govDenied = await api('POST', '/api/authn/token/exchange', { token: govCc.data.token, body: { userId: govOtherUid, audience: 'mcp:service:selftest-gov' } })
+    check('guard 绑定校验：未绑定真人换取被拒（403 + DELEGATION_DENIED）',
+      govDenied.status === 403 && govDenied.error?.reason === 'DELEGATION_DENIED', JSON.stringify(govDenied.error))
+    const govBadAud = await api('POST', '/api/authn/token/exchange', { token: govAdmin, body: { targetPrincipalId: govAgentPrincipal.id, audience: 'https://evil.example' } })
+    check('audience 形态强校验：非 mcp:service:/plugin: 拒绝（400 + DELEGATION_AUDIENCE_INVALID）',
+      govBadAud.status === 400 && govBadAud.error?.reason === 'DELEGATION_AUDIENCE_INVALID', JSON.stringify(govBadAud.error))
+
+    // —— 伪造 X-On-Behalf-User 头不能越过委托链（数据范围身份取链上真人，delegationSource=token）——
+    // 目标主体补 nas.authz.check（scopes 调整联动吊销，需重新 exchange）后经委托令牌打 NAS 数据范围接口
+    const govScopePatch = await api('PATCH', `/api/authn/principals/${govAgentPrincipal.id}`, { token: govAdmin, body: { scopes: ['usage.write', 'nas.authz.check'] } })
+    check('治理自测：目标主体补 nas.authz.check（authn.principal.write）', govScopePatch.ok)
+    const govNasExchange = await api('POST', '/api/authn/token/exchange', { token: govAdmin, body: { targetPrincipalId: govAgentPrincipal.id, audience: 'mcp:service:selftest-gov', scopes: ['nas.authz.check'] } })
+    const govNasDelegated = govNasExchange.data?.access_token
+    const govNasId = ((await api('GET', '/api/nas', { token: govAdmin })).data?.items ?? [])[0]?.id
+    const forgedScope = await fetch(`${BASE}/api/nas/authz/scope?nasId=${encodeURIComponent(govNasId)}`, {
+      headers: { authorization: `Bearer ${govNasDelegated}`, 'x-on-behalf-user': govOtherUid },
+    }).then((r) => r.json()).catch(() => null)
+    check('伪造 X-On-Behalf-User 不能越过委托链（delegationSource=token，范围身份=链上真人）',
+      forgedScope?.data?.delegationSource === 'token' && forgedScope?.data?.onBehalfUserId === govAdminUid,
+      JSON.stringify(forgedScope).slice(0, 240))
+    const legacyScope = await fetch(`${BASE}/api/nas/authz/scope?nasId=${encodeURIComponent(govNasId)}`, {
+      headers: { authorization: `Bearer ${govAdmin}`, 'x-on-behalf-user': govOtherUid },
+    }).then((r) => r.json()).catch(() => null)
+    check('无委托链时 X-On-Behalf-User 头降级兼容（delegationSource=header-legacy）',
+      legacyScope?.data?.delegationSource === 'header-legacy' && legacyScope?.data?.onBehalfUserId === govOtherUid,
+      JSON.stringify(legacyScope).slice(0, 240))
+
+    // —— 冻结联动：冻结 subject 用户后其委托令牌即时 401（独立自测用户，不影响管理员会话）——
+    const govSubRes = await api('POST', '/api/iam/users', { token: govAdmin, body: { username: 'gov_delegate', displayName: '委托自测用户', orgId: govOrgId, password: 'Ybk@2026' } })
+    const govSubUid = govSubRes.data?.user?.id ?? govSubRes.data?.id
+    await api('POST', `/api/iam/users/${govSubUid}/activate`, { token: govAdmin, body: {} })
+    const govSubExchange = await api('POST', '/api/authn/token/exchange', { token: govAdmin, body: { userId: govSubUid, targetPrincipalId: govAgentPrincipal.id, audience: 'mcp:service:selftest-gov', scopes: ['usage.write'] } })
+    check('治理自测：管理员为绑定用户换取委托令牌（impersonation 走 * 通道）',
+      govSubExchange.ok && Boolean(govSubExchange.data?.access_token), JSON.stringify(govSubExchange.error))
+    const govSubDelegated = govSubExchange.data?.access_token
+    const govFreeze = await api('POST', `/api/iam/users/${govSubUid}/freeze`, { token: govAdmin, body: { reason: '委托令牌冻结联动自测' } })
+    check('治理自测：冻结 subject 用户', govFreeze.ok)
+    const govFrozenMe = await api('GET', '/api/auth/me', { token: govSubDelegated })
+    check('冻结后委托令牌即时失效（401）', govFrozenMe.status === 401, String(govFrozenMe.status))
+  }
+  // ================================================================ MCP 治理（W2-T3/T4）：服务级数据面 + 能力绑定
+  section('MCP 治理：服务级数据面与能力绑定')
+  {
+    // —— 夹具：导入 sse 桩服务（干净无头，自动上线）——
+    const dpImport = await api('POST', '/api/mcp/import', { token: admin, body: { config: JSON.stringify({ mcpServers: { 'gov-dataplane': { type: 'http', url: `http://127.0.0.1:${ssePort}/api/mcp` } } }) } })
+    check('数据面：导入服务自动发现并上线', dpImport.ok && dpImport.data.results[0].ok === true && dpImport.data.results[0].reachable === true && dpImport.data.results[0].status === 'online', JSON.stringify(dpImport).slice(0, 240))
+    const dpSvcId = dpImport.data.results[0].serviceId
+    const dpSlug = dpImport.data.results[0].slug
+
+    // —— 夹具：Agent + 绑定 + 服务级受众委托令牌 ——
+    const dpAgentRes = await api('POST', '/api/agents', { token: admin, body: { name: '数据面自测机器人', attrs: { description: '服务级 MCP 数据面端到端自测', model: 'deepseek-chat', riskLevel: 'low', avatar: '🔌' } } })
+    const dpAgent = dpAgentRes.data.agent
+    await api('POST', `/api/agents/${dpAgent.id}/bindings`, { token: admin, body: { userId: adminLogin.data.user.id } })
+    const dpPrincipal = ((await api('GET', '/api/authn/principals', { token: admin })).data.principals ?? []).find((p) => p.refType === 'agent' && p.refId === dpAgent.id)
+    const dpEx = await api('POST', '/api/authn/token/exchange', { token: admin, body: { targetPrincipalId: dpPrincipal.id, audience: `mcp:service:${dpSlug}`, scopes: ['mcp.invoke'] } })
+    check('数据面：服务级受众委托令牌签发', dpEx.ok && Boolean(dpEx.data?.access_token), JSON.stringify(dpEx.error))
+    const dpTok = dpEx.data.access_token
+    const dpCall = async (token, method, params, session) => rawReq('POST', `/mcp/services/${dpSlug}`, {
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(session ? { 'mcp-session-id': session } : {}) },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method, ...(params !== undefined ? { params } : {}) }),
+    }).then((r) => ({ status: r.status, headers: r.headers, payload: jsonBody(r) }))
+
+    // —— initialize：协议握手 + 会话头 ——
+    const dpInit = await dpCall(dpTok, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'selftest', version: '0' } })
+    check('数据面 initialize：serverInfo=mcp:<slug> + mcp-session-id 会话头',
+      dpInit.status === 200 && dpInit.payload.result?.serverInfo?.name === `mcp:${dpSlug}` && Boolean(dpInit.headers['mcp-session-id']),
+      JSON.stringify(dpInit.payload).slice(0, 240))
+    const dpSession = dpInit.headers['mcp-session-id']
+
+    // —— tools/list：无权限组 → 空集（未授权工具不泄露）——
+    const dpList0 = await dpCall(dpTok, 'tools/list', {}, dpSession)
+    check('数据面 tools/list：无权限组时空集（工具清单零泄露）',
+      dpList0.status === 200 && Array.isArray(dpList0.payload.result?.tools) && dpList0.payload.result.tools.length === 0,
+      JSON.stringify(dpList0.payload).slice(0, 240))
+
+    // —— 授权后列表与裁决一致：委托令牌 sub=用户（代理语义，权限主体是被代理用户），agent 自身凭证主体是 agent；
+    //    平台 '*' 权限不旁路 MCP 权限组（与 /api/mcp/invoke 既有口径一致）——双主体各建一组，策略同为单工具只读
+    await api('POST', '/api/mcp/perm-groups', { token: admin, body: {
+      name: '数据面自测·用户主体单工具只读', policies: { [dpSvcId]: { allowedTools: ['tb_query_task'], constraints: { readOnly: true } } },
+      subjects: [{ type: 'user', id: adminLogin.data.user.id, name: 'admin' }],
+    } })
+    await api('POST', '/api/mcp/perm-groups', { token: admin, body: {
+      name: '数据面自测·Agent 主体单工具只读', policies: { [dpSvcId]: { allowedTools: ['tb_query_task'], constraints: { readOnly: true } } },
+      subjects: [{ type: 'agent', id: dpAgent.id, name: '数据面自测机器人' }],
+    } })
+    const dpList1 = await dpCall(dpTok, 'tools/list', {}, dpSession)
+    const dpNames = (dpList1.payload.result?.tools ?? []).map((tool) => tool.name).sort().join(',')
+    check('数据面 tools/list：授权后仅返回可调用工具（whoami 不出现）', dpNames === 'tb_query_task', dpNames || JSON.stringify(dpList1.payload).slice(0, 240))
+    const dpOk = await dpCall(dpTok, 'tools/call', { name: 'tb_query_task', arguments: { id: 't-1' } }, dpSession)
+    check('数据面 tools/call：委托令牌真实调用经网关全链路（content 包装 + 回显）',
+      dpOk.status === 200 && dpOk.payload.result?.isError === false && String(dpOk.payload.result?.content?.[0]?.text ?? '').includes('sse-echo:tb_query_task'),
+      JSON.stringify(dpOk.payload).slice(0, 300))
+    const dpDeny = await dpCall(dpTok, 'tools/call', { name: 'whoami', arguments: {} }, dpSession)
+    check('数据面 tools/call：列表外工具拒绝（-32003 TOOL_NOT_VISIBLE_OR_DENIED，不泄露存在性）',
+      dpDeny.status === 200 && dpDeny.payload.error?.code === -32003 && dpDeny.payload.error?.data?.code === 'TOOL_NOT_VISIBLE_OR_DENIED',
+      JSON.stringify(dpDeny.payload).slice(0, 240))
+    // Agent 自身机器凭证（主体=agent）走 agent 权限组：验证 agent 主体匹配路径
+    const dpCc = await api('POST', '/api/auth/client-credentials', { body: { clientId: dpAgentRes.data.credential.clientId, clientSecret: dpAgentRes.data.credential.clientSecret } })
+    const dpAgentCall = await dpCall(dpCc.data.token, 'tools/call', { name: 'tb_query_task', arguments: { id: 't-2' } })
+    check('数据面 tools/call：Agent 自身凭证（主体=agent）经 agent 权限组放行',
+      dpAgentCall.status === 200 && dpAgentCall.payload.result?.isError === false, JSON.stringify(dpAgentCall.payload).slice(0, 240))
+
+    // —— audience 强校验 + 未认证 + 平台令牌同裁决 ——
+    const dpExBad = await api('POST', '/api/authn/token/exchange', { token: admin, body: { targetPrincipalId: dpPrincipal.id, audience: 'mcp:service:other-service', scopes: ['mcp.invoke'] } })
+    const dpBad = await dpCall(dpExBad.data.access_token, 'tools/list', {}, dpSession)
+    check('数据面：audience 不匹配拒绝（-32003 AUDIENCE_MISMATCH）',
+      dpBad.status === 403 && dpBad.payload.error?.data?.code === 'AUDIENCE_MISMATCH', JSON.stringify(dpBad.payload).slice(0, 200))
+    const dpAnon = await dpCall('', 'ping')
+    check('数据面：无 Bearer 401（-32001）', dpAnon.status === 401 && dpAnon.payload.error?.code === -32001, JSON.stringify(dpAnon.payload).slice(0, 160))
+    const dpAdminList = await dpCall(admin, 'tools/list', {}, dpSession)
+    const dpAdminNames = (dpAdminList.payload.result?.tools ?? []).map((tool) => tool.name).sort().join(',')
+    check('数据面：平台令牌（无 aud，* 权限）同样只见权限组裁决集（* 不旁路 MCP 权限组）',
+      dpAdminList.status === 200 && dpAdminNames === 'tb_query_task', dpAdminNames || JSON.stringify(dpAdminList.payload).slice(0, 200))
+
+    // —— 能力绑定：绑定回写归属 / 重复归属 409 / 解绑还原 ——
+    const dpDraft = await api('POST', '/api/mcp/services', { token: admin, body: { name: '能力门禁草稿服务', description: 'W2 能力绑定自测', endpoint: 'http://127.0.0.1:9/none', transport: 'http', mode: 'external' } })
+    check('能力绑定：草稿服务夹具就绪', dpDraft.ok && dpDraft.data?.status === 'draft', JSON.stringify(dpDraft).slice(0, 200))
+    const dpDraftId = dpDraft.data.id
+    const capApp = await api('POST', '/api/apps', { token: admin, body: { name: '能力绑定验收应用', attrs: { description: 'W2 能力绑定端到端自测', appType: 'web', riskLevel: 'low', dataClass: 'internal' } } })
+    const capAppId = capApp.data.app.id
+    const capBind = await api('POST', `/api/apps/${capAppId}/capabilities`, { token: admin, body: { serviceId: dpDraftId, required: true } })
+    const capSvcAfter = (await api('GET', '/api/mcp/services', { token: admin })).data.services.find((s) => s.id === dpDraftId)
+    check('能力绑定：绑定成功且服务 ownerEntity 回写为 app', capBind.ok && capSvcAfter?.ownerEntity?.type === 'app' && capSvcAfter?.ownerEntity?.id === capAppId, JSON.stringify({ bind: capBind.error, owner: capSvcAfter?.ownerEntity }))
+    const capApp2 = await api('POST', '/api/apps', { token: admin, body: { name: '能力冲突验收应用', attrs: { description: 'W2 归属冲突自测', appType: 'web', riskLevel: 'low', dataClass: 'internal' } } })
+    const capBind2 = await api('POST', `/api/apps/${capApp2.data.app.id}/capabilities`, { token: admin, body: { serviceId: dpDraftId, required: false } })
+    check('能力绑定：已归属其他应用的重复认领 409 OWNER_CONFLICT', capBind2.status === 409 && capBind2.error?.code === 'OWNER_CONFLICT', JSON.stringify(capBind2.error))
+    const capUnbind = await api('DELETE', `/api/apps/${capAppId}/capabilities/${dpDraftId}`, { token: admin })
+    const capSvcFinal = (await api('GET', '/api/mcp/services', { token: admin })).data.services.find((s) => s.id === dpDraftId)
+    check('能力绑定：解绑幂等且归属还原 platform', capUnbind.ok && capSvcFinal?.ownerEntity?.type === 'platform', JSON.stringify(capSvcFinal?.ownerEntity))
+  }
+
+
+  // ================================================================ MCP 治理（W4 安全审计整改）：P0 回归护栏
+  section('MCP 治理：P0 安全整改回归（自委托 / 主体匹配 / 哈希链可校验 / 审计决策依据）')
+  {
+    // —— 夹具：干净服务 + Agent 主体权限组 ——
+    const p0Import = await api('POST', '/api/mcp/import', { token: admin, body: { config: JSON.stringify({ mcpServers: { 'gov-p0-svc': { type: 'http', url: `http://127.0.0.1:${ssePort}/api/mcp` } } }) } })
+    const p0SvcId = p0Import.data.results[0].serviceId
+    const p0Slug = p0Import.data.results[0].slug
+    const p0AgentRes = await api('POST', '/api/agents', { token: admin, body: { name: 'P0 回归机器人', attrs: { description: 'W4 P0 回归自测', model: 'deepseek-chat', riskLevel: 'low', avatar: '🧪' } } })
+    const p0Agent = p0AgentRes.data.agent
+    await api('POST', `/api/agents/${p0Agent.id}/bindings`, { token: admin, body: { userId: adminLogin.data.user.id } })
+    await api('POST', '/api/mcp/perm-groups', { token: admin, body: {
+      name: 'P0 回归·Agent 主体', policies: { [p0SvcId]: { allowedTools: '*', constraints: { readOnly: true } } },
+      subjects: [{ type: 'agent', id: p0Agent.id, name: 'P0 回归机器人' }],
+    } })
+    const p0Cc = await api('POST', '/api/auth/client-credentials', { body: { clientId: p0AgentRes.data.credential.clientId, clientSecret: p0AgentRes.data.credential.clientSecret } })
+    check('P0：Agent 机器凭证登录', p0Cc.ok, JSON.stringify(p0Cc.error))
+
+    // —— P0-2：机器自委托（sub=自身，仅传 audience）——接入示例按此形态可用 ——
+    const p0Self = await api('POST', '/api/authn/token/exchange', { token: p0Cc.data.token, body: { audience: `mcp:service:${p0Slug}`, scopes: ['mcp.invoke'] } })
+    check('P0-2：机器自委托换牌成功（不传 userId，sub=自身）',
+      p0Self.ok && Boolean(p0Self.data?.access_token) && p0Self.data?.expires_in === 900, JSON.stringify(p0Self.error))
+    const p0SelfCall = await rawReq('POST', `/mcp/services/${p0Slug}`, {
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${p0Self.data.access_token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'tb_query_task', arguments: { id: 'p0' } } }),
+    }).then((r) => ({ status: r.status, payload: jsonBody(r) }))
+    check('P0-3：自委托令牌命中 agent 主体权限组（工具集非空，主体匹配含委托链 actor）',
+      p0SelfCall.status === 200 && p0SelfCall.payload.result?.isError === false,
+      JSON.stringify(p0SelfCall.payload).slice(0, 240))
+
+    // —— P0-3：人类代用户委托时，链上 agent 主体权限组同样生效 ——
+    const p0UserEx = await api('POST', '/api/authn/token/exchange', { token: p0Cc.data.token, body: { userId: adminLogin.data.user.id, audience: `mcp:service:${p0Slug}`, scopes: ['mcp.invoke'] } })
+    const p0UserCall = await rawReq('POST', `/mcp/services/${p0Slug}`, {
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${p0UserEx.data.access_token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 12, method: 'tools/list' }),
+    }).then((r) => ({ status: r.status, payload: jsonBody(r) }))
+    const p0UserTools = (p0UserCall.payload.result?.tools ?? []).map((tool) => tool.name)
+    check('P0-3：代用户委托令牌（sub=用户）命中链上 agent 主体权限组',
+      p0UserCall.status === 200 && p0UserTools.length > 0, JSON.stringify(p0UserCall.payload).slice(0, 240))
+
+    // —— P0-4：审计事件落 decisionId / 决策原因，且策略拒绝与上游故障分档 ——
+    const p0Audit = await api('GET', '/api/audit/logs?q=' + encodeURIComponent('mcp.gateway.invoke') + '&limit=50', { token: admin })
+    const p0InvokeLogs = (p0Audit.data?.items ?? []).filter((log) => log.action === 'mcp.gateway.invoke')
+    check('P0-4：MCP 调用审计落 decisionId（决策依据可回查）',
+      p0InvokeLogs.some((log) => Boolean(log.decisionId)), JSON.stringify(p0InvokeLogs[0] ?? {}).slice(0, 240))
+
+    // —— P0-1：审计哈希链对落盘记录可重算校验（JSON 往返后仍一致）——
+    const p0Export = await rawReq('GET', '/api/audit/export', { headers: { authorization: `Bearer ${admin}` } })
+    const p0Lines = String(p0Export.body ?? '').split('\n').filter((line) => line.trim().length > 0)
+    const p0Records = p0Lines.map((line) => { try { return JSON.parse(line) } catch { return null } }).filter((row) => row && !row._chainTip)
+    const p0Canonical = (value, exclude) => {
+      const skip = new Set(exclude)
+      const walk = (input) => {
+        if (input === null || input === undefined) return 'null'
+        if (typeof input !== 'object') return JSON.stringify(input) ?? 'null'
+        if (Array.isArray(input)) return `[${input.map(walk).join(',')}]`
+        const keys = Object.keys(input).filter((key) => !skip.has(key) && input[key] !== undefined).sort()
+        return `{${keys.map((key) => `${JSON.stringify(key)}:${walk(input[key])}`).join(',')}}`
+      }
+      return walk(value)
+    }
+    const p0HashOf = (record, prev) => {
+      const excluded = ['createdAt', 'updatedAt', 'prevHash', 'hash']
+      return createHash('sha256').update(prev + p0Canonical(record, excluded)).digest('hex')
+    }
+    let p0ChainOk = p0Records.length > 0
+    let p0Prev = ''
+    for (const record of p0Records) {
+      if ((record.prevHash ?? '') !== p0Prev) { p0ChainOk = false; break }
+      if (p0HashOf(record, p0Prev) !== record.hash) { p0ChainOk = false; break }
+      p0Prev = record.hash
+    }
+    check('P0-1：审计哈希链对落盘记录可重算校验（逐条 prevHash 相接 + hash 一致）', p0ChainOk, `记录数=${p0Records.length}`)
+  }
+
   section('凭证零进平台（红线一 · T-24 全目录扫描）')
   // SIGTERM 触发 main.ts 的 flushNow（把内存中的待写集合全部原子落盘）后退出，
   // 再扫描数据目录——保证连「尚未刷盘的最新写入」也在扫描覆盖之内。
@@ -8520,6 +8908,7 @@ try {
     await rm(storageSqliteDir, { recursive: true, force: true })
     await rm(engineDir, { recursive: true, force: true })
   }
+
 } finally {
   // ---------------------------------------------------------------- 收尾
   console.log('\n\x1b[90m» 停止测试实例…\x1b[0m')

@@ -5,6 +5,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { t } from '../../../platform-i18n/src/index.ts'
+import { CapabilityOwnerConflictError, type AppCapabilityLink } from '../../../plugin-app/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 import { scopedOrgFilterOf } from './iam.ts'
 
@@ -236,6 +237,78 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     if (action === 'retrial') return ctx.resourceCore.transition('app', id, 'retrial', info.name).entity
     if (action === 'archive') return ctx.appRegistry.archive(id, info.name)
     throw new Error(t('未知操作：{action}', { action }))
+  })
+
+  // -- 应用能力绑定（W2-T4，MCP 治理契约 §10） ------------------------------
+  // 服务摘要只投影非 headers 字段——headers 一概不回显：脱敏管道 maskServiceHeaders 定义于
+  // plugin-console/index.ts（中间件层），无法传入本路由域；直接零回显比掩码更保守，
+  // 满足同一红线「业务集合与任何 API 响应绝不出现凭证/敏感头」。
+  const capabilityServiceSummary = (serviceId: string) => {
+    const service = ctx.mcpRegistry.services().get(serviceId)
+    if (!service) return null
+    return {
+      id: service.id,
+      name: service.name,
+      slug: service.slug,
+      status: service.status,
+      dataClass: service.dataClass,
+      exposureMode: service.exposureMode,
+      environment: service.environment,
+      health: service.health,
+      toolCount: service.tools.length,
+      hasCredential: Boolean(service.credentialRef),
+      ownerEntity: service.ownerEntity,
+    }
+  }
+
+  // 能力列表（含逐条服务摘要）；owner 守卫同 assertAppOwner 既有口径，权限点按契约 §15 用 app.write
+  guarded('GET', '/api/apps/:id/capabilities', 'app.write', (exchange) => {
+    if (!assertAppOwner(exchange, exchange.params['id']!)) return
+    const id = exchange.params['id']!
+    return {
+      capabilities: ctx.appRegistry.listCapabilities(id).map((link) => ({
+        ...link,
+        service: capabilityServiceSummary(link.serviceId),
+      })),
+    }
+  })
+
+  // 绑定能力服务 {serviceId, required?}：服务必须存在；绑定同步 ownerEntity 回写
+  // （platform 占位可认领；已归属其他主体 409 OWNER_CONFLICT）；重复绑定幂等返回现态
+  guarded('POST', '/api/apps/:id/capabilities', 'app.write', (exchange) => {
+    if (!assertAppOwner(exchange, exchange.params['id']!)) return
+    const id = exchange.params['id']!
+    const input = body<{ serviceId: string; required?: boolean }>(exchange)
+    if (!input.serviceId?.trim()) throw new Error(t('serviceId 必填'))
+    const info = caller(exchange)
+    let result: { link: AppCapabilityLink; created: boolean }
+    try {
+      result = ctx.appRegistry.bindCapability(id, { serviceId: input.serviceId.trim(), required: input.required === true, boundBy: info.name })
+    } catch (error) {
+      if (error instanceof CapabilityOwnerConflictError) {
+        exchange.fail(409, 'OWNER_CONFLICT', error.message)
+        return
+      }
+      throw error
+    }
+    const app = ctx.resourceCore.get('app', id)
+    changeLog(exchange, 'app.capability.bind', 'app', id, app?.name ?? id, result.created
+      ? t('绑定能力服务 {serviceId}（required={required}；ownerEntity 回写 app 归属）', { serviceId: result.link.serviceId, required: result.link.required })
+      : t('重复绑定幂等返回现态（serviceId={serviceId}）', { serviceId: result.link.serviceId }))
+    return { ...result, service: capabilityServiceSummary(result.link.serviceId) }
+  })
+
+  // 解绑能力服务：删绑定记录与 capability 依赖边；服务归属若为本 app 联动还原 platform 占位
+  guarded('DELETE', '/api/apps/:id/capabilities/:serviceId', 'app.write', (exchange) => {
+    if (!assertAppOwner(exchange, exchange.params['id']!)) return
+    const id = exchange.params['id']!
+    const serviceId = exchange.params['serviceId']!
+    const result = ctx.appRegistry.unbindCapability(id, serviceId)
+    const app = ctx.resourceCore.get('app', id)
+    changeLog(exchange, 'app.capability.unbind', 'app', id, app?.name ?? id, result.removed
+      ? t('解绑能力服务 {serviceId}{owner}', { serviceId, owner: result.ownerRestored ? t('；归属联动还原 platform 占位（解绑联动）') : '' })
+      : t('绑定不存在，幂等返回（serviceId={serviceId}）', { serviceId }))
+    return result
   })
 
   // -- 应用 ↔ SSO 打通（owner 自助签发 + 机器环回自助，口径见 ssoManageGuard） ----

@@ -692,10 +692,15 @@ export async function renderMembers(ctx) {
         <div class="mb-14" id="ud-roles">${user.roles?.map((r) => `<span class="badge badge-brand no-dot" style="margin:0 6px 6px 0">${esc(r.name)}</span>`).join('') || '<span class="text-4 fs-12">未分配角色</span>'}</div>
         <div class="card-title mb-8">三方身份绑定</div>
         <div class="mb-14">${user.bindings?.length ? user.bindings.map((b) => `
-          <div class="flex" style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div class="flex" style="padding:8px 0;border-bottom:1px solid var(--border);gap:10px;align-items:center">
             <span class="badge badge-purple no-dot">${esc(providerName(b.provider))}</span>
-            <span class="fs-12 grow">${esc(b.displayName)}（${esc(b.unionId)}）</span>
+            <span class="fs-12 grow" style="min-width:0">
+              ${esc(b.displayName)}（${esc(b.unionId)}）
+              ${b.corpId ? `<span class="fs-11 text-4"> · ${esc(b.corpId)}</span>` : ''}
+            </span>
             <span class="fs-11 text-4">${timeAgo(b.boundAt)}</span>
+            <button class="btn btn-ghost btn-sm" data-bind-replace="${esc(b.provider)}" data-bind-corp="${esc(b.corpId ?? '')}" title="${esc(rqI18n.t('解绑后立刻扫码绑定新身份'))}">${icon('refresh', 12)}${esc(rqI18n.t('更换'))}</button>
+            <button class="btn btn-ghost btn-sm" data-bind-unbind="${esc(b.provider)}" data-bind-corp="${esc(b.corpId ?? '')}" style="color:var(--danger)" title="${esc(rqI18n.t('解除该三方身份绑定'))}">${icon('x', 12)}${esc(rqI18n.t('解绑'))}</button>
           </div>`).join('') : '<span class="text-4 fs-12">未绑定三方身份</span>'}
         </div>`,
       foot: `
@@ -752,9 +757,105 @@ export async function renderMembers(ctx) {
         } catch (error) { toast(error.message, 'error') }
       }
     }
+    // 解绑 / 更换三方身份（2026-10-22）：
+    //  - 解绑：DELETE /api/iam/users/:id/bindings/:provider?corpId=…，须 6 位二次验证码；
+    //  - 更换：先「解绑」再「扫码绑定」两步。不在服务端一次做完「先解后绑」——绑定必须由 IdP 授权
+    //    拿到 unionId，提前解绑会让用户在授权失败/取消时白丢已有绑定。
+    const askVerifyCode = (action, onClose) => openModal({
+      title: action,
+      // 取消/遮罩关闭都要让外层 Promise 落地，否则调用方会一直挂起
+      onClose,
+      body: `
+        <div class="muted-box mb-14" style="display:flex;gap:8px;border-color:#fcd34d;background:#fffbeb">
+          ${icon('alert', 15)}<span class="fs-12">${esc(rqI18n.t('该操作会立即中断该账号当前的三方登录方式，需二次验证确认。'))}</span>
+        </div>
+        ${field(rqI18n.t('二次验证码'), inputField('verifyCode', { placeholder: rqI18n.t('6 位验证码') }), { required: true, hint: rqI18n.t('演示/自测环境可填 123456') })}`,
+      foot: `<button class="btn btn-default" data-cancel>${esc(rqI18n.t('取消'))}</button><button class="btn btn-primary" data-ok>${esc(rqI18n.t('确认'))}</button>`,
+    })
+    /** 让用户输入二次验证码 → resolve(code) / 取消与关闭 → resolve('')。 */
+    const promptVerifyCode = (action) => new Promise((resolve) => {
+      let settled = false
+      const finish = (code) => { if (settled) return; settled = true; resolve(code) }
+      const modal = askVerifyCode(action, () => finish(''))
+      modal.el.querySelector('[data-ok]').onclick = () => {
+        const code = collectForm(modal.body).verifyCode ?? ''
+        finish(code)
+        modal.close()
+      }
+    })
+
+    /** 绑定成功的回跳承接（扫码授权后 IdP 会整页返回控制台，绑定已完成）。 */
+    const bindViaOauth = async (provider, corpId) => {
+      const auth = await api.post('/api/auth/sso/bind/authorize', {
+        provider,
+        targetUserId: user.id,
+        ...(corpId ? { configId: corpId } : {}),
+      })
+      if (!auth.authorizeUrl) throw new Error(rqI18n.t('身份源未返回授权地址（可能为 mock 模式），请改用手动绑定'))
+      try { sessionStorage.setItem('heng_ops_bind_return', JSON.stringify({ userId: user.id, at: Date.now() })) } catch { /* 忽略 */ }
+      window.location.href = auth.authorizeUrl
+    }
+
+    const providerConfigId = (binding) => binding.corpId || undefined
+
+    drawer.el.querySelectorAll('[data-bind-unbind]').forEach((btn) => {
+      btn.onclick = async () => {
+        const provider = btn.dataset.bindUnbind
+        const corpId = btn.dataset.bindCorp
+        const confirmed = await confirmDialog({
+          title: rqI18n.t('解绑三方身份'),
+          danger: true,
+          confirmText: rqI18n.t('确认解绑'),
+          message: rqI18n.t('将解除 <b>{name}</b> 的 {provider} 身份绑定。解绑后该账号不能再以此身份登录，通讯录同步也不会自动绑回来（重新扫码绑定即可恢复）。', {
+            name: esc(user.displayName),
+            provider: esc(providerName(provider)),
+          }),
+        })
+        if (!confirmed) return
+        const code = await promptVerifyCode(rqI18n.t('解绑三方身份'))
+        if (!code) return
+        try {
+          const path = `/api/iam/users/${user.id}/bindings/${encodeURIComponent(provider)}${corpId ? `?corpId=${encodeURIComponent(corpId)}` : ''}`
+          await api.delete(path, { verifyCode: code })
+          toast(rqI18n.t('已解绑 {provider}', { provider: providerName(provider) }))
+          drawer.close()
+          ctx.rerender()
+        } catch (error) {
+          toast(error.message, 'error')
+        }
+      }
+    })
+
+    drawer.el.querySelectorAll('[data-bind-replace]').forEach((btn) => {
+      btn.onclick = async () => {
+        const provider = btn.dataset.bindReplace
+        const corpId = btn.dataset.bindCorp
+        const confirmed = await confirmDialog({
+          title: rqI18n.t('更换三方身份'),
+          danger: true,
+          confirmText: rqI18n.t('继续更换'),
+          message: rqI18n.t('将先解除 <b>{name}</b> 当前的 {provider} 绑定，然后跳转 {provider} 扫码授权绑定新身份。若中途放弃授权，该账号将没有 {provider} 绑定。', {
+            name: esc(user.displayName),
+            provider: esc(providerName(provider)),
+          }),
+        })
+        if (!confirmed) return
+        const code = await promptVerifyCode(rqI18n.t('更换三方身份'))
+        if (!code) return
+        try {
+          await api.post(`/api/iam/users/${user.id}/bindings/${encodeURIComponent(provider)}/replace`, {
+            verifyCode: code,
+            ...(corpId ? { corpId } : {}),
+          })
+          toast(rqI18n.t('已解绑旧身份，正在跳转扫码授权…'))
+          await bindViaOauth(provider, providerConfigId({ corpId }))
+        } catch (error) {
+          toast(error.message, 'error')
+        }
+      }
+    })
+
     drawer.el.querySelector('#ud-bind').onclick = async () => {
-      // 钉钉 real 模式下优先扫码授权绑定（自动识别身份，不手工输入 unionId）；
-      // 手工录入降级为备用（mock/演示/其他平台）。多主体接入时需先选定目标主体。
       let dingtalkConfigs = []
       try {
         const data = await api.get('/api/iam/connectors')
@@ -961,4 +1062,4 @@ async function mountConnectorSummary() {
   const conflictBtn = host.querySelector('#iam-conn-conflicts')
   if (conflictBtn) conflictBtn.onclick = () => { jumpTab('conflicts') }
 }
-
+

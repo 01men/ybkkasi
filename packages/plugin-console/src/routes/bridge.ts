@@ -5,8 +5,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
-import { platformVersionInfo } from '../../../platform-core/src/index.ts'
+import { platformVersionInfo, lookupsFromHost, resolveUnifiedPrincipal, toCallerInfo } from '../../../platform-core/src/index.ts'
+import type { CallerInfo, HttpExchange } from '../../../platform-core/src/index.ts'
 import { noteForwardedPrincipal } from '../../../plugin-connect/src/host.ts'
+import { consolePermissionAllows } from './mcp-dataplane.ts'
 
 export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { http, guarded, body, changeLog, caller } = deps
@@ -148,7 +150,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
   // 每请求 Bearer 鉴权（人/机器令牌皆可），工具级权限点 + 身份注入与 REST 工具桥完全一致。
   // 不提供 GET SSE 长流（纯 JSON 响应形态合规）；外部 MCP 客户端接入示例：
   //   {"mcpServers":{"dsh-ops-platform":{"url":"http://<平台>:7300/mcp","headers":{"Authorization":"Bearer <平台令牌>"}}}}
-  const mcpCallerFromToken = (exchange: HttpExchange): CallerInfo | undefined => {
+  const mcpCallerFromToken = async (exchange: HttpExchange): Promise<CallerInfo | undefined> => {
     const header = String(exchange.headers['authorization'] ?? '')
     if (!header.startsWith('Bearer ')) {
       exchange.res.writeHead(401, {
@@ -160,20 +162,16 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
     }
     try {
       const verified = ctx.authn.verify(header.slice(7))
-      return {
-        kind: verified.principal.type,
-        principalId: verified.principal.id,
-        ...(verified.principal.type === 'human' && verified.principal.refId ? { userId: verified.principal.refId } : {}),
-        // D01（V01/V02）：machine 主体补齐凭证关联资源 refType/refId——此前只回 userId（human），
-        // machine 的 refType/refId 在本入口被丢弃，导致 exec_claim 等「按 exec.principal.refType==='agent'
-        // 反查任务归属」的口径在 /mcp 链路拿到不完整主体（REST 鉴权中间件构造的 CallerInfo 本就带这两字段）。
-        // 现与 plugin-console/src/index.ts 鉴权中间件同构：machine → refType/refId 照带，human → userId 照旧，
-        // 使 /mcp 与 REST /api/tools/execute 两条链路的 CallerInfo 主体结构一致（同凭证同任务同主体）。
-        ...(verified.principal.type === 'machine' ? { refType: verified.principal.refType, refId: verified.principal.refId } : {}),
-        name: verified.principal.name,
-        permissions: verified.scopes,
-        actChain: verified.actChain,
-      } satisfies CallerInfo
+      // MCP 治理收敛（契约 §2）：与 console 鉴权中间件同构——verify → resolveUnifiedPrincipal →
+      // CallerInfo 兼容超集 + unified 字段。D01（V01/V02）machine 主体 refType/refId 照带、
+      // human userId 照旧的行为经 toCallerInfo 投影保持；tools/list、tools/call 逻辑不在此处（W2-T3 负责）。
+      const unified = await resolveUnifiedPrincipal(verified, lookupsFromHost({
+        principalsGet: (id) => ctx.authn.principals().get(id),
+        iamUserGet: (id) => ctx.iam.users().get(id),
+        resourceGet: (kind, id) => ctx.resourceCore.get(kind, id) as { orgId?: string } | undefined,
+        tenantOfOrg: (orgId) => ctx.iam.tenantOfOrg(orgId),
+      }))
+      return { ...toCallerInfo(unified), unified } as unknown as CallerInfo
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       exchange.res.writeHead(401, { 'content-type': 'application/json' })
@@ -188,7 +186,7 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
   }
 
   http.register('POST', '/mcp', async (exchange) => {
-    const info = mcpCallerFromToken(exchange)
+    const info = await mcpCallerFromToken(exchange)
     if (!info) return
     const message = exchange.body
     if (!message || typeof message !== 'object' || Array.isArray(message)) {
@@ -221,13 +219,19 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
       case 'ping':
         return reply({})
       case 'tools/list':
+        // MCP 治理（契约 §8，W2-T3）：工具目录按调用方权限过滤——判定口径与 REST
+        // requirePermission 单点同源（consolePermissionAllows 借 rest-gate 判定面，蕴含表
+        // IMPLIED_POINTS 不抄第二份），工具 permission 缺省按 console.login 基线（与下方
+        // tools/call 拒绝基线一致）。无权限工具的名称/schema/权限注解一概不返回。
         return reply({
-          tools: ctx.tools.schemas().map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.parameters,
-            ...(tool.permission !== undefined ? { annotations: { 'x-permission': tool.permission } } : {}),
-          })),
+          tools: ctx.tools.schemas()
+            .filter((tool) => consolePermissionAllows(info, tool.permission ?? 'console.login'))
+            .map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.parameters,
+              ...(tool.permission !== undefined ? { annotations: { 'x-permission': tool.permission } } : {}),
+            })),
         })
       case 'tools/call': {
         const name = String(params.name ?? '')

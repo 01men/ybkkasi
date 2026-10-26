@@ -185,7 +185,7 @@ async function renderEnroll(host, params) {
 
 四、上线与审批（完整态，可选）
   1. 补齐治理属性（PATCH /api/agents/:id）
-     Agent 上线必填：systemPromptVersion（如 prompt-v1.0）、dataClass
+     Agent 上线必填：dataClass
      进试运行（submit_trial）还需 trialGroups 非空
   2. 发起流转 POST /api/agents/:id/transition  { action: "online" }
      online/offline 为审批动作，返回审批单

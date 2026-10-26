@@ -181,7 +181,7 @@ for (const [mod, name, params] of [
   ['pages/nas-authz.js', 'renderNasAuthz', new URLSearchParams()],
   ['pages/authn.js', 'renderAuthn', new URLSearchParams()],
   ['pages/connectors.js', 'renderConnectors', new URLSearchParams()],
-  ['pages/register.js', 'renderRegister', new URLSearchParams()],
+  ['pages/panels.js', 'renderPanels', new URLSearchParams()],
   ['pages/platform.js', 'renderPlatform', new URLSearchParams()],
   ['pages/exec.js', 'renderExec', new URLSearchParams()],
   ['pages/connect.js', 'renderConnect', new URLSearchParams()],

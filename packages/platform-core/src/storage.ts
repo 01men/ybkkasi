@@ -73,6 +73,7 @@ export const DEFAULT_JSON_KEEP: readonly string[] = [
   'agent:migrations',
   'app:migrations',
   'iam:migrations',
+  'mcp:migrations',
   'iam:groupSnapshots',
 ]
 

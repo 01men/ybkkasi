@@ -4,6 +4,10 @@
  * 复用 resource-core 底座与生命周期，差异部分以扩展 schema 实现：
  * 应用形态/访问入口/发布渠道/Agent 编排拓扑（应用 → Agent → MCP/Skill 一图穿透）。
  * 应用层指标：DAU/MAU、会话深度、留存；成本链路：应用 → Agent → MCP/模型 穿透归集。
+ *
+ * W2-T4（MCP 治理契约 §10）：应用能力绑定——App ↔ MCP 服务挂载（app:capabilities）、
+ * 上线能力门禁（CAPABILITY_GATE_FAILED）、下架/删除生命周期联动、resource-core
+ * capability 依赖边（app→mcp），使拓扑 app→agent→mcp 可穿透。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
@@ -14,6 +18,11 @@ import {
 } from '../../platform-core/src/index.ts'
 import { t } from '../../platform-i18n/src/index.ts'
 import { OidcService } from '../../plugin-authn/src/oidc.ts'
+// W2-T4（契约 §10）：MCP 服务记录为 type-only 导入（零运行时耦合，供恢复/归档 additive
+// 字段写入的类型断言）；sensitiveHeaderKeys 为纯函数助手（与 console maskServiceHeaders
+// 同口径，/authorization|token|secret|key/i），共享契约明确允许跨包导入纯函数。
+import type { McpServiceRecord } from '../../plugin-mcp/src/index.ts'
+import { sensitiveHeaderKeys } from '../../plugin-mcp/src/secret-broker.ts'
 import * as appTools from './tools.ts'
 import { APP_TYPE_SPEC } from './schema.ts'
 import { buildAppOnboardingPrompt, type AppOnboardingCredential } from './onboarding.ts'
@@ -56,6 +65,29 @@ export interface AppRegistryServiceSsoCaller {
   userId?: string
   permissions: string[]
 }
+
+/**
+ * 应用能力绑定记录（W2-T4，MCP 治理契约 §10，集合 app:capabilities）：
+ * App ↔ MCP 服务挂载关系。required=true 的能力参与上线门禁与执行期复核；
+ * exposure 钉死 gateway（服务级数据面 §7 的事实暴露形态；服务侧 exposureMode 才是暴露配置）。
+ */
+export interface AppCapabilityLink extends RecordBase {
+  appId: string
+  serviceId: string
+  /** 参与上线门禁（true）/仅挂载展示（false）。 */
+  required: boolean
+  /** 暴露形态（契约 §10 钉死 gateway）。 */
+  exposure: 'gateway'
+  /** 绑定状态（解绑即删记录，现仅 active）。 */
+  status: string
+  boundAt: string
+  boundBy: string
+  /** W2-T4 下架联动留痕：联动置 offline 时记录的前置状态，应用重上线时按此恢复。 */
+  offlineRestore?: { status: string; grayPercent: number; at: string }
+}
+
+/** 能力绑定归属冲突（服务 ownerEntity 已归属其他主体）：REST 层映射 409 OWNER_CONFLICT。 */
+export class CapabilityOwnerConflictError extends Error {}
 
 export class AppRegistryService extends Service {
   static readonly provide = 'appRegistry'
@@ -163,6 +195,117 @@ export class AppRegistryService extends Service {
     return this.ctx.resourceCore.topology('app', appId, 3)
   }
 
+  // -- 能力绑定（W2-T4，MCP 治理契约 §10） ----------------------------------
+
+  /** 应用能力绑定集合（App ↔ MCP 服务挂载关系，模式照 app:usage 等既有集合）。 */
+  capabilities(): Collection<AppCapabilityLink> {
+    return this.ctx.opsStorage.collection<AppCapabilityLink>('app:capabilities')
+  }
+
+  /** 本 app 全部能力绑定（按绑定时间稳定排序）。 */
+  listCapabilities(appId: string): AppCapabilityLink[] {
+    return this.capabilities().find((item) => item.appId === appId)
+      .sort((a, b) => a.boundAt.localeCompare(b.boundAt) || a.id.localeCompare(b.id))
+  }
+
+  /**
+   * 绑定能力服务：服务必须存在；绑定同步把服务 ownerEntity 回写为 {type:'app', id:appId}——
+   * 仅当服务当前归属为 platform 占位（无 id，治理待办 unowned）或已是本 app 时允许回写，
+   * 已归属其他主体一律抛 CapabilityOwnerConflictError（REST 层映射 409 OWNER_CONFLICT）。
+   * 重复绑定幂等返回现态（不改 required 现值）；同步维护 resource-core 依赖边
+   * {app→mcp, kind:'capability'}（契约 §10，拓扑 app→agent→mcp 可穿透）。
+   */
+  bindCapability(appId: string, input: { serviceId: string; required?: boolean; boundBy: string }): { link: AppCapabilityLink; created: boolean } {
+    const app = this.ctx.resourceCore.get('app', appId)
+    if (!app) throw new Error(t('应用不存在：{id}', { id: appId }))
+    const service = this.ctx.mcpRegistry.services().get(input.serviceId)
+    if (!service) throw new Error(t('MCP 服务不存在：{id}', { id: input.serviceId }))
+    const existing = this.capabilities().findOne((item) => item.appId === appId && item.serviceId === input.serviceId)
+    if (existing) return { link: existing, created: false } // 幂等：重复绑定返回现态
+    // 归属回写闸门（fail-closed）：platform 占位（无 id）可认领；已被其他主体认领即冲突
+    const owner = service.ownerEntity
+    const claimable = !owner || (owner.type === 'platform' && !owner.id) || (owner.type === 'app' && owner.id === appId)
+    if (!claimable) {
+      throw new CapabilityOwnerConflictError(t('服务「{name}」已归属其他主体（ownerEntity={type}:{id}），不能重复绑定到本应用', { name: service.name, type: owner.type, id: owner.id ?? '-' }))
+    }
+    this.ctx.mcpRegistry.setOwnerEntity(input.serviceId, { type: 'app', id: appId })
+    const link = this.capabilities().insert({
+      id: newId('apc'),
+      appId,
+      serviceId: input.serviceId,
+      required: input.required === true,
+      exposure: 'gateway',
+      status: 'active',
+      boundAt: new Date().toISOString(),
+      boundBy: input.boundBy,
+    })
+    this.ctx.resourceCore.addDependency({ fromType: 'app', fromId: appId, toType: 'mcp', toId: input.serviceId, kind: 'capability' })
+    return { link, created: true }
+  }
+
+  /**
+   * 解绑能力服务：删除绑定记录与 capability 依赖边；服务归属若已回写为本 app，
+   * 联动还原为 {type:'platform'} 占位（回到治理待办 unowned；解绑联动由 REST 层 changeLog 注明）。
+   */
+  unbindCapability(appId: string, serviceId: string): { removed: boolean; ownerRestored: boolean } {
+    const link = this.capabilities().findOne((item) => item.appId === appId && item.serviceId === serviceId)
+    if (!link) return { removed: false, ownerRestored: false }
+    this.capabilities().remove(link.id)
+    this.ctx.resourceCore.removeDependency({ fromType: 'app', fromId: appId, toType: 'mcp', toId: serviceId })
+    let ownerRestored = false
+    const service = this.ctx.mcpRegistry.services().get(serviceId)
+    if (service && service.ownerEntity.type === 'app' && service.ownerEntity.id === appId) {
+      this.ctx.mcpRegistry.setOwnerEntity(serviceId, { type: 'platform' })
+      ownerRestored = true
+    }
+    return { removed: true, ownerRestored }
+  }
+
+  /**
+   * 上线能力门禁（W2-T4，契约 §10）：对本 app 全部 required 能力逐条校验，返回不满足原因
+   * 清单（空数组=通过；文案面向管理员，列明服务名+原因）。逐项口径：
+   *   ① 服务 status ∈ {online, gray}；② 已完成 verify（health 非 unknown 或有 lastProbeAt）；
+   *   ③ 工具清单非空；④ 无未决高危风险（write/admin 且 pending 的风险登记——风险登记服务
+   *   缺席（独立单测宿主，同插件 apply() 直连装配口径）时跳过该项）；
+   *   ⑤ 已配置 credential 或无敏感头需求（sensitiveHeaderKeys 与 maskServiceHeaders 同判）。
+   */
+  capabilityGateFailures(appId: string): string[] {
+    const failures: string[] = []
+    const riskRegistry = this.ctx.mcpRegistry.riskRegistry()
+    for (const link of this.listCapabilities(appId)) {
+      if (!link.required) continue
+      const service = this.ctx.mcpRegistry.services().get(link.serviceId)
+      const label = service ? t('「{name}」', { name: service.name }) : t('「{id}」（已删除）', { id: link.serviceId })
+      if (!service) {
+        failures.push(t('{label}：能力服务不存在，请解绑后重新绑定', { label }))
+        continue
+      }
+      if (!['online', 'gray'].includes(service.status)) {
+        failures.push(t('{label}：服务未在线（当前 {status}），required 能力要求 online/gray', { label, status: service.status }))
+      }
+      if (service.health.status === 'unknown' && !service.health.lastProbeAt) {
+        failures.push(t('{label}：尚未完成测试验证（verify），请先在 MCP 服务页执行验证', { label }))
+      }
+      if (service.tools.length === 0) {
+        failures.push(t('{label}：工具清单为空，请先完成工具发现/登记', { label }))
+      }
+      // ④ 风险登记取用（W1/V11 同款结构化取用；独立单测宿主缺席=无生效登记口径可查，跳过）
+      if (riskRegistry) {
+        // findOne：集合 find 返回数组（空数组亦为真值），取单条须用 findOne
+        const pendingHigh = riskRegistry.records().findOne((item) => item.serviceId === service.id
+          && (item.status === 'pending_domain' || item.status === 'pending_security')
+          && (item.risk === 'write' || item.risk === 'admin'))
+        if (pendingHigh) {
+          failures.push(t('{label}：工具 {tool} 存在未决高危风险登记（{stage}），请先完成两级审批', { label, tool: pendingHigh.toolName, stage: pendingHigh.status }))
+        }
+      }
+      if (!service.credentialRef && sensitiveHeaderKeys(service.headers).length > 0) {
+        failures.push(t('{label}：存在明文敏感认证头且未配置下游凭证，请经 PUT /api/mcp/services/:id/credential 走 Secret Broker 下发', { label }))
+      }
+    }
+    return failures
+  }
+
   // -- 生命周期（同 Agent：L4 审批） --------------------------------------
 
   requestOnline(appId: string, requester: { id: string; name: string }) {
@@ -172,6 +315,12 @@ export class AppRegistryService extends Service {
     if (errors.length > 0) throw new Error(t('上线条件不满足：{errors}', { errors: errors.join('；') }))
     // 上线门禁（点 1，早反馈）：门禁形态（默认 web,h5）必须有 active SSO 客户端
     const ssoClientId = this.checkSsoGate(app)
+    // W2-T4 能力门禁（契约 §10，validateAttrs/SSO gate 之后）：required 能力逐条校验——
+    // 在线 / 已验证 / 工具非空 / 无未决高危 / 凭证就绪；任一不满足即拒绝并列明服务名+原因
+    const capabilityFailures = this.capabilityGateFailures(appId)
+    if (capabilityFailures.length > 0) {
+      throw new Error(t('CAPABILITY_GATE_FAILED：能力门禁未通过（{count} 项）——{reasons}', { count: capabilityFailures.length, reasons: capabilityFailures.join('；') }))
+    }
     return this.ctx.audit.createApproval({
       kind: 'app.online',
       // WP-10/L1：L4 高危操作统一高风险——通过需二次确认，通过即落公司级终审标记
@@ -219,8 +368,66 @@ export class AppRegistryService extends Service {
 
   offline(appId: string, actor: string, reason: string) {
     const result = this.ctx.resourceCore.transition('app', appId, 'offline', actor, reason)
+    // W2-T4 下架联动（契约 §10）：能力服务随应用一起退出服务——app.offline 执行器与
+    // requestOffline 完成路径均经本方法收口，联动实现单点化
+    this.linkageOfflineCapabilityServices(appId)
     this.ctx.platformBus.emit(PlatformEvents.AppOfflined, { id: appId, name: result.entity.name, actor, reason, type: 'app', slug: result.entity.slug })
     return result.entity
+  }
+
+  /**
+   * 下架联动（W2-T4，契约 §10）：本 app 全部能力对应服务（ownerEntity 已回写为本 app 的，
+   * 含非 required）执行下线。系统联动走直下路径（直调 offlineService——审批语义仅适用于
+   * 人工操作），actor 标记 app-offline-linkage；服务下线经 plugin-mcp 既有管道发 McpOfflined
+   * 事件，changeLog/审计自动跟随。恢复前置状态记录在绑定记录 offlineRestore 供重上线恢复。
+   * 单服务失败不阻断应用下架主流程（warn 留痕，可经治理摘要/能力视图发现）。
+   */
+  private linkageOfflineCapabilityServices(appId: string): void {
+    const app = this.ctx.resourceCore.get('app', appId)
+    for (const link of this.listCapabilities(appId)) {
+      const service = this.ctx.mcpRegistry.services().get(link.serviceId)
+      if (!service) continue
+      const owner = service.ownerEntity
+      if (!(owner.type === 'app' && owner.id === appId) || service.status === 'offline') continue
+      try {
+        this.ctx.mcpRegistry.offlineService(service.id, 'app-offline-linkage', t('应用「{name}」下架联动下线能力服务', { name: app?.name ?? appId }))
+        this.capabilities().update(link.id, {
+          offlineRestore: { status: service.status, grayPercent: service.grayPercent, at: new Date().toISOString() },
+        })
+      } catch (error) {
+        this.ctx.logger('app').warn(t('能力服务联动下线失败：{service}（{serviceId}）', { service: service.name, serviceId: service.id }), error)
+      }
+    }
+  }
+
+  /**
+   * 重上线恢复（W2-T4）：应用重新上线成功后，把曾联动下线的能力服务恢复到下线前状态。
+   * plugin-mcp deployService 不接受 offline 起点（仅 draft/verifying/gray/online/unhealthy，
+   * 见其状态白名单），故经 services() 公开 getter 直写恢复前置 status/grayPercent，
+   * 并落 change 审计留痕；版本/versions 不动（恢复不是新版本发布，不发 McpDeployed 事件）。
+   */
+  restoreCapabilityServices(appId: string): void {
+    for (const link of this.listCapabilities(appId)) {
+      if (!link.offlineRestore) continue
+      const restore = link.offlineRestore
+      const service = this.ctx.mcpRegistry.services().get(link.serviceId)
+      if (service && service.status === 'offline') {
+        // W2-T4 重上线恢复：deployService 不收 offline 起点，直写回前置状态（类型收窄断言）
+        this.ctx.mcpRegistry.services().update(link.serviceId, {
+          status: restore.status as McpServiceRecord['status'],
+          grayPercent: restore.grayPercent,
+        })
+        try {
+          this.ctx.audit.record({
+            type: 'change', actorType: 'system', actorId: 'app-online-linkage', actorName: '应用重上线联动',
+            action: 'mcp.service.online-restore', resourceType: 'mcp_service', resourceId: link.serviceId,
+            resourceName: service.name, result: 'ok',
+            detail: t('应用重上线联动恢复能力服务：status={status} gray={gray}%', { status: restore.status, gray: restore.grayPercent }),
+          })
+        } catch { /* 最小宿主无审计服务时不阻断恢复 */ }
+      }
+      this.capabilities().update(link.id, { offlineRestore: undefined })
+    }
   }
 
   /** 归档（终态）：下架后的应用彻底退出运营；关联 SSO 客户端经 app.archived 事件联动禁用。 */
@@ -240,6 +447,21 @@ export class AppRegistryService extends Service {
     }
     const principal = this.ctx.authn.principals().findOne((item) => item.refType === 'app' && item.refId === appId)
     if (principal && principal.status === 'active') this.ctx.authn.disablePrincipal(principal.id, '应用删除联动')
+    // W2-T4 归档联动（契约 §10）：能力服务保持 offline（不触碰状态、不复活），补 archivedBy
+    // 标记（additive 字段，W3 拓扑/治理消费可读）；归属若为本 app 则还原 platform 占位
+    // （防悬挂引用，同解绑语义）；绑定记录清除——capability 依赖边/凭证文件/OIDC/机器凭证
+    // 联动均由上方既有逻辑覆盖，此处不重复。
+    for (const link of this.listCapabilities(appId)) {
+      const service = this.ctx.mcpRegistry.services().get(link.serviceId)
+      if (service) {
+        const owner = service.ownerEntity
+        this.ctx.mcpRegistry.services().update(link.serviceId, {
+          archivedBy: appId, // W2-T4 归档联动
+          ...(owner.type === 'app' && owner.id === appId ? { ownerEntity: { type: 'platform' as const } } : {}),
+        } as unknown as Partial<McpServiceRecord>)
+      }
+      this.capabilities().remove(link.id)
+    }
   }
 
   // -- SSO 客户端（应用 ↔ 平台身份源打通；owner 自助签发） ----------------------
@@ -619,7 +841,10 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export const name = 'app'
-export const inject = ['opsStorage', 'platformBus', 'resourceCore', 'authn', 'oidc', 'audit', 'iam']
+// W2-T4：mcpRegistry 直访注入——两个宿主装配序列中 plugin-mcp 均先于本插件装配
+// （boot-all.ts mcp→app、cordis.yml ops-mcp→ops-app），check-boot-order [A] 机器可校验；
+// 能力绑定/门禁/联动因此走直接 ctx 访问（fail-closed），无需 console 注入回调。
+export const inject = ['opsStorage', 'platformBus', 'resourceCore', 'authn', 'oidc', 'audit', 'iam', 'mcpRegistry']
 
 export function apply(ctx: Context) {
   const registry = new AppRegistryService(ctx)
@@ -641,7 +866,8 @@ export function apply(ctx: Context) {
   })
   ctx.effect(() => ctx.audit.registerExecutor('app.online', async (payload) => {
     // 上线门禁（点 2，兜底）：审批挂单期间客户端可能被禁用——执行前复核，失效则执行失败留痕
-    const app = ctx.resourceCore.get('app', String(payload['appId']))
+    const appId = String(payload['appId'])
+    const app = ctx.resourceCore.get('app', appId)
     if (app) {
       const enforce = AppRegistryService.ssoEnforceTypes()
       const appType = String(app.attrs['appType'] ?? '')
@@ -649,7 +875,16 @@ export function apply(ctx: Context) {
         throw new Error(t('执行期复核失败：审批期间 SSO 客户端已失效（{appType} 形态门禁），请重新签发后再发起上线', { appType }))
       }
     }
-    return registry.online(String(payload['appId']), 'approval-center')
+    // W2-T4 执行期复核（契约 §10）：挂单期间 required 能力可能被下线/降级——
+    // 逐条复核（在线/已验证/工具非空/无未决高危/凭证就绪），不满足则执行失败留痕
+    const capabilityFailures = registry.capabilityGateFailures(appId)
+    if (capabilityFailures.length > 0) {
+      throw new Error(t('执行期复核失败：审批期间能力服务状态变化（CAPABILITY_GATE_FAILED）——{reasons}', { reasons: capabilityFailures.join('；') }))
+    }
+    const entity = registry.online(appId, 'approval-center')
+    // W2-T4 重上线恢复：曾随应用下架联动下线的能力服务自动恢复前置状态
+    registry.restoreCapabilityServices(appId)
+    return entity
   }))
   ctx.effect(() => ctx.audit.registerExecutor('app.offline', async (payload) => {
     return registry.offline(String(payload['appId']), 'approval-center', String(payload['reason'] ?? '审批通过下架'))

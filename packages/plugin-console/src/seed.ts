@@ -31,6 +31,16 @@ export async function seedAll(ctx: Context): Promise<void> {
   try {
     ctx.iam.ensureConnectorPermissionsMigration()
   } catch { /* 迁移失败不阻断启动；connector 装配期兜底调用仍在 */ }
+  // 解绑护栏配套回填（2026-10-22）：存量账号补 passwordKnown，避免「缺字段」被当成
+  // 「只能靠三方登录」而让解绑对既有账号全程被拒。幂等，失败同样不阻断启动。
+  try {
+    ctx.iam.backfillPasswordKnown()
+  } catch { /* 回填失败不阻断启动；下次启动重试 */ }
+  // 身份链 kind 回填（2026-10-22）：区分登录链与任职链，否则解绑会连带抹掉任职事实，
+  // 断掉部门负责人反查与 NAS 数据权限身份反查。幂等，失败同样不阻断启动。
+  try {
+    ctx.iam.backfillIdentityLinkKinds()
+  } catch { /* 回填失败不阻断启动；下次启动重试 */ }
 }
 
 /** 生产基线：可上线的最小初始化（零演示数据）。 */
@@ -115,7 +125,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   const dev2 = mkUser('linxm', '林小满', aiDept.id, '算法工程师', [roleDev.id])
   // 预置三方身份链接（演示钉钉免密登录；事实源为 identityLinks）
   ctx.iam.users().update(dev2.id, { jobNumber: 'DD0002' })
-  ctx.iam.linkIdentity(dev2.id, { provider: 'dingtalk', providerUserId: 'dd_u002', corpId: 'ding-yuanbingke', displayName: '林小满' }, 'seed')
+  ctx.iam.linkIdentity(dev2.id, { provider: 'dingtalk', providerUserId: 'dd_u002', corpId: 'ding-yuanbingke', displayName: '林小满', kind: 'login' }, 'seed')
   const auditor = mkUser('audit', '楚天阔', root.id, '审计专员', [roleAuditor.id])
   mkUser('suyq', '苏砚秋', beDept.id, '后端工程师', [roleDev.id])
   mkUser('heqw', '何青梧', feDept.id, '前端工程师', [roleDev.id])
@@ -153,15 +163,22 @@ async function seedDemo(ctx: Context): Promise<void> {
   })
 
   // -- MCP 服务（演示数据：exec 显式 demo，SLO/计费不统计） --------------------
+  // W1-T2（治理契约 §5）：演示服务带治理字段（ownerEntity 默认 platform 占位=治理待办 unowned，
+  // 待 W2-T4 能力绑定回写 app/agent 归属；dataClass/exposureMode/environment/visibility 按业务拟真）。
   const mkMcp = (input: Parameters<typeof ctx.mcpRegistry.createService>[0]) => {
     const service = ctx.mcpRegistry.createService({ ...input, exec: 'demo' })
     return ctx.mcpRegistry.services().get(service.id)!
   }
 
   const kb = mkMcp({
+    // visibility='org'：AI 部门内服务，跨组织调用需权限组显式授权（PDP org-constraint 裁决）。
+    // 'cross-org' 保留「逐次审批单」强语义，仅供确有跨租户开放需求的服务显式声明——
+    // 演示数据不设该形态，避免治理门禁误伤常规演示路径（三态覆盖见 plugin-mcp policy.test.mjs）。
     name: '企业知识库检索', slug: 'knowledge-base', orgId: aiDept.id,
     description: '对制度文档、技术 Wiki、会议纪要做语义检索与引用定位。',
     icon: 'kb', endpoint: 'mcp+http://platform-hosted/knowledge-base',
+    ownerEntity: { type: 'platform' }, dataClass: 'public', exposureMode: 'gateway',
+    environment: 'prod', visibility: 'org',
     tools: [
       { name: 'kb_search', description: '语义检索知识库', inputSchema: { type: 'object' }, riskLevel: 'read' },
       { name: 'kb_fetch_doc', description: '获取文档全文', inputSchema: { type: 'object' }, riskLevel: 'read' },
@@ -172,6 +189,8 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '数据分析引擎', slug: 'datawise', orgId: aiDept.id,
     description: 'SQL 生成与执行、指标查询、报表导出。',
     icon: 'chart', endpoint: 'mcp+http://platform-hosted/datawise',
+    ownerEntity: { type: 'platform' }, dataClass: 'confidential', exposureMode: 'gateway',
+    environment: 'prod', visibility: 'org',
     tools: [
       { name: 'dw_query_metrics', description: '查询业务指标', inputSchema: { type: 'object' }, riskLevel: 'read' },
       { name: 'dw_run_sql', description: '执行只读 SQL', inputSchema: { type: 'object' }, riskLevel: 'read' },
@@ -183,6 +202,9 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '客服工单系统', slug: 'ticket-service', orgId: prodDept.id,
     description: '工单创建、流转、催办与满意度回访。',
     icon: 'ticket', endpoint: 'https://ticket-mcp.yuanbingke.com/mcp', mode: 'external', transport: 'sse',
+    ownerEntity: { type: 'platform' }, dataClass: 'internal', exposureMode: 'direct',
+    environment: 'prod', visibility: 'org',
+    credentialRef: 'env:TICKET_MCP_TOKEN',
     tools: [
       { name: 'ticket_create', description: '创建工单', inputSchema: { type: 'object' }, riskLevel: 'write' },
       { name: 'ticket_search', description: '查询工单', inputSchema: { type: 'object' }, riskLevel: 'read' },
@@ -194,6 +216,8 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: 'HR 人事服务', slug: 'hr-service', orgId: root.id,
     description: '人事档案查询、假期余额、考勤异常处理。',
     icon: 'hr', endpoint: 'mcp+http://platform-hosted/hr-service',
+    ownerEntity: { type: 'platform' }, dataClass: 'confidential', exposureMode: 'gateway',
+    environment: 'prod', visibility: 'org',
     tools: [
       { name: 'hr_query_profile', description: '查询员工档案', inputSchema: { type: 'object' }, riskLevel: 'read' },
       { name: 'hr_leave_balance', description: '查询假期余额', inputSchema: { type: 'object' }, riskLevel: 'read' },
@@ -204,12 +228,21 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '汇率与结算（灰度中）', slug: 'fx-settlement', orgId: beDept.id,
     description: '跨境结算汇率查询与批量打款指令（灰度验证中）。',
     icon: 'fx', endpoint: 'mcp+http://platform-hosted/fx-settlement',
+    ownerEntity: { type: 'platform' }, dataClass: 'confidential', exposureMode: 'gateway',
+    environment: 'staging', visibility: 'tenant',
     tools: [
       { name: 'fx_rate_query', description: '查询实时汇率', inputSchema: { type: 'object' }, riskLevel: 'read' },
       { name: 'fx_batch_pay', description: '批量打款指令', inputSchema: { type: 'object' }, riskLevel: 'admin' },
     ],
     stability: 0.9,
   })
+  // W1-T2（契约 §6）凭证引用演示：env: 形态——seed 不落任何明文，取值来自进程环境变量
+  // TICKET_MCP_TOKEN（未设置时 resolve 自然 miss 返回 null，调用链不受影响）。
+  try {
+    ctx.mcpRegistry.secretBroker()?.put({
+      serviceId: ticket.id, credentialRef: 'env:TICKET_MCP_TOKEN', headerName: 'Authorization',
+    })
+  } catch { /* 种子非关键路径：broker 未装配/无数据目录时跳过 */ }
 
   const deploy = async (id: string, gray?: number, version?: string, changelog?: string) => {
     try {
@@ -353,7 +386,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     attrs: {
       description: '自动汇总财务数据，生成月度经营分析报告初稿。',
       avatar: '💰', tags: ['财务', '报告'],
-      model: 'deepseek-reasoner', systemPromptVersion: 'prompt-finance-v3.2',
+      model: 'deepseek-reasoner',
       skills: ['sql-review', 'metric-attribution'], mcpPermGroupIds: [], env: 'sandbox',
       riskLevel: 'medium', dataClass: 'confidential',
     },
@@ -364,7 +397,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     attrs: {
       description: '代码评审、SQL 审查与单测生成的研发搭档。',
       avatar: '🧑‍💻', tags: ['研发'],
-      model: 'deepseek-coder', systemPromptVersion: 'prompt-coder-v5.0',
+      model: 'deepseek-coder',
       skills: [], mcpPermGroupIds: [], env: 'sandbox',
       riskLevel: 'low', dataClass: 'internal',
     },
@@ -375,7 +408,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     attrs: {
       description: '7×24 客户咨询应答与工单流转。',
       avatar: '🎧', tags: ['客服'],
-      model: 'deepseek-chat', systemPromptVersion: 'prompt-cs-v2.8',
+      model: 'deepseek-chat',
       skills: ['cs-soothe'], mcpPermGroupIds: [], env: 'shared',
       riskLevel: 'medium', dataClass: 'internal',
     },
@@ -386,7 +419,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     attrs: {
       description: '人事制度问答、假期查询与入职引导。',
       avatar: '📋', tags: ['HR'],
-      model: 'deepseek-chat', systemPromptVersion: 'prompt-hr-v1.9',
+      model: 'deepseek-chat',
       skills: ['onboarding-guide'], mcpPermGroupIds: [], env: 'sandbox',
       riskLevel: 'low', dataClass: 'internal',
     },
@@ -397,7 +430,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     attrs: {
       description: '指标归因、异动检测与 BI 报表生成。',
       avatar: '📊', tags: ['数据'],
-      model: 'deepseek-reasoner', systemPromptVersion: 'prompt-bi-v4.1',
+      model: 'deepseek-reasoner',
       skills: ['metric-attribution'], mcpPermGroupIds: [], env: 'dedicated',
       riskLevel: 'medium', dataClass: 'internal',
     },
@@ -408,7 +441,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     attrs: {
       description: '跨境结算打款指令试点（灰度验证）。',
       avatar: '💱', tags: ['财务', '灰度'],
-      model: 'deepseek-chat', systemPromptVersion: 'prompt-fx-v0.3',
+      model: 'deepseek-chat',
       // 身份纳管（AGENT_SSO_ENFORCE=1）：entryUrl 免登通道即满足上线门禁
       entryUrl: 'https://fx-pilot.example.com/chat',
       skills: [], mcpPermGroupIds: [], env: 'sandbox',
@@ -483,6 +516,18 @@ async function seedDemo(ctx: Context): Promise<void> {
   })
   for (const app of [appCs, appBi, appHr]) {
     ctx.appRegistry.online(app.id, admin.displayName)
+  }
+
+  // W2-T4（MCP 治理契约 §10）应用能力绑定演示：HR 小程序 → HR 人事服务（required）、
+  // 数据洞察 BI → 数据分析引擎（required）+ 企业知识库检索（非 required）。
+  // 绑定走服务层方法（同步 ownerEntity 回写 app 归属 + capability 依赖边；幂等可重入——
+  // 重复绑定返回现态）。与 mkMcp 五服务 id 对齐：ticket/fx 保持 platform 占位（治理待办样例）。
+  try {
+    ctx.appRegistry.bindCapability(appHr.id, { serviceId: hrSvc.id, required: true, boundBy: admin.displayName })
+    ctx.appRegistry.bindCapability(appBi.id, { serviceId: dw.id, required: true, boundBy: admin.displayName })
+    ctx.appRegistry.bindCapability(appBi.id, { serviceId: kb.id, required: false, boundBy: admin.displayName })
+  } catch (error) {
+    logger.warn('应用能力绑定演示数据失败（跳过）', error)
   }
 
   // -- 历史用量 / MCP 调用 ----------------------------------------------------

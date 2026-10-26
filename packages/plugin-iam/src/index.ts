@@ -87,6 +87,22 @@ export interface UserRecord extends RecordBase {
    * orgId ≠ primaryOrgId 时，orgId 组织子树仅授只读（兼任只读，避免双写冲突）。
    */
   primaryOrgId?: string
+  /**
+   * 三方绑定豁免（2026-10-22 解绑能力）：被人工解绑/更换过的「provider|corpId」，连接器同步
+   * 不再自动重建该主体的身份链接。
+   *
+   * 为什么必须有：同步逻辑按「bindings 里有没有该 provider+corpId」决定是否补链，
+   * 解绑后下一次同步（默认 60 分钟一次）会立刻按工号把人的钉钉身份绑回来——用户看到的是
+   * 「点了没反应」。与部门负责人 leaderSource='manual' 的「手动绑定锁定，同步不覆盖」同构：
+   * 人工决定优先于同步事实，要恢复自动绑定需显式解除豁免（重新扫码绑定即自动清除）。
+   */
+  bindingExemptions?: string[]
+  /**
+   * 人类已知口令（2026-10-22 解绑护栏的事实源）：仅在「有人拿到过明文口令」时为 true——
+   * 创建时显式指定口令、管理员重置口令、本人改密。SSO 自注册与通讯录同步创建的账号
+   * 口令是随机值且从未下发，此标记为 false，此时三方身份是唯一可用的登录方式。
+   */
+  passwordKnown?: boolean
 }
 
 export interface RoleRecord extends RecordBase {
@@ -178,6 +194,14 @@ export interface ConnectorConfigRecord extends RecordBase {
  * 三方身份链接（融合 auth-identity 的 user_identity_links 设计）。
  * 活跃链接在 (provider, corpId, providerUserId) 上引擎级唯一——「一人一号」按主体隔离，
  * 由唯一约束兜底，禁止以「先查后插」替代约束（红线）。解绑即物理删除记录（等价 WHERE unlinked_at IS NULL 的部分唯一索引）。
+ *
+ * kind（2026-10-22 解绑能力新增）：同一 provider+corpId 下同一个自然人可能同时存在两条链，
+ * 用途不同、可独立存废：
+ *   - login（缺省）：登录身份链，providerUserId 是 unionId。用于「这个人是谁」的判定与 SSO 登录。
+ *   - staff：任职身份链，providerUserId 是 userid(staffId)。用于通讯录任职/负责人反查
+ *     （部门负责人映射、NAS 数据权限身份反查）——它描述的是「此人在组织里的岗位」，不是登录凭据。
+ * 两者并存是既有设计（同步时同时写入）。解绑登录身份不应连带抹掉任职事实：
+ * 抹掉会让部门负责人反查断链、审批路由回退到父部门（2026-10-22 实测回归）。
  */
 export interface IdentityLinkRecord extends RecordBase {
   provider: 'dingtalk' | 'feishu' | 'wecom'
@@ -187,6 +211,8 @@ export interface IdentityLinkRecord extends RecordBase {
   displayName: string
   linkedAt: string
   linkedBy: string
+  /** 链路用途：login=登录身份（缺省）；staff=任职身份。缺省按 login 解读（存量数据兼容）。 */
+  kind?: 'login' | 'staff'
 }
 
 export interface SyncConflictRecord extends RecordBase {
@@ -247,6 +273,9 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'authn.oidc.read', label: '查看 OIDC 客户端', group: '统一认证' },
   { point: 'authn.oidc.write', label: '管理 OIDC 客户端（签发/轮换/禁用）', group: '统一认证' },
   { point: 'mcp.service.read', label: '查看 MCP 服务', group: 'MCP' },
+  // W3-T5（MCP 治理契约 §12/§15）：scope 模板读取点（POST /api/mcp/perm-groups/:id/scope-template，
+  // dry 语义不落库）——目录缺此点时 resource_admin 的 mcp.* 通配无法展开到它（全量 403）
+  { point: 'mcp.permgroup.read', label: '读取 MCP 权限组与 scope 模板', group: 'MCP' },
   { point: 'mcp.service.write', label: '管理 MCP 服务', group: 'MCP' },
   { point: 'mcp.service.deploy', label: '部署/灰度 MCP', group: 'MCP' },
   { point: 'mcp.service.offline', label: '下线 MCP', group: 'MCP' },
@@ -763,7 +792,7 @@ export class IamService extends Service {
   }
 
   /** 建立身份链接（唯一约束兜底；user.bindings 保持为投影，便于列表展示）。 */
-  linkIdentity(userId: string, profile: { provider: IdentityLinkRecord['provider']; providerUserId: string; corpId: string; displayName: string }, actor: string): IdentityLinkRecord {
+  linkIdentity(userId: string, profile: { provider: IdentityLinkRecord['provider']; providerUserId: string; corpId: string; displayName: string; kind?: 'login' | 'staff' }, actor: string): IdentityLinkRecord {
     const user = this.users().get(userId)
     if (!user) throw new Error(t('账号不存在：{id}', { id: userId }))
     const link = this.identityLinks().insert({
@@ -775,32 +804,90 @@ export class IamService extends Service {
       displayName: profile.displayName,
       linkedAt: new Date().toISOString(),
       linkedBy: actor,
+      ...(profile.kind ? { kind: profile.kind } : {}),
     })
-    // 投影同步（bindings 仅作展示，事实源是 identityLinks；多主体按 provider+corpId 判重）
-    if (!user.bindings.some((item) => item.provider === profile.provider && (item.corpId ?? '') === profile.corpId)) {
-      this.users().update(userId, {
-        bindings: [...user.bindings, {
-          provider: profile.provider,
-          unionId: profile.providerUserId,
-          displayName: profile.displayName,
-          boundAt: link.linkedAt,
-          ...(profile.corpId ? { corpId: profile.corpId } : {}),
-        }],
-      })
+    // 人工绑定意图覆盖此前的解绑决定：同步不再把它当作「用户不想要」的主体。
+    // 只在写「登录链」时清除豁免——同步补写任职链（staff）不构成人工绑定意图，
+    // 否则解绑后一次同步就会把解绑决定冲掉（用户看到「点了没反应」）。
+    if (profile.kind !== 'staff') {
+      this.clearBindingExemption(userId, profile.provider, profile.corpId)
     }
+    // 投影重建（bindings 仅作展示，事实源是 identityLinks）：统一由登录链重算，
+    // 不在此处增量追加——增量追加会把任职链（staff）也算成「绑定的三方账号」，
+    // 且与解绑后的重建口径不一致（解绑清空、写入又加回，用户看到解绑没生效）。
+    // 必须在豁免处理之后：重建会按豁免过滤主体，先清豁免才能把新绑定显示出来。
+    this.rebuildBindingsProjection(userId)
     return link
   }
 
-  /** 解除身份链接（同时清理投影）。 */
-  unlinkIdentity(userId: string, provider: IdentityLinkRecord['provider']): boolean {
-    const link = this.identityLinks().findOne((item) => item.userId === userId && item.provider === provider)
-    if (!link) return false
-    this.identityLinks().remove(link.id)
-    const user = this.users().get(userId)
-    if (user) {
-      this.users().update(userId, { bindings: user.bindings.filter((item) => item.provider !== provider) })
-    }
+  /**
+   * 解除身份链接（同时按事实源重建投影）。
+   *
+   * 四个必须做对的点（2026-10-22 解绑/更换能力上线时的整改）：
+   *   1. 多主体：同一 provider 可能有多个 corpId 的链接（unionId 链 + userid 链），
+   *      传 corpId 只删该主体的链接；不传=删该 provider 全部（显式语义，调用方负责确认）。
+   *   2. 事实源：`findOne` + `remove` 只删到一条，其余同 provider 链接会变成幽灵——按 provider
+   *      （或 provider+corpId）全量删除。
+   *   3. 投影：bindings 必须由剩余 identityLinks 重算，不能按 provider 一刀切过滤——
+   *      否则「解绑一个主体」会把另一个主体的展示行一起清掉，而链接还在。
+   *   4. 链路角色：只解「登录身份链」（kind≠staff）。任职身份链（staff）描述的是此人在组织里的
+   *      岗位事实（部门负责人映射、NAS 数据权限身份反查都依赖它），不是登录凭据——
+   *      连带抹掉会让部门负责人反查断链、审批路由回退到父部门（实测回归）。
+   */
+  unlinkIdentity(userId: string, provider: IdentityLinkRecord['provider'], corpId?: string, kind?: 'login' | 'staff'): boolean {
+    const targets = this.identityLinks().find((item) => item.userId === userId
+      && item.provider === provider
+      && (corpId === undefined || (item.corpId ?? '') === corpId)
+      && (kind === undefined ? item.kind !== 'staff' : item.kind === kind))
+    if (targets.length === 0) return false
+    // 记录豁免（按实际删掉的主体粒度）：否则下一次连接器同步会按工号把链接补回来。
+    const exempted = new Set<string>((this.users().get(userId)?.bindingExemptions ?? []))
+    for (const link of targets) exempted.add(`${provider}|${link.corpId ?? ''}`)
+    for (const link of targets) this.identityLinks().remove(link.id)
+    this.users().update(userId, { bindingExemptions: [...exempted] })
+    // 投影重建时排除被豁免的主体：解绑后该主体不再显示为「已绑定」，
+    // 即使任职链仍在（任职事实没被抹掉，只是不再作为「可登录的绑定」展示）。
+    this.rebuildBindingsProjection(userId)
     return true
+  }
+
+  /** 清除绑定豁免（重新扫码/手工绑定成功时调用：人工绑定的意图覆盖此前的解绑决定）。 */
+  private clearBindingExemption(userId: string, provider: string, corpId: string): void {
+    const user = this.users().get(userId)
+    if (!user?.bindingExemptions?.length) return
+    const key = `${provider}|${corpId}`
+    if (!user.bindingExemptions.includes(key)) return
+    const next = user.bindingExemptions.filter((item) => item !== key)
+    this.users().update(userId, { bindingExemptions: next.length ? next : undefined })
+  }
+
+  /** 由 identityLinks（事实源）重建 user.bindings 投影：多主体按 provider+corpId 一行。 */
+  private rebuildBindingsProjection(userId: string): void {
+    const user = this.users().get(userId)
+    if (!user) return
+    const links = this.identityLinks().find((item) => item.userId === userId)
+    // 被豁免的主体不再展示（人工解绑的决定优先于任职链的存在）
+    const exempted = new Set<string>(this.users().get(userId)?.bindingExemptions ?? [])
+    const visible = links.filter((link) => !exempted.has(`${link.provider}|${link.corpId ?? ''}`))
+    // 每个主体（provider+corpId）取一条代表链：登录链优先；没有登录链时回落任职链
+    // （存量数据在 kind 回填前只有未标记的链，回落后维持「该主体仍绑定」的既有展示语义）。
+    const seen = new Map<string, IdentityLinkRecord>()
+    for (const link of visible) {
+      const key = `${link.provider}|${link.corpId ?? ''}`
+      const current = seen.get(key)
+      if (!current) { seen.set(key, link); continue }
+      // 登录链优先于任职链
+      if (current.kind === 'staff' && link.kind !== 'staff') seen.set(key, link)
+    }
+    this.users().update(userId, {
+      bindings: [...seen.values()].map((link) => ({
+        provider: link.provider,
+        unionId: link.providerUserId,
+        displayName: link.displayName,
+        boundAt: link.linkedAt,
+        ...(link.corpId ? { corpId: link.corpId } : {}),
+      })),
+    })
   }
 
   /** 已注册连接器实例清单（多主体：携带 configId/主体名，provider 仅表示平台类型）。 */
@@ -1192,6 +1279,8 @@ export class IamService extends Service {
       passwordSalt: '',
       passwordHash: hashPasswordScrypt(password),
       bindings: [],
+      // 仅当调用方显式给了口令（有人拿到明文）才标记；随机生成的初始口令未下发，不算已知
+      ...(input.password !== undefined ? { passwordKnown: true } : {}),
       ...(input.jobNumber !== undefined ? { jobNumber: input.jobNumber } : {}),
     })
     return input.password ? { user } : { user, initialPassword: password }
@@ -1204,7 +1293,8 @@ export class IamService extends Service {
     if (user.status === 'deactivated') throw new Error(t('账号已注销，无法重置口令'))
     if (password !== undefined) this.assertPasswordStrength(password)
     const next = password ?? generateSecret('init')
-    this.users().update(id, { passwordSalt: '', passwordHash: hashPasswordScrypt(next) })
+    // 重置口令的明文会一次性回显给操作者（由人转达），因此视为「已知口令」
+    this.users().update(id, { passwordSalt: '', passwordHash: hashPasswordScrypt(next), passwordKnown: true })
     return { user: this.users().get(id)!, initialPassword: next }
   }
 
@@ -1294,8 +1384,25 @@ export class IamService extends Service {
     // corpId 缺省取该 provider 已配置主体的 corpId（控制台手工绑定即针对已接入主体），
     // 保证「一人一号」唯一约束（provider|corpId|providerUserId）对存量链接生效。
     const corpId = binding.corpId ?? this.connectorConfig(binding.provider)?.corpId ?? ''
-    if (user.bindings.some((item) => item.provider === binding.provider && (item.corpId ?? '') === corpId)) {
+    // 已占用判定以 identityLinks 的「登录链」为准（投影可能因解绑重建而滞后）：
+    // 同一 provider+corpId 已有登录链即视为已绑定。任职链（staff）不算占用——
+    // 它描述的是岗位事实，用户解绑登录身份后重新绑定登录身份是允许的（任职链保留不动）。
+    const occupied = this.identityLinks().findOne((link) => link.userId === id
+      && link.provider === binding.provider
+      && link.kind !== 'staff'
+      && (link.corpId ?? '') === corpId)
+    if (occupied) {
       throw new Error(t('该账号已绑定{provider}身份，请先解绑', { provider: binding.provider }))
+    }
+    // 一人一号：目标三方身份若已绑定其他账号，提前给出可读错误（引擎唯一约束仍兜底）。
+    // 只看登录链：任职链（staff）是岗位事实，同一自然人在别的主体/岗位出现属正常，
+    // 拿它判「一人一号」会误报。
+    const taken = this.identityLinks().findOne((link) => link.provider === binding.provider
+      && link.providerUserId === binding.unionId
+      && link.kind !== 'staff'
+      && (link.corpId ?? '') === corpId)
+    if (taken && taken.userId !== id) {
+      throw new Error(t('该三方身份已绑定其他平台账号（一人一号），请先解除对方绑定'))
     }
     // 唯一约束冲突由存储引擎兜底（同一主体下同一三方身份只能映射一个账号）
     this.linkIdentity(id, {
@@ -1307,12 +1414,57 @@ export class IamService extends Service {
     return this.users().get(id)!
   }
 
-  unbindThirdParty(id: string, provider: ThirdPartyBinding['provider'], verifyCode: string, actor?: UserManageActor): UserRecord {
+  /**
+   * 解除三方绑定（管理面）。corpId 缺省=该 provider 全部主体（管理员显式选择「解绑钉钉」）。
+   * 解绑后写入豁免，避免连接器同步把链接自动补回。
+   */
+  unbindThirdParty(id: string, provider: ThirdPartyBinding['provider'], verifyCode: string, actor?: UserManageActor, corpId?: string): UserRecord {
     const user = this.requireUser(id)
     this.assertManageScope(actor, user.orgId, t('解绑三方身份'))
     if (!verifyCode || verifyCode.length !== 6) throw new Error(t('解绑需二次验证（6 位验证码）'))
-    this.unlinkIdentity(id, provider)
-    return this.users().get(id)!
+    return this.performUnbind(user, provider, corpId)
+  }
+
+  /**
+   * 本人自助解绑（无 iam.user.write 的业务同学在面板里解绑自己的钉钉）。
+   * 与 unbindThirdParty 的唯一差别是不做组织子树校验——操作对象恒为调用者本人，
+   * 由路由层从会话取 userId（不接受请求体指定），因此不存在越权面。
+   */
+  unbindOwnThirdParty(userId: string, provider: ThirdPartyBinding['provider'], verifyCode: string, corpId?: string): UserRecord {
+    const user = this.requireUser(userId)
+    if (!verifyCode || verifyCode.length !== 6) throw new Error(t('解绑需二次验证（6 位验证码）'))
+    return this.performUnbind(user, provider, corpId)
+  }
+
+  /** 解绑实际执行（含反锁定护栏：先判后删，不留中间态）。 */
+  private performUnbind(user: UserRecord, provider: ThirdPartyBinding['provider'], corpId?: string): UserRecord {
+    const targets = this.identityLinks().find((link) => link.userId === user.id
+      && link.provider === provider
+      && (corpId === undefined || (link.corpId ?? '') === corpId)
+      && link.kind !== 'staff')
+    if (targets.length === 0) {
+      throw new Error(t('该账号未绑定{provider}身份', { provider }))
+    }
+    // 反锁定护栏：三方身份是 SSO 自注册/通讯录同步账号唯一已知的登录凭据
+    // （创建时的随机口令从未下发给人）。解绑后若既不剩任何三方绑定、又没有已知口令，
+    // 账号将永久无法登录且管理员无从补救——在这里拦住，并告知先设口令。
+    const remainingLinks = this.identityLinks().find((link) => link.userId === user.id
+      && link.kind !== 'staff'
+      && !targets.some((target) => target.id === link.id))
+    if (remainingLinks.length === 0 && !this.hasUsablePassword(user)) {
+      throw new Error(t('这是该账号唯一的登录方式，解绑后将无法登录。请先为账号设置口令（管理员重置口令），再解绑三方身份'))
+    }
+    this.unlinkIdentity(user.id, provider, corpId)
+    return this.users().get(user.id)!
+  }
+
+  /**
+   * 账号是否有可用口令（可用于账号密码登录）。
+   * 依据是 passwordKnown 标记（有人拿到过明文），不是用户名形态——通讯录同步创建的账号
+   * 用户名是工号、口令同为随机值，按形态判断会把它们误判成「有已知口令」而放行解绑。
+   */
+  private hasUsablePassword(user: UserRecord): boolean {
+    return Boolean(user.passwordHash) && user.passwordKnown === true
   }
 
   /**
@@ -1361,6 +1513,73 @@ export class IamService extends Service {
   }
 
   // -- 角色 ---------------------------------------------------------------
+
+  /**
+   * 存量账号口令已知性回填（幂等，2026-10-22 解绑护栏配套）：
+   * `passwordKnown` 是本批次新增字段，存量账号没有它。若把「缺字段」直接当成 false，
+   * 所有既有账号都会被判成「只能靠三方登录」，解绑功能对它们等于全程被拒。
+   *
+   * 回填口径（保守向可用性倾斜，但不放宽真正的风险面）：
+   *   - 已有任意三方绑定的账号 → 不标记（解绑护栏照常生效，只有当它是唯一登录方式时拦）；
+   *   - 没有任何三方绑定的账号 → 标记 true（它本来就只能靠口令登录，说明口令是已知的）。
+   */
+  backfillPasswordKnown(): number {
+    const collection = this.ctx.opsStorage.collection<RecordBase & { key: string }>('iam:migrations')
+    if (collection.findOne((item) => item.key === 'password-known-v1')) return 0
+    let touched = 0
+    for (const user of this.users().all()) {
+      if (user.passwordKnown !== undefined) continue
+      if ((user.bindings ?? []).length === 0 && user.passwordHash) {
+        this.users().update(user.id, { passwordKnown: true })
+        touched++
+      }
+    }
+    collection.insert({ id: newId('mig'), key: 'password-known-v1', note: `backfilled ${touched}` })
+    return touched
+  }
+
+  /**
+   * 存量身份链的 kind 回填（幂等，2026-10-22 解绑能力配套）。
+   *
+   * 本批次新增了 kind 字段区分「登录链」与「任职链」，存量链没有该字段。回填依据两条事实：
+   *   1. 同一 (provider, corpId, userId) 下若有多条链，则登录链是 unionId 形态、任职链是 userid 形态
+   *      （钉钉 unionId 形如 dd_uXXX，userid 形如 staff_XXX）——这是同步写链的既有约定；
+   *   2. 形态判据兜底：providerUserId 命中该主体任一部门的负责人 userid 列表（managerRemoteIds）→ 任职链。
+   * 回填后解绑只动登录链，任职链（部门负责人反查、NAS 数据权限身份反查）保持不动。
+   */
+  backfillIdentityLinkKinds(): number {
+    const links = this.identityLinks().all()
+    const groupOf = (link: IdentityLinkRecord) => `${link.provider}|${link.corpId ?? ''}|${link.userId}`
+    const groups = new Map<string, IdentityLinkRecord[]>()
+    for (const link of links) {
+      const key = groupOf(link)
+      const list = groups.get(key) ?? []
+      list.push(link)
+      groups.set(key, list)
+    }
+    // 部门负责人引用的是三方 userid（managerRemoteIds 口径）→ 这些 id 属任职链
+    const staffIds = new Set<string>()
+    for (const org of this.orgs().all()) {
+      for (const id of this.leadersOf(org.id)) {
+        // 负责人已反查为平台 userId，无法据此判定；此处仅收集形如 staff_ 的三方 id（同步前的旧口径残留）
+        if (/^(staff|user|ou_)/i.test(id)) staffIds.add(id)
+      }
+    }
+    let touched = 0
+    for (const group of groups.values()) {
+      // 多链组：unionId 形态=登录链，其余=任职链
+      const isUnionShape = (id: string) => /^(dd_u|ou_|union)/i.test(id) || !/^(staff|user)/i.test(id)
+      for (const link of group) {
+        if (link.kind !== undefined) continue
+        const kind: 'login' | 'staff' = (group.length > 1 && !isUnionShape(link.providerUserId))
+          || staffIds.has(link.providerUserId)
+          ? 'staff' : 'login'
+        this.identityLinks().update(link.id, { kind })
+        touched++
+      }
+    }
+    return touched
+  }
 
   ensureBuiltinRoles(): void {
     for (const role of BuiltinRoles) {
@@ -1823,8 +2042,14 @@ export class IamService extends Service {
       // 一人多部门（兼任语义，dev-plan-nas-authz §2.1）：主归属=orgId（首个部门），挂靠=extraOrgRemoteIds 首个命中。
       // 引擎侧 primaryOrgId=主归属锚点，orgId 子树按兼任只读——双身份权限并存不冲突。
       const secondaryOrgId = (remoteUser.extraOrgRemoteIds ?? []).map((remoteOrgId) => remoteOrgToId.get(remoteOrgId)).find(Boolean)
-      // 多主体：bindings 按 provider+corpId 匹配（binding.corpId 为空串/undefined 时只匹配同空）
-      let local = this.users().findOne((user) => user.bindings.some((binding) => binding.provider === provider && binding.unionId === remoteUser.remoteId && (binding.corpId ?? '') === config.corpId))
+// 多主体：身份匹配以 identityLinks（事实源）为准，bindings 仅为兼容存量投影；
+      // 二者都未命中才按工号认领——解绑后 bindings 会被重建为空，此处若只认投影会错判为新人重复建号。
+      // 注意：只认登录身份链（kind≠staff）——任职链是岗位事实，不能用来定位「谁要绑登录身份」。
+      let local = this.users().get(this.identityLinks().findOne((link) => link.provider === provider
+        && link.providerUserId === remoteUser.remoteId
+        && link.kind !== 'staff'
+        && (link.corpId ?? '') === config.corpId)?.userId ?? '')
+        ?? this.users().findOne((user) => user.bindings.some((binding) => binding.provider === provider && binding.unionId === remoteUser.remoteId && (binding.corpId ?? '') === config.corpId))
         ?? this.users().findOne((user) => user.jobNumber === remoteUser.jobNumber)
       if (!local) {
         const { user: record } = this.createUser({
@@ -1836,22 +2061,40 @@ export class IamService extends Service {
           jobNumber: remoteUser.jobNumber,
         }, SYSTEM_ACTOR)
         this.users().update(record.id, secondaryOrgId ? { status: 'active', primaryOrgId: orgId, orgId: secondaryOrgId } : { status: 'active' })
-        this.linkIdentity(record.id, { provider, providerUserId: remoteUser.remoteId, corpId: config.corpId, displayName: remoteUser.name }, 'connector-sync')
+        this.linkIdentity(record.id, { provider, providerUserId: remoteUser.remoteId, corpId: config.corpId, displayName: remoteUser.name, kind: 'login' }, 'connector-sync')
+        // 任职身份链（staff）：与既有用户同口径写入——部门负责人映射与 NAS 数据权限身份反查依赖它
+        if (remoteUser.remoteUserId) {
+          try {
+            this.linkIdentity(record.id, { provider, providerUserId: remoteUser.remoteUserId, corpId: config.corpId, displayName: remoteUser.name, kind: 'staff' }, 'connector-sync')
+          } catch {
+            // 唯一约束冲突：该 userid 已绑定其他账号，跳过
+          }
+        }
         created++
         continue
       }
-      if (!local.bindings.some((binding) => binding.provider === provider && (binding.corpId ?? '') === config.corpId)) {
+      // 绑定补链：已被人工解绑的主体（bindingExemptions 含 provider|corpId）跳过登录身份链——
+      // 否则解绑会在下一次同步（默认 60 分钟）被静默撤销，用户看到的是「点了没反应」。
+      // 任职身份链（staff）不受豁免约束：它描述的是「此人在组织里的岗位」，是组织事实而非登录凭据，
+      // 豁免它会断掉部门负责人反查与 NAS 数据权限身份反查。
+      const exemptKey = `${provider}|${config.corpId ?? ''}`
+      const exempted = (local.bindingExemptions ?? []).includes(exemptKey)
+      const hasLinkForSubject = (providerUserId: string) => Boolean(this.identityLinks().findOne((link) => link.provider === provider
+        && link.userId === local!.id
+        && link.providerUserId === providerUserId
+        && (link.corpId ?? '') === config.corpId))
+      if (!exempted && !hasLinkForSubject(remoteUser.remoteId)) {
         try {
-          this.linkIdentity(local.id, { provider, providerUserId: remoteUser.remoteId, corpId: config.corpId, displayName: remoteUser.name }, 'connector-sync')
+          this.linkIdentity(local.id, { provider, providerUserId: remoteUser.remoteId, corpId: config.corpId, displayName: remoteUser.name, kind: 'login' }, 'connector-sync')
         } catch {
           // 唯一约束冲突：该三方身份已绑定其他账号（一人一号），跳过并保留冲突语义
         }
       }
       // 运营身份链（nasAuthz P0）：unionId 供 SSO 登录匹配，userid 供 nasAuthz 身份反查
       // （hermes X-On-Behalf-User 上报 userid 口径）与 dept_manager_userid_list 负责人映射——两链并存互不覆盖。
-      if (remoteUser.remoteUserId && !this.identityLinks().findOne((link) => link.provider === provider && link.providerUserId === remoteUser.remoteUserId && (link.corpId ?? '') === config.corpId)) {
+      if (remoteUser.remoteUserId && !hasLinkForSubject(remoteUser.remoteUserId)) {
         try {
-          this.linkIdentity(local.id, { provider, providerUserId: remoteUser.remoteUserId, corpId: config.corpId, displayName: remoteUser.name }, 'connector-sync')
+          this.linkIdentity(local.id, { provider, providerUserId: remoteUser.remoteUserId, corpId: config.corpId, displayName: remoteUser.name, kind: 'staff' }, 'connector-sync')
         } catch {
           // 唯一约束冲突：该 userid 已绑定其他账号，跳过（沿用 unionId 链语义）
         }
@@ -1894,6 +2137,9 @@ export class IamService extends Service {
     // 置于用户循环之后：userid 身份链在同一轮先落库，负责人才映射得上（钉钉负责人列表是 userid 口径）。
     // 远端显式给空列表=清空负责人；字段缺省=不动本地（兼容旧目录源）。映射不上的远端负责人被丢弃（不落悬空 ID）。
     // 手动锁定（leaderSource='manual'，控制台补录）的组织整段跳过——远端没配负责人的部门靠手动补录兜底。
+    // 先补齐存量链的 kind：本轮刚写入的链在旧数据里与存量链混在同一 (provider,corpId,userId) 组，
+    // 缺 kind 时无法区分登录链与任职链（解绑会连带抹掉任职事实）。
+    this.backfillIdentityLinkKinds()
     let leaderSynced = 0
     let leaderPinned = 0
     for (const remoteOrg of directory.orgs) {

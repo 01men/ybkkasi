@@ -183,6 +183,7 @@ async function openAgentDetail(id, ctx) {
         <div class="tab" data-tab="monitor">监控</div>
         <div class="tab" data-tab="access">权限与绑定</div>
         <div class="tab" data-tab="resources">资源授权</div>
+        <div class="tab" data-tab="mcp-cap">${icon('plug', 13)} 可调用 MCP 能力</div>
         <div class="tab" data-tab="sso">${icon('key', 13)} SSO 配置</div>
         <div class="tab" data-tab="deps">依赖拓扑</div>
         <div class="tab" data-tab="audit">审计</div>
@@ -200,7 +201,6 @@ async function openAgentDetail(id, ctx) {
         <div class="desc-grid">
           <div class="desc-item"><span class="k">Agent ID</span><span class="v mono">${esc(agent.id)}</span></div>
           <div class="desc-item"><span class="k">底层模型</span><span class="v">${esc(agent.attrs['model'] ?? '—')}</span></div>
-          <div class="desc-item"><span class="k">提示词版本</span><span class="v mono">${esc(agent.attrs['systemPromptVersion'] ?? '未登记')}</span></div>
           <div class="desc-item"><span class="k">交互界面</span><span class="v">${agent.attrs['entryUrl']
             ? `<button class="btn btn-default btn-sm" id="ag-open-entry">${icon('external', 13)}带平台身份打开</button>`
             : '<span class="text-4">未提报（接入后由 Agent 凭自身凭证 PATCH attrs.entryUrl）</span>'}</span></div>
@@ -284,6 +284,7 @@ token:    ${esc(result.token)}</div>`,
         `
       })()
     }
+    if (tab === 'mcp-cap') renderMcpCapabilityTab(tabBody, agent)
     if (tab === 'access') {
       tabBody.innerHTML = `
         <div class="card-title mb-8">${esc(rqI18n.t('绑定用户（{n}）', { n: agent.boundUsers.length }))}<span class="fs-12 text-3" style="font-weight:400;margin-left:8px">记录"哪些用户可使用该 Agent"，使用即授权留痕</span></div>
@@ -463,7 +464,7 @@ function openAgentOnboardPrompt(agent) {
   const modal = openModal({
     title: rqI18n.t('生成接入提示词 · {name}', { name: agent.name }),
     body: `
-      <div class="muted-box mb-14" style="display:flex;gap:8px;line-height:1.8">${icon('info', 15)}<span>按<b>注册同款模板</b>生成全文（换牌 → 运营数据提报 → 计量 → NAS 数据权限）。<br>
+      <div class="muted-box mb-14" style="display:flex;gap:8px;line-height:1.8">${icon('info', 15)}<span>按<b>注册同款模板</b>生成全文（换牌 → 运营数据提报 → 计量 → NAS 数据权限 → 服务级 MCP 数据面）。<br>
       <b>重新生成密钥并生成</b>：提示词携带完整 client_secret，<b>旧 secret 立即失效</b>——首次接入或密钥丢失时选这个；<br>
       <b>仅生成（不轮换）</b>：仅含 client_id，secret 部分为占位。</span></div>`,
     foot: `
@@ -641,6 +642,71 @@ export function barChartSafe(items, width, height) {
 function debounce(fn, ms) {
   let timer
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms) }
+}
+
+/** 「可调用 MCP 能力」tab（W3-T6 契约 §16 能力视图）：权限组反查 → 按服务聚合可调用工具面 + 最近拒绝原因。
+ *  与「资源授权」tab 的差异：那边按权限组逐张卡片看授权关系；这边按服务聚合运行视角的可调用边界。 */
+function renderMcpCapabilityTab(holder, agent) {
+  holder.innerHTML = '<div class="text-4 fs-12">加载中…</div>'
+  void (async () => {
+    const [pgData, svcData, denied] = await Promise.all([
+      api.get('/api/mcp/perm-groups').catch(() => ({ groups: [] })),
+      api.get('/api/mcp/services').catch(() => ({ services: [] })),
+      // 最近拒绝原因：调用台账按 callerId+status=denied 过滤（契约 callLog 既有参数能力）
+      api.get('/api/mcp/calls' + api.qs({ callerId: agent.id, status: 'denied', limit: 3 })).catch(() => ({ items: [] })),
+    ])
+    const svcById = new Map((svcData.services ?? []).map((s) => [s.id, s]))
+    const granted = (pgData.groups ?? []).filter((g) => (g.subjects ?? []).some((s) => s.type === 'agent' && s.id === agent.id))
+    // 聚合：同一服务出现在多个权限组时并集展示（allowedTools '*' 直接吞并全部）
+    const merged = new Map()
+    for (const g of granted) {
+      for (const [serviceId, policy] of Object.entries(g.policies ?? {})) {
+        const entry = merged.get(serviceId) ?? { readOnly: true, tools: null, groups: [] }
+        entry.groups.push(g.name)
+        if (policy?.allowedTools === '*') entry.tools = null
+        else if (entry.tools !== null) entry.tools = [...new Set([...(entry.tools ?? []), ...(policy?.allowedTools ?? [])])]
+        if (!policy?.constraints?.readOnly) entry.readOnly = false
+        merged.set(serviceId, entry)
+      }
+    }
+    const rows = [...merged.entries()]
+    holder.innerHTML = `
+      <div class="card card-pad mb-14">
+        <div class="card-title mb-8">${icon('plug', 14)} ${esc(rqI18n.t('可调用服务与工具（聚合 {n} 个服务）', { n: rows.length }))}</div>
+        ${rows.length ? rows.map(([serviceId, entry]) => {
+          const svc = svcById.get(serviceId)
+          const toolBadges = entry.tools === null
+            ? `<span class="badge badge-brand no-dot">${esc(rqI18n.t('全部工具'))}</span>`
+            : (entry.tools ?? []).length
+              ? (entry.tools ?? []).map((tool) => `<span class="badge badge-muted no-dot mono" style="margin:2px">${esc(tool)}</span>`).join('')
+              : `<span class="text-4 fs-12">${esc(rqI18n.t('（空策略）'))}</span>`
+          return `
+            <div class="card card-pad mb-8" style="background:var(--surface-2)">
+              <div class="flex" style="gap:8px;flex-wrap:wrap">
+                <b class="fs-13">${esc(svc?.name ?? serviceId)}</b>
+                ${svc ? statusBadge(svc.status) : ''}
+                ${entry.readOnly ? `<span class="badge badge-info no-dot">${esc(rqI18n.t('只读'))}</span>` : ''}
+                ${svc && svc.dataClass === 'confidential' ? `<span class="badge badge-danger no-dot">${esc(rqI18n.t('高敏'))}</span>` : ''}
+                <span class="fs-12 text-3" style="margin-left:auto">${esc(rqI18n.t('来自：{groups}', { groups: entry.groups.join('、') }))}</span>
+              </div>
+              <div class="flex mt-8" style="gap:4px;flex-wrap:wrap">${toolBadges}</div>
+            </div>`
+        }).join('') : `
+          <div class="muted-box mb-8" style="display:flex;gap:8px">${icon('info', 15)}<span>${esc(rqI18n.t('该 Agent 尚未被任何 MCP 权限组授权——服务级端点与网关都将拒绝其 MCP 调用。'))}</span></div>
+          <div class="form-hint">${esc(rqI18n.t('前往「MCP 服务 → 权限组管理 → 绑定主体」勾选本 Agent 即可授予可调用面。'))}</div>`}
+      </div>
+      <div class="card card-pad">
+        <div class="card-title mb-8">${icon('circleAlert', 14)} ${esc(rqI18n.t('最近拒绝原因（{n} 条）', { n: (denied.items ?? []).length }))}</div>
+        ${(denied.items ?? []).length ? denied.items.map((call) => `
+          <div class="flex" style="padding:6px 0;border-bottom:1px dashed var(--border);gap:8px">
+            <span class="fs-12 text-3" style="min-width:88px">${esc(timeAgo(call.at))}</span>
+            <span class="fs-13" style="min-width:130px">${esc(call.serviceName)}</span>
+            <span class="mono fs-12">${esc(call.tool)}</span>
+            <span class="fs-12" style="color:var(--danger);margin-left:auto;text-align:right">${esc(call.error ?? '')}</span>
+          </div>`).join('') : `<div class="text-4 fs-12">${esc(rqI18n.t('暂无拒绝记录（或调用台账已滚动清理）。'))}</div>`}
+        <div class="form-hint mt-8">${esc(rqI18n.t('拒绝同样落审计与调用台账；按原因处理（缺授权找管理员、受众不符重新换牌），不要变形重试。'))}</div>
+      </div>`
+  })()
 }
 
 /** Agent「SSO 配置」tab：OIDC 客户端管理（owner 自助）+ entry-ticket 平台直达互补。

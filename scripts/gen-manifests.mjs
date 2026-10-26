@@ -63,7 +63,7 @@ const PLUGINS = [
       'GET/POST /api/iam/orgs · GET /api/iam/orgs/tree · PATCH /api/iam/orgs/:id · DELETE /api/iam/orgs/:id（body {cascade:true} 一键级联删除子树，直属账号上移到上级组织）',
       'GET/POST /api/iam/users · PATCH /api/iam/users/:id · POST /api/iam/users/import',
       'PATCH /api/iam/users/:id（status 冻结/恢复即走此处） · POST /api/iam/users/:id/reset-password',
-      'POST /api/iam/users/:id/bindings · DELETE /api/iam/users/:id/bindings/:provider（三方身份绑定）',
+      'POST /api/iam/users/:id/bindings · DELETE /api/iam/users/:id/bindings/:provider（三方身份绑定；DELETE 支持 ?corpId= 限定单一主体，解绑写 bindingExemptions 防同步自动补回） · POST /api/iam/users/:id/bindings/:provider/replace（更换前置解绑，随后走扫码绑定）',
       'GET /api/iam/roles · GET /api/iam/permissions · POST /api/iam/roles · PATCH /api/iam/roles/:id · DELETE /api/iam/roles/:id（R4 删除面：内置/仍被挂载拒绝）· DELETE /api/iam/users/:id（R4 删除面：仅已注销账号）',
       'GET/POST /api/iam/groups · PATCH/DELETE /api/iam/groups/:id · POST /api/iam/groups/refresh-snapshots',
       'GET/POST /api/iam/connectors · PUT /api/iam/connectors/:provider · POST /api/iam/connectors/:provider/test · POST /api/iam/connectors/:provider/sync · POST /api/iam/connectors/auto-sync · DELETE /api/iam/connectors/:provider',
@@ -91,6 +91,7 @@ const PLUGINS = [
       'POST /api/auth/login · POST /api/auth/sso · POST /api/auth/client-credentials',
       'GET /api/auth/me · POST /api/auth/logout（主动登出：sid 全链吊销）',
       'GET /api/auth/providers · GET /api/auth/sso · GET /api/auth/sso/callback · POST /api/auth/sso/authorize · POST /api/auth/sso/register · POST /api/auth/sso/bind · POST /api/auth/sso/bind/authorize（SSO 注册/绑定面，console 承载）',
+      'POST /api/auth/sso/unbind（本人自助解绑三方身份；操作对象恒为会话本人，需 6 位二次验证码）',
       'POST /api/auth/refresh（刷新票换新访问令牌） · POST /api/auth/entry-ticket-session（票据免登建立控制台会话） · POST /api/auth/entry-tickets/self（面板自领票据）',
       'POST /api/authn/entry-tickets/redeem（公开：平台授权直达换身份） · POST /api/authn/verify-audience（受众校验） · GET /api/authn/bindable-resources（可绑定资源清单）',
       'GET/POST /api/authn/oidc/clients · PATCH /api/authn/oidc/clients/:id · POST /api/authn/oidc/clients/:id/rotate（OIDC 客户端治理）',
@@ -101,6 +102,8 @@ const PLUGINS = [
       'GET/POST /api/authn/principals · PATCH /api/authn/principals/:id（scopes 调整，联动吊销令牌）',
       'POST /api/authn/principals/:id/disable|enable|rotate-secret（轮换：旧值即废，新值仅一次返回）',
       'GET/POST /api/authn/tokens · DELETE /api/authn/tokens/:jti · POST /api/authn/rotate-secret',
+      // W1 MCP 治理（契约 §3/§15）：委托令牌交换——自委托（机器为自己换牌）/ 代用户委托 / 人类→目标主体
+      'POST /api/authn/token/exchange（委托令牌交换：audience 绑定 mcp:service:<slug> 或 plugin:<id>）',
     ],
     tools: ['authn_token_issue', 'authn_token_revoke', 'authn_token_list', 'authn_credential_create', 'authn_credential_scopes', 'authn_credential_rotate'],
     ui: { routes: ['#/authn'], menus: [{ group: '治理与运营', items: ['认证与令牌'] }] },
@@ -115,7 +118,9 @@ const PLUGINS = [
       ['（订阅全部业务事件自动落审计）', 'on', 'mcp/skill/agent/app/token/iam'],
     ],
     api: [
-      'GET /api/audit/logs · GET /api/audit/summary',
+      'GET /api/audit/logs（?traceId= 全链 trace 精确检索，W3-T5 §14） · GET /api/audit/summary',
+      // W3-T5 §14：审计 ndjson 流式导出（append-only，行序=时间序，附尾行 _chainTip；权限点同 audit.read）
+      'GET /api/audit/export?since=&until=（application/x-ndjson；哈希链可校验导出）',
       'GET/POST /api/audit/alert-rules · PATCH /api/audit/alert-rules/:id · GET /api/audit/alerts · POST /api/audit/alerts/:id/read · POST /api/audit/alerts/read-all',
       'GET /api/audit/cost?groupBy=app|agent|org|date',
       'GET /api/approvals · GET /api/approvals/sla · POST /api/approvals/:id/decide · DELETE /api/approvals/:id（仅驳回单可删）',
@@ -127,9 +132,9 @@ const PLUGINS = [
   },
   {
     dir: 'mcp', id: 'dsh-plugin-mcp', label: 'MCP 部署服务',
-    depends: ['dsh-plugin-platform-core', 'dsh-plugin-iam', 'dsh-plugin-audit'], permissions: ['mcp.service.read', 'mcp.service.write', 'mcp.service.deploy', 'mcp.service.offline', 'mcp.permgroup.write', 'mcp.invoke', 'mcp.risk.admin'],
-    permissionComments: { 'mcp.risk.admin': 'W 批次 W1（V11 根治）：MCP 工具风险登记审批（登记/两级审批/重审清单/退场）' },
-    permissionCommentsManifest: { 'mcp.risk.admin': 'W 批次 W1（V11 根治）：MCP 工具可信风险登记审批面——登记/两级审批/重审清单/退场' },
+    depends: ['dsh-plugin-platform-core', 'dsh-plugin-iam', 'dsh-plugin-audit'], permissions: ['mcp.service.read', 'mcp.permgroup.read', 'mcp.service.write', 'mcp.service.deploy', 'mcp.service.offline', 'mcp.permgroup.write', 'mcp.invoke', 'mcp.risk.admin'],
+    permissionComments: { 'mcp.risk.admin': 'W 批次 W1（V11 根治）：MCP 工具风险登记审批（登记/两级审批/重审清单/退场）', 'mcp.permgroup.read': 'W3-T5（MCP 治理契约 §12/§15）：scope 模板读取点（scope-template，dry 语义）' },
+    permissionCommentsManifest: { 'mcp.risk.admin': 'W 批次 W1（V11 根治）：MCP 工具可信风险登记审批面——登记/两级审批/重审清单/退场', 'mcp.permgroup.read': 'W3-T5（MCP 治理契约 §12/§15）：读取 MCP 权限组与 scope 模板' },
     services: [
       ['mcpRegistry', 'ctx.mcpRegistry', '服务注册/版本/灰度/回滚 + 健康探活熔断 + 权限组 + 调用网关 + 监控'],
       ['mcpToolRisks', 'ctx.mcpToolRisks', 'W1/V11 工具可信风险登记（submit/decide 两级审批/list/reviewList 重审清单/retire 退场；effectiveRisk 为网关闸门唯一风险来源）'],
@@ -147,8 +152,17 @@ const PLUGINS = [
       'POST /api/mcp/services/:id/verify|deploy|rollback|offline|health · POST /api/mcp/services/:id/final-review（两级审批终审）',
       'GET /api/mcp/services/:id/metrics · GET /api/mcp/calls',
       'GET/POST /api/mcp/perm-groups · PATCH/DELETE /api/mcp/perm-groups/:id',
-      'POST /api/mcp/invoke（网关统一鉴权/限流/审计；body.work 仅 permitId/runId/stepKey 索引透传）',
+      'POST /api/mcp/invoke（网关统一鉴权/限流/审计；body.work 仅 permitId/runId/stepKey 索引透传；兼容层：Agent 标准默认路径是 /mcp/services/:serviceSlug，W2-T3 §9）',
       'POST/GET /api/mcp/risk-registry · POST /api/mcp/risk-registry/:id/decide|retire · GET /api/mcp/risk-registry/review-list（W1/V11 工具风险登记：两级审批+全量重审，mcp.risk.admin）',
+      // 以下两段为防覆盖同步：W1-T2 曾只手工写进 manifest/api.yaml，npm run manifests 会抹掉——
+      // 补进生成器使生成输出与手工事实一致（仅 mcp 段，additive）。
+      'POST /api/mcp/services/:id/owner-entity（归属指派） · GET /api/mcp/governance/summary（治理待办：unowned/plainHeaderServices/nonGateway，W1-T2 §5）',
+      'PUT/GET /api/mcp/services/:id/credential（下游凭证 SecretBroker：值落密钥文件 0600，业务集合与响应零明文，W1-T2 §6）',
+      'POST /api/mcp/credentials/migrate（存量明文敏感头迁移入 SecretBroker；dryRun 预检报告）',
+      // W2-T3 §7/§8：服务级 MCP 数据面（标准 MCP 协议直连单服务；注册于 plugin-console routes/mcp-dataplane.ts）
+      'POST /mcp/services/:serviceSlug（服务级 MCP 数据面：Bearer 平台令牌或 aud=mcp:service:<slug> 委托令牌，initialize/ping/tools/list/tools/call，tools/list 经 authorizedToolsFor 按调用方过滤，tools/call 统一走网关 invoke 链） · GET/DELETE /mcp/services/:serviceSlug（Streamable HTTP 会话语义与平台 /mcp 一致：GET=SSE 长流不支持 405，DELETE=会话终结恒成功） · POST /mcp/s/:serviceId（同上别名，按服务 ID 直达） · GET/DELETE /mcp/s/:serviceId（同上）',
+      // W3-T5 §12/§14（防覆盖同步，与手工 manifest/api.yaml 一致）：策略模拟与 scope 模板（dry 语义不落库）
+      'POST /api/mcp/perm-groups/dry-run（mcp.permgroup.write；权限变更影响预演：newServices/writeTools/confidential/crossOrg/affectedSubjects，不落库） · POST /api/mcp/perm-groups/:id/scope-template（mcp.permgroup.read；按权限组策略生成资源限定 scope 模板 mcp.service:/mcp.tool: 形态，W3-T5 契约 §12/§14 控制台消费面）',
     ],
     tools: ['mcp_service_list', 'mcp_deploy', 'mcp_offline', 'mcp_metrics', 'mcp_invoke', 'mcp_health_check'],
     ui: { routes: ['#/mcp'], menus: [{ group: 'AI 资源', items: ['MCP 服务'] }] },
@@ -268,6 +282,8 @@ const PLUGINS = [
       'GET /api/apps/:id（含 topology/cost/impact） · DELETE /api/apps/:id（下架移除）',
       'POST /api/apps/:id/sso-client · PATCH /api/apps/:id/sso-client · POST /api/apps/:id/sso-client/rotate（应用 SSO 客户端治理） · POST /api/apps/:id/onboarding-prompt（接入提示词重生成）',
       'GET /api/apps/developer-options（开发者接入选项）',
+      // W2 应用能力绑定（契约 §10/§15）：应用 ↔ MCP 服务绑定（绑定回写服务归属、冲突 409 OWNER_CONFLICT）
+      'GET/POST /api/apps/:id/capabilities · DELETE /api/apps/:id/capabilities/:serviceId（应用 MCP 能力绑定）',
       'GET /api/apps/:id/org-sync（组织架构同步快照：组织树+在职成员，?ifNoneMatch= 零载荷变更轮询；应用自助复用平台组织模块，经 console 暴露）',
       '# 平台侧自动折算：entry-ticket 兑换 / OIDC 发码 → DAU；浏览器 beacon → PV/UV（端点经 console 聚合暴露）',
     ],
@@ -323,6 +339,7 @@ const PLUGINS = [
       'GET /api/fleet/ledger?type=&search=（usage.read；设计适配 5.2 六类资产统一台账：health/lifecycle/grayPercent/calls30d/tokens30d/cost30d/trend[14]/dau/autonomy——usage 事件真实聚合，无数据 0/空数组）',
       'GET /api/usage/report?days=28&dim=tokens|cost（usage.read；设计适配 5.5 用量与成本报表：日序列/部门分摊占比环比/Top 资产/单位 DAU 成本，全部 usage 事件真实聚合）',
       'GET /api/modelgw/routes-usage（modelgw.read；设计适配 5.4 模型路由 30 天消耗：tokens30d/share/cost30d 按 model 聚合，零消耗路由诚实列 0）',
+      'GET /api/usage/collaborations（usage.read；C4 协作链计量：context 单链明细或窗口 Top 协作链，contextId 归集一次跨员工协作总成本）',
       'GET /api/usage/report/monthly（J4 月度用量报表：部门/Agent/Skill tokens 三维聚合；format=csv 自助导出）',
       'POST /api/usage/retention/purge（usage.admin；保留策略手动巡检，body.days 可临时收紧窗口，0=跳过）',
       'GET /api/usage/summary?window=today|month&org=&subject=（panel.read；IAW 4-1 成本摘要+预算进度，非 usage.read 主体强制收敛自身组织）',

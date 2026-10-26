@@ -152,6 +152,37 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
   }, { access: 'authenticated' })
 
   /**
+   * 本人解除三方身份绑定（自助，2026-10-22）。
+   *
+   * 与 /api/iam/users/:id/bindings/:provider 的分工：那条走 iam.user.write，是管理员代操作；
+   * 业务同学在部门面板里要解绑/更换自己的钉钉，不该被要求持有账号管理权限。本端点只作用于
+   * 调用者本人（userId 一律取自会话，不接受请求体指定），因此不需要额外权限点——
+   * 能登录就说明持有该身份，解除自己的绑定是自决范围。
+   *
+   * 反锁定护栏同样生效（最后一个登录方式需先设口令），复用 unbindThirdParty 实现。
+   */
+  http.register('POST', '/api/auth/sso/unbind', async (exchange) => {
+    const info = caller(exchange)
+    if (!info.userId) {
+      exchange.fail(401, 'UNAUTHORIZED', t('仅平台账号（人）可解除三方绑定'))
+      return
+    }
+    const { provider, corpId, verifyCode } = body<{ provider?: string; corpId?: string; verifyCode?: string }>(exchange)
+    try {
+      const user = ctx.iam.unbindOwnThirdParty(info.userId, (provider ?? 'dingtalk') as 'dingtalk', verifyCode ?? '', corpId)
+      ctx.audit.record({
+        type: 'change', actorType: 'human', actorId: info.userId, actorName: info.name,
+        action: 'iam.user.unbind', resourceType: 'user', resourceId: user.id, resourceName: user.displayName,
+        result: 'ok', detail: t('本人自助解绑：{provider}{corp}', { provider: provider ?? 'dingtalk', corp: corpId ? t('（主体 {corpId}）', { corpId }) : '' }),
+      })
+      exchange.ok({ bindings: user.bindings })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      exchange.fail(400, 'UNBIND_FAILED', message)
+    }
+  }, { access: 'authenticated' })
+
+  /**
    * 钉钉 OAuth 浏览器回跳（公开，无需会话）：按 state 用途分发——
    * bind：完成扫码绑定并渲染结果页；login：完成登录并写 localStorage 后进入控制台。
    * 同时挂在 /api/auth/sso（与钉钉后台已配置的重定向 URL 兼容）。

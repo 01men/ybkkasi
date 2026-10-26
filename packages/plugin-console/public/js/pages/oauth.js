@@ -238,6 +238,12 @@ function renderLoginPanel(app, reqId, info) {
     btn.classList.add('btn-loading')
     try {
       const auth = unwrap(await rawJson('POST', '/api/auth/sso/authorize', { provider: 'dingtalk', scene: 'web_qr', ...(configId ? { configId } : {}) }), '钉钉登录暂不可用')
+      if (auth.blocked) {
+        // 授权页侧应用级拒绝（钉钉 900103「应用不存在」）：整页跳转只会落到错误页，
+        // 就地提示并展开手动授权码兜底，授权流不中断。
+        showManualFallback(`钉钉扫码登录未就绪${auth.blocked.message ? `：${auth.blocked.message}` : ''}。请管理员在钉钉开发者后台「登录与分享」核对回调域名 ${location.host} 与 AppKey。`)
+        return
+      }
       if (!auth.authorizeUrl) throw new Error('身份源未返回授权地址（可能为 mock 模式），请手动输入授权码')
       try { localStorage.setItem(OIDC_REQ_KEY, JSON.stringify({ req: reqId, ts: Date.now() })) } catch { /* 忽略 */ }
       try { localStorage.setItem('heng_ops_last_sso_config', configId ?? '') } catch { /* 忽略 */ }

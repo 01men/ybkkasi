@@ -1,9 +1,9 @@
 # 元冰可 · 企业 AI 资源管理平台
 
-> **v1.3.1 · MIT · self-hosted.** One control plane for every MCP server, skill, agent and AI app.
+> **v1.5.0 · MIT · self-hosted.** One control plane for every MCP server, skill, agent and AI app.
 
 [![MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![selftest](https://img.shields.io/badge/selftest-1486%20green-success)](https://github.com/01men/ybkkasi/actions/workflows/quality-gate.yml)
+[![selftest](https://img.shields.io/badge/selftest-1610%20green-success)](https://github.com/01men/ybkkasi/actions/workflows/quality-gate.yml)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.6-339933)]()
 [![i18n](https://img.shields.io/badge/i18n-zh--en--ja-blue)]()
 [![Demo](https://img.shields.io/badge/demo-demo.ybkkasi.com-FF6B35)](https://demo.ybkkasi.com)
@@ -66,7 +66,7 @@ docker compose up -d              # → http://localhost:7300(≤60 秒可访问
 docker run -d --name ybkkasi -p 7300:7300 \
   -e ADMIN_PASSWORD='你的强口令' \
   -v ybkkasi-data:/app/data \
-  ybkkasi:1.3.1
+  ybkkasi:1.5.0
 ```
 
 源码部署(要求 Node ≥ 22.6,原生 TypeScript 运行,无构建步骤;`node:sqlite` 为 Node 内置):
@@ -112,7 +112,7 @@ npm run lint:manifests            # 插件清单五面 YAML 校验
 | ------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | **身份**       | `plugin-iam` · `plugin-authn`                                                                              | 组织树 / 角色 / 用户组 / 三方连接器 · 双轨身份 + OIDC Provider + on-behalf-of 链     |
 | **资产本体**     | `plugin-resource-core`                                                                                     | 属性 schema + 生命周期状态机 + 依赖图,所有资产类型的共同底座                              |
-| **MCP**      | `plugin-mcp`                                                                                               | 部署 / 灰度 / 回滚 / 健康熔断 / 权限组 / 调用网关 / 监控(真实 HTTP JSON-RPC 传输层)        |
+| **MCP**      | `plugin-mcp`                                                                                               | 部署 / 灰度 / 回滚 / 健康熔断 / 权限组 / 调用网关 / 监控(真实 HTTP JSON-RPC 传输层);服务级数据面 `POST /mcp/services/:slug`(委托令牌 aud 绑定 + 按身份过滤 tools/list)与 Secret Broker 凭证保管、治理属性(ownerEntity/密级/暴露模式),应用经能力绑定挂载 MCP 服务并联动上线门禁 |
 | **Skill**    | `plugin-skillhub`                                                                                          | 提交 → 静态扫描 → 两级审批 → 版本化上架                                           |
 | **Agent**    | `plugin-agent`                                                                                             | Agent 本体管理(资源底座 + 机器凭证)                                            |
 | **AI 应用**    | `plugin-app`                                                                                               | 编排拓扑 + 应用指标 + 成本穿透                                                 |
@@ -184,7 +184,7 @@ usage / connect / update       计量 / 远程 dsh 接入 / 平台自更新
 sync / conflict / help         三方同步 / 组织冲突 / 帮助
 ```
 
-**REST**——448 条去重路由(代码注册口径),全部经统一鉴权中间件 + RBAC;
+**REST**——450 条去重路由(代码注册口径),全部经统一鉴权中间件 + RBAC;
 未匹配路由的匿名请求统一返回 401(而非 404),不提供路由探测侧信道。
 
 **MCP**——平台即 MCP Server,任意 MCP 客户端可直接接入;86 个注册工具
@@ -268,4 +268,4 @@ MIT
 
 ---
 
-> 最近更新：2026-10-21 · A2A/UHP 复测整改（外部集成闭环 P1-01：归属优先于组织收敛，第三方凭证派活后可直接 get/list/cancel/订阅；治理第 2 项 permit 覆盖真实生效并经契约方法 `inspectAgent` 判定；UHP `/v1` 发现面裸体 + 注入变体统一拒绝留痕 + 直调 SSE 闭合；A2A 页接入任务 SSE 并降级轮询；新增 `lint:i18n` 三语门禁与 A2A 页面冒烟；selftest 1553/1553）。此前：2026-10-17 · 市场引爆 W1 批次——免登演示模式（DEMO_MODE=1：无 Bearer 注入 26 个 `.read` 白名单主体 + 写方法 405 + 前端演示会话/只读横幅/写按钮权限门控收口，`console.read` 只读基线点经 `console.login` 蕴含规则真实用户零感知）+ Docker 一键体验（`docker compose up` ≤60 秒起演示实例）+ 演示只读面路由审计脚本；selftest 1486/1486（新增演示态 20 断言）。此前：2026-10-16 · v1.3.0 整改攻坚批次——启动探针上线（双实例守卫 + 插件树体检，拒绝带病启动）、cordis 精确锁版 4.0.4 + CI 双轨、存储 SQLite 收尾（默认 JSON_KEEP 名单 / 回填哈希对账 / iam 一人一号演练）、dsh 耦合面窄端口化 + 契约测试。完整版本史见 [CHANGELOG.md](CHANGELOG.md)。
+> 最近更新：2026-10-22 · 信息架构收敛与部门面板登记制（v1.4.0）——侧边栏重排为「总览 / 资源 / 协作与执行 / 治理 / 企业」，「协作与执行」独立承载执行中枢 / A2A / UHP；资产登记页下线，登记动作回归各资源页；「部门面板」由硬编码外链改为「宿主连接 × 部门」登记清单（`#/panels`，未登记不产生入口，删宿主即清理登记，面板侧新增 `?dept=` 深链且校验与服务端 `DEPT_RE` 同口径）；钉钉扫码登录新增授权页可用性预检（`900103/900108` 就地给指引并回落账号密码，2 分钟缓存不加重 IdP）；上线门禁移除 `systemPromptVersion`，收敛为 `dataClass` + 身份纳管（试运行另需 `trialGroups`）；三语补登记面板文案，新增 `dept.test.mjs` 与面板登记 7 例单测。此前：2026-10-21 · A2A/UHP 复测整改（外部集成闭环 P1-01：归属优先于组织收敛，第三方凭证派活后可直接 get/list/cancel/订阅；治理第 2 项 permit 覆盖真实生效并经契约方法 `inspectAgent` 判定；UHP `/v1` 发现面裸体 + 注入变体统一拒绝留痕 + 直调 SSE 闭合；A2A 页接入任务 SSE 并降级轮询；新增 `lint:i18n` 三语门禁与 A2A 页面冒烟）。此前：2026-10-17 · 市场引爆 W1 批次——免登演示模式（DEMO_MODE=1：无 Bearer 注入 26 个 `.read` 白名单主体 + 写方法 405 + 前端演示会话/只读横幅/写按钮权限门控收口，`console.read` 只读基线点经 `console.login` 蕴含规则真实用户零感知）+ Docker 一键体验（`docker compose up` ≤60 秒起演示实例）+ 演示只读面路由审计脚本。此前：2026-10-16 · v1.3.0 整改攻坚批次——启动探针上线（双实例守卫 + 插件树体检，拒绝带病启动）、cordis 精确锁版 4.0.4 + CI 双轨、存储 SQLite 收尾（默认 JSON_KEEP 名单 / 回填哈希对账 / iam 一人一号演练）、dsh 耦合面窄端口化 + 契约测试。完整版本史见 [CHANGELOG.md](CHANGELOG.md)。

@@ -38,6 +38,8 @@ export const PlatformEvents = {
   McpOfflined: 'mcp.offlined',
   McpUnhealthy: 'mcp.unhealthy',
   McpInvoked: 'mcp.invoked',
+  // W1-T2（MCP 治理 §6）：Secret Broker 凭证读取留痕（payload 仅 serviceId/credentialRef，绝不带值）
+  McpSecretAccess: 'mcp.secret.access',
   // 连接器纳管（open-connector 融合；前缀已在本文件预留清单）
   ConnectorOddExit: 'connector.odd_exit',
   ConnectorPolicyMirrorFailed: 'connector.policy_mirror_failed',

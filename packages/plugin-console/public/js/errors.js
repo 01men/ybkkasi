@@ -103,6 +103,22 @@ const COPY = {
     message: '当前账号缺少执行此操作所需的权限点。如需办理，请联系管理员调整角色授权。',
     action: null,
   },
+  // W1 MCP 治理（2026-10-22）：服务创建/更新携带明文敏感头被门禁拒绝——
+  // 引导改走「服务凭证」入口（PUT /api/mcp/services/:id/credential），经 Secret Broker 保管、永不明文落库。
+  SENSITIVE_HEADERS_FORBIDDEN: {
+    tone: 'warn',
+    title: '不允许明文写入下游凭证',
+    message: '服务请求头中包含敏感键（Authorization / Token / Secret / Key）。请改用服务凭证入口下发，密钥将由平台凭证代理保管，不再明文落库。',
+    action: null,
+  },
+  // W2 应用能力绑定（2026-10-22）：MCP 服务归属已被其他主体认领，重复绑定被拒——
+  // 归属唯一是成本穿透与责任追溯的前提；先解绑原归属或由平台管理员调整 ownerEntity。
+  OWNER_CONFLICT: {
+    tone: 'warn',
+    title: '该能力已归属其他应用',
+    message: '目标 MCP 服务已被其他应用认领（归属唯一）。请先由原应用解绑，或联系平台管理员调整服务归属后再绑定。',
+    action: null,
+  },
   // A2A/UHP 协作面（2026-10-20 QA 整改批次）：外部调用试图注入 ybk_a2a_task_id 绑定他人
   // A2A 任务——平台拒绝（仅允许内部派发通道绑定）。正常前端操作不会触达，仅直调协议面时出现。
   TASK_BINDING_FORBIDDEN: {
@@ -118,6 +134,15 @@ const COPY = {
     tone: 'warn',
     title: '演示模式 · 只读',
     message: '演示模式为只读，不支持写操作。请自行部署后体验完整功能。',
+    action: null,
+  },
+  // 本人自助解绑三方身份被拒（2026-10-22 解绑能力上线）：最常见原因是「这是该账号唯一的
+  // 登录方式」（SSO 自注册/通讯录同步号的口令从未下发）。服务端原文写明具体原因，此处给
+  // 通用兜底 + 下一步动作。
+  UNBIND_FAILED: {
+    tone: 'danger',
+    title: '未能解绑该三方身份',
+    message: '解绑未完成。若这是你账号唯一的登录方式，请先联系管理员重置口令（设好口令后再解绑，避免无法登录）。',
     action: null,
   },
   NOT_FOUND: {
@@ -168,6 +193,12 @@ const COPY = {
     tone: 'danger',
     title: '三方身份绑定失败',
     message: '扫码/授权绑定未成功（授权已过期或账号状态变化）。请回到原页面重新发起绑定。',
+    action: null,
+  },
+  UNBIND_FAILED: {
+    tone: 'danger',
+    title: '解除三方绑定失败',
+    message: '解绑未完成：验证码不正确、该账号未绑定此三方身份，或它已是该账号唯一的登录方式（需先设置口令）。具体原因见服务端提示。',
     action: null,
   },
 

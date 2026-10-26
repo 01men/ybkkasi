@@ -9,6 +9,7 @@ import {
   multiSelectField, searchableSelectField, mountSearchableSelects,
 } from '../ui.js'
 import { buildAppOnboardingText, openOnboardingModal } from '../onboarding.js'
+import { errorBarHtml } from '../errors.js'
 import {
   dataClassLabel, riskClass, riskLabel, typeLabel, stateLabel, actionLabel,
   miniStat, renderTopologyList, barChartSafe,
@@ -142,6 +143,7 @@ async function openAppDetail(id, ctx) {
         <div class="tab active" data-tab="topology">编排拓扑</div>
         <div class="tab" data-tab="metrics">应用指标</div>
         <div class="tab" data-tab="cost">成本穿透</div>
+        <div class="tab" data-tab="caps">${icon('puzzle', 13)} MCP 能力</div>
         <div class="tab" data-tab="lifecycle">生命周期</div>
         <div class="tab" data-tab="sso">${icon('key', 13)} SSO 配置${app.sso ? (app.sso.status === 'active' ? '' : ' ⚠') : ''}</div>
       </div>
@@ -206,6 +208,7 @@ async function openAppDetail(id, ctx) {
             <span style="font-weight:600">${fmtCost(row.costYuan)}</span>
           </div>`).join('') || '<span class="text-4 fs-12">暂无成本数据</span>'}`
     }
+    if (tab === 'caps') renderCapsTab(tabBody, app, ctx)
     if (tab === 'lifecycle') {
       tabBody.innerHTML = `
         <div class="timeline">
@@ -248,7 +251,11 @@ async function openAppDetail(id, ctx) {
         try {
           await api.post(`/api/apps/${app.id}/transition`, { action: transition.action, note: result.reason ?? '发布申请' })
           toast(rqI18n.t('已创建审批单')); drawer.close(); ctx.rerender()
-        } catch (error) { toast(error.message, 'error') }
+        } catch (error) {
+          // 能力门禁早反馈（W2-T4 契约 §10）：message 列明服务名+原因，就地解析为醒目清单而非一闪而过的 toast
+          if (String(error.message).includes('CAPABILITY_GATE_FAILED')) openCapabilityGateModal(error.message)
+          else toast(error.message, 'error')
+        }
       } else {
         try {
           await api.post(`/api/apps/${app.id}/transition`, { action: transition.action })
@@ -428,6 +435,115 @@ function wireEntryDirectCard(holder, app) {
   if (btn) btn.onclick = () => void openAppEntry(app)
 }
 
+/** MCP 能力 tab（W2-T4 契约 §10 控制台消费面）：能力清单 + 绑定/解绑。
+ *  服务摘要由后端投影（零 headers）；GET/POST/DELETE 端点权限点为 app.write。 */
+function renderCapsTab(holder, app, ctx) {
+  if (!session.can('app.write')) {
+    holder.innerHTML = `<div class="muted-box">${esc(rqI18n.t('能力绑定属应用管理操作（app.write），当前账号无权限查看。'))}</div>`
+    return
+  }
+  holder.innerHTML = '<div class="text-4 fs-12">加载中…</div>'
+  void (async () => {
+    const [capData, svcData] = await Promise.all([
+      api.get(`/api/apps/${app.id}/capabilities`).catch(() => null),
+      api.get('/api/mcp/services').catch(() => ({ services: [] })),
+    ])
+    const capabilities = capData?.capabilities ?? []
+    const boundIds = new Set(capabilities.map((c) => c.serviceId))
+    const candidates = (svcData.services ?? []).filter((s) => !boundIds.has(s.id))
+    holder.innerHTML = `
+      <div class="card card-pad mb-14">
+        <div class="card-title mb-8">${icon('puzzle', 14)} ${esc(rqI18n.t('已绑定 MCP 能力（{n}）', { n: capabilities.length }))}</div>
+        <div class="fs-12 text-3 mb-8">${esc(rqI18n.t('能力 = 应用对 MCP 服务的显式声明：required 能力参与上线门禁（服务须在线/已验证/工具非空/凭证就绪）；绑定自动回写服务归属。'))}</div>
+        ${capabilities.length ? capabilities.map((cap) => {
+          const svc = cap.service
+          return `
+            <div class="flex" style="padding:8px 0;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap">
+              <span class="fs-13" style="font-weight:500;min-width:140px">${esc(svc?.name ?? cap.serviceId)}</span>
+              ${svc ? statusBadge(svc.status) : '<span class="badge badge-muted no-dot">—</span>'}
+              ${svc ? `<span class="badge ${svc.dataClass === 'confidential' ? 'badge-danger' : svc.dataClass === 'public' ? 'badge-ok' : 'badge-info'} no-dot">${esc(rqI18n.t(dataClassLabel(svc.dataClass)))}</span>` : ''}
+              <span class="badge ${cap.required ? 'badge-warn' : 'badge-muted'} no-dot">${cap.required ? esc(rqI18n.t('必需（门禁项）')) : esc(rqI18n.t('可选'))}</span>
+              ${svc ? `<span class="badge ${svc.health?.status === 'healthy' ? 'badge-ok' : svc.health?.status === 'degraded' ? 'badge-warn' : 'badge-muted'} no-dot">${esc(rqI18n.t('健康：{status}', { status: svc.health?.status ?? 'unknown' }))}</span>` : ''}
+              ${svc ? `<span class="fs-12 text-3">${esc(rqI18n.t('{n} 工具', { n: svc.toolCount ?? 0 }))}${svc.hasCredential ? ` · ${esc(rqI18n.t('凭证就绪'))}` : ''}</span>` : ''}
+              <button class="btn btn-ghost btn-sm stop" data-unbind="${esc(cap.serviceId)}" style="color:var(--danger);margin-left:auto">${icon('x', 12)}${esc(rqI18n.t('解绑'))}</button>
+            </div>`
+        }).join('') : `<div class="text-4 fs-12">${esc(rqI18n.t('尚未绑定任何 MCP 能力（编排 Agent 可直接调用，能力声明用于应用级门禁与归属治理）。'))}</div>`}
+      </div>
+      <div class="card card-pad">
+        <div class="card-title mb-8">${icon('plus', 14)} ${esc(rqI18n.t('绑定新能力'))}</div>
+        <div id="cap-bind-error"></div>
+        ${candidates.length ? `
+          <div class="form-grid">
+            ${field(rqI18n.t('选择 MCP 服务'), searchableSelectField('serviceId', candidates.map((s) => ({
+              value: s.id,
+              label: `${s.name}（${s.slug}）· ${s.status}`,
+            })), { placeholder: rqI18n.t('搜索服务名称 / 标识') }), { required: true })}
+            <label class="flex" style="gap:8px;font-size:13px;align-items:center;cursor:pointer">
+              <input type="checkbox" id="cap-required" style="accent-color:var(--brand-500)">
+              <span>${esc(rqI18n.t('设为必需能力（required，参与上线门禁）'))}</span>
+            </label>
+          </div>
+          <button class="btn btn-primary btn-sm mt-8" id="cap-bind">${icon('link', 13)}${esc(rqI18n.t('绑定'))}</button>`
+        : `<div class="text-4 fs-12">${esc(rqI18n.t('没有可绑定的服务（全部已绑定，或无 MCP 服务）。'))}</div>`}
+      </div>`
+    mountSearchableSelects(holder)
+    holder.querySelectorAll('[data-unbind]').forEach((btn) => {
+      btn.onclick = async () => {
+        const ack = await confirmDialog({
+          title: rqI18n.t('解绑能力服务'),
+          message: rqI18n.t('解绑后该服务不再参与本应用的上线门禁；若服务归属本应用，将联动还原为平台占位。'),
+          confirmText: rqI18n.t('确认解绑'),
+        })
+        if (!ack) return
+        try {
+          await api.delete(`/api/apps/${app.id}/capabilities/${btn.dataset.unbind}`)
+          toast(rqI18n.t('已解绑'))
+          renderCapsTab(holder, app, ctx)
+        } catch (error) { toast(error.message, 'error') }
+      }
+    })
+    const bindBtn = holder.querySelector('#cap-bind')
+    if (bindBtn) {
+      bindBtn.onclick = async () => {
+        const serviceId = collectForm(holder).serviceId
+        if (!serviceId) return toast(rqI18n.t('请选择要绑定的 MCP 服务'), 'error')
+        const required = holder.querySelector('#cap-required')?.checked === true
+        try {
+          await api.post(`/api/apps/${app.id}/capabilities`, { serviceId, required })
+          toast(rqI18n.t('已绑定（服务归属同步回写本应用）'))
+          renderCapsTab(holder, app, ctx)
+        } catch (error) {
+          // 归属冲突按 errors.js 既有文案渲染（OWNER_CONFLICT），后端 message 附具体服务明细
+          holder.querySelector('#cap-bind-error').innerHTML = error.code === 'OWNER_CONFLICT'
+            ? errorBarHtml('OWNER_CONFLICT') + `<div class="fs-12 text-3" style="margin:-8px 0 12px">${esc(error.message)}</div>`
+            : `<div class="muted-box fs-13 mb-14" style="border-color:var(--danger);color:var(--danger)">${esc(error.message)}</div>`
+          toast(error.message, 'error')
+        }
+      }
+    }
+  })()
+}
+
+/** 能力门禁拒绝（CAPABILITY_GATE_FAILED）解析弹窗：把 message 中「——」后的「；」分隔失败项列成清单。 */
+function openCapabilityGateModal(message) {
+  const text = String(message)
+  const body = text.includes('——') ? text.slice(text.indexOf('——') + 2) : text
+  const items = body.split('；').map((s) => s.trim()).filter(Boolean)
+  openModal({
+    title: rqI18n.t('上线门禁未通过（能力检查）'),
+    body: `
+      <div class="muted-box mb-14" style="display:flex;gap:8px;border-color:var(--warn-border);background:var(--warn-bg)">
+        ${icon('alert', 15)}<span>${esc(rqI18n.t('以下 required 能力未满足上线条件（须在线/已验证/工具非空/无未决高危/凭证就绪）。逐项处理后再发起上线审批。'))}</span>
+      </div>
+      ${items.map((item) => `
+        <div class="flex" style="padding:7px 0;border-bottom:1px dashed var(--border);gap:8px">
+          <span style="color:var(--danger);display:flex">${icon('circleAlert', 14)}</span>
+          <span class="fs-13">${esc(item)}</span>
+        </div>`).join('')}`,
+    foot: `<a class="btn btn-default" data-cancel href="#/mcp">${icon('plug', 13)}${esc(rqI18n.t('前往 MCP 服务页处理'))}</a><button class="btn btn-primary" data-ok>${esc(rqI18n.t('知道了'))}</button>`,
+  })
+}
+
 /** 签发 SSO 客户端弹窗（redirectUris / 类型 / 同意策略）。 */
 function openIssueSsoModal(app, ctx) {
   const modal = openModal({
@@ -583,7 +699,7 @@ function openAppOnboardPrompt(app) {
   const modal = openModal({
     title: rqI18n.t('生成接入提示词 · {name}', { name: app.name }),
     body: `
-      <div class="muted-box mb-14" style="display:flex;gap:8px;line-height:1.8">${icon('info', 15)}<span>按<b>注册同款模板</b>生成全文（换牌 → 接入验证 → SSO 打通 → 计量）。<br>
+      <div class="muted-box mb-14" style="display:flex;gap:8px;line-height:1.8">${icon('info', 15)}<span>按<b>注册同款模板</b>生成全文（换牌 → 接入验证 → SSO 打通 → 计量 → MCP 服务级数据面）。<br>
       <b>重新生成密钥并生成</b>：提示词携带完整 client_secret，<b>旧 secret 立即失效</b>——首次接入或密钥丢失时选这个；<br>
       <b>仅生成（不轮换）</b>：仅含 client_id，secret 部分为占位，适合只想重看接入步骤的场景。</span></div>`,
     foot: `

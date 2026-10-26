@@ -73,6 +73,10 @@ export interface TokenRecord extends RecordBase {
   rotatedAt?: string
   /** 宽限窗口内的兑换次数（多标签页互踩自愈计数，超过上限拒绝且不再签发）。 */
   graceRedemptions?: number
+  /** 委托令牌增量（MCP 治理契约 §3）：被代理用户（sub=该用户的委托链，冻结即联动吊销）。 */
+  delegatedUserId?: string
+  /** 委托令牌增量（MCP 治理契约 §3）：受众快照（mcp:service:<slug> / plugin:<id>）。 */
+  delegationAudience?: string
 }
 
 /** OAuth state 记录（防 CSRF，一次性消费）。 */
@@ -123,6 +127,36 @@ const REFRESH_GRACE_MAX_REDEMPTIONS = 10
 /** 旧签名密钥的验签宽限期：轮换后旧令牌在窗口内仍可验证，宽限期后自然失效（评审 S2）。 */
 const SECRET_GRACE_MS = 24 * 3600_000
 
+/** 委托令牌 TTL（MCP 治理契约 §3）：默认 900s，上限 3600s。 */
+const DELEGATION_TTL_DEFAULT_SECONDS = 900
+const DELEGATION_TTL_MAX_SECONDS = 3600
+/** act 链（human 之后）跳数上限：超限拒绝（防委托链无限叠加）。 */
+const DELEGATION_CHAIN_MAX_JUMPS = 4
+
+/**
+ * 委托授权事实校验钩子（fail-closed）：由宿主（console 装配时）注入——
+ * 查 agent bindings / app owner / iam 管理员。未注入时 exchangeDelegatedToken 一律拒绝
+ * （DELEGATION_GUARD_UNAVAILABLE），绝不静默放行。
+ */
+export interface DelegationGuardInput {
+  /** 委托 subject 用户（机器调用者必带；人类调用者缺省为调用者本人） */
+  userId?: string
+  /** 目标 principal（人类调用者为其签发 OBO 委托的 agent/app 主体） */
+  targetPrincipalId?: string
+  caller: { principalId: string; kind: string; refType?: string; refId?: string }
+}
+
+export type DelegationGuardFn = (input: DelegationGuardInput) => Promise<boolean> | boolean
+
+/** 委托交换领域错误（带稳定原因码，REST 面据此映射 HTTP 状态与 extra.reason）。 */
+export class DelegationError extends Error {
+  readonly code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.code = code
+  }
+}
+
 /** 登录失败锁定策略（评审 S3）：窗口内连续失败达阈值即锁定，时长逐次升级。 */
 const LOGIN_MAX_FAILS = 5
 const LOGIN_WINDOW_MS = 15 * 60_000
@@ -146,7 +180,11 @@ export class AuthnService extends Service {
   /** 已退役但仍在宽限期内的签名密钥（验签兼容旧令牌）。 */
   private retiredSecrets: Array<{ secret: string; retiredAt: number }> = []
   private refreshIndex = new Map<string, string>()
+  /** 授权页预检结果缓存（key=provider|configId|redirectUri；2 分钟）：登录页每次点击不再多打一次 IdP。 */
+  private authorizeProbeCache = new Map<string, { at: number; ok: boolean; code?: string; message?: string }>()
   private cleanupTimer: ReturnType<typeof setInterval> | undefined
+  /** 委托授权事实钩子（宿主注入；缺席=委托交换一律拒绝，fail-closed）。 */
+  private delegationGuard: DelegationGuardFn | undefined
 
   constructor(ctx: Context) {
     super(ctx, 'authn')
@@ -177,6 +215,11 @@ export class AuthnService extends Service {
     // 事件联动：账号冻结 → 吊销全部令牌；Agent 下线 → 吊销机器凭证
     ctx.platformBus.on(PlatformEvents.UserFrozen, (payload) => {
       const { userId, reason } = payload as { userId: string; reason: string }
+      // 委托令牌联动（MCP 治理契约 §3）：sub=该用户的全部委托令牌即时失效
+      // （先于主体清扫执行以获得专属 reason；reason 机器可检索，便于审计区分链路）
+      for (const token of this.tokens().find((item) => item.delegatedUserId === userId && !item.revokedAt)) {
+        this.revokeToken(token.jti, 'user-frozen-delegation')
+      }
       const principal = this.humanPrincipal(userId)
       if (principal) this.revokePrincipalTokens(principal.id, t('账号冻结联动：{reason}', { reason }))
     })
@@ -312,7 +355,7 @@ export class AuthnService extends Service {
    * options.configId 指定多主体连接器实例：按其适配器发起授权并记入 state，回调按实例解析。
    * options.promptConsent=true 时强制 IdP 弹授权确认页（刷新老用户授权快照，见 providers.ts）。
    */
-  async beginSso(provider: string, scene: 'web_qr' | 'h5' | 'in_app', origin?: string, options: { purpose?: 'login' | 'bind'; userId?: string; configId?: string; promptConsent?: boolean } = {}): Promise<{ authorizeUrl: string | null; state: string }> {
+  async beginSso(provider: string, scene: 'web_qr' | 'h5' | 'in_app', origin?: string, options: { purpose?: 'login' | 'bind'; userId?: string; configId?: string; promptConsent?: boolean } = {}): Promise<{ authorizeUrl: string | null; state: string; blocked?: { code: string; message: string } }> {
     // 多主体：指定 configId 时按配置实例取适配器并校验平台类型一致，否则取该 provider 第一个（旧行为）
     const adapter = options.configId !== undefined
       ? this.ctx.iam.getAuthProviderByConfig(options.configId)
@@ -336,7 +379,20 @@ export class AuthnService extends Service {
       ? this.ctx.iam.connectorConfigById(options.configId)?.callbackUrl
       : this.ctx.iam.connectorConfig(provider)?.callbackUrl)?.trim()
     const redirectUri = configured || (origin ? `${origin.replace(/\/+$/, '')}/api/auth/sso/callback` : '/api/auth/sso/callback')
-    return { authorizeUrl: await adapter.buildAuthorizeUrl(scene, state, redirectUri, { promptConsent: options.promptConsent ?? false }), state }
+    const authorizeUrl = await adapter.buildAuthorizeUrl(scene, state, redirectUri, { promptConsent: options.promptConsent ?? false })
+    // 应用级拒绝预检（钉钉 900103「应用不存在」）：与其把用户整页送到一张只能关掉的错误页，
+    // 不如在登录页给出「去钉钉开发者后台开哪一项」的指引。预检失败不阻断（网络异常按放行处理）。
+    let blocked: { code: string; message: string } | undefined
+    if (authorizeUrl && adapter.probeAuthorize) {
+      const cacheKey = `${provider}|${options.configId ?? ''}|${redirectUri}`
+      const cached = this.authorizeProbeCache.get(cacheKey)
+      const probe = cached && Date.now() - cached.at < 120_000
+        ? cached
+        : { at: Date.now(), ...(await adapter.probeAuthorize(redirectUri).catch(() => ({ ok: true }))) }
+      this.authorizeProbeCache.set(cacheKey, probe)
+      if (!probe.ok) blocked = { code: probe.code ?? 'AUTHORIZE_BLOCKED', message: probe.message ?? '' }
+    }
+    return { authorizeUrl, state, ...(blocked ? { blocked } : {}) }
   }
 
   /**
@@ -640,7 +696,9 @@ export class AuthnService extends Service {
     return this.principals().update(id, { status: 'disabled' })
   }
 
-  /** 校验机器身份附加权限点：恰为 ['*'] 或全部命中权限目录（防拼错，如 usage.wrtie）；可空（授权可全部来自机器角色）。 */
+  /** 校验机器身份附加权限点：恰为 ['*'] 或全部命中权限目录（防拼错，如 usage.wrtie）；可空（授权可全部来自机器角色）。
+   *  W3-T5（契约 §12）增量：接受资源限定 MCP scope 形态——mcp.service:<slug>.invoke / mcp.tool:<slug>:<tool>.invoke，
+   *  校验前缀形态 + （端口已接线时）slug 对应服务存在；其余规则（权限目录命中/'*' 唯一）不变。 */
   private assertMachineScopes(scopes: string[]): void {
     if (scopes.length === 0) return
     if (scopes.includes('*')) {
@@ -648,8 +706,25 @@ export class AuthnService extends Service {
       return
     }
     const catalog = new Set(PermissionCatalog.map((item) => item.point))
-    const invalid = scopes.filter((scope) => !catalog.has(scope))
-    if (invalid.length > 0) throw new Error(t('非法权限点：{points}（须为权限目录中的点，或仅 \'*\'）', { points: invalid.join('、') }))
+    const invalid = scopes.filter((scope) => !catalog.has(scope) && !this.validResourceScopedMcpScope(scope))
+    if (invalid.length > 0) throw new Error(t('非法权限点：{points}（须为权限目录中的点、资源限定 mcp.service:/mcp.tool: 形态，或仅 \'*\'）', { points: invalid.join('、') }))
+  }
+
+  /** 资源限定 MCP scope 存在性端口（W3-T5）：宿主（console 装配处）可注入 slug 存在性回调；未接线=仅形态校验（可选端口口径）。 */
+  private mcpServiceExists: ((slug: string) => boolean) | undefined
+
+  /** 注册资源限定 scope 的服务存在性回调（slug → 是否存在）；传 undefined 恢复仅形态校验。 */
+  setMcpServiceExistsCheck(fn: ((slug: string) => boolean) | undefined): void {
+    this.mcpServiceExists = fn
+  }
+
+  /** 资源限定 MCP scope 形态校验（契约 §12）：mcp.service:<slug>.invoke / mcp.tool:<slug>:<tool>.invoke；slug 存在性端口已接线时强校验。 */
+  private validResourceScopedMcpScope(scope: string): boolean {
+    const service = /^mcp\.service:([^:\s]+)\.invoke$/.exec(scope)
+    if (service) return this.mcpServiceExists ? this.mcpServiceExists(service[1]!) : true
+    const tool = /^mcp\.tool:([^:\s]+):([^:\s]+)\.invoke$/.exec(scope)
+    if (tool) return this.mcpServiceExists ? this.mcpServiceExists(tool[1]!) : true
+    return false
   }
 
   /** 校验机器角色引用：角色必须真实存在（共用 iam:roles 存储）。 */
@@ -805,6 +880,9 @@ export class AuthnService extends Service {
     issuedBy?: string
     sid?: string
     chainId?: string
+    /** 委托令牌增量（MCP 治理契约 §3）：被代理用户 / 受众快照（缺省不产出，存量行为不变）。 */
+    delegatedUserId?: string
+    delegationAudience?: string
   }): { token: string; record: TokenRecord } {
     const principal = this.principals().get(principalId)
     if (!principal) throw new Error(t('身份不存在：{id}', { id: principalId }))
@@ -848,8 +926,133 @@ export class AuthnService extends Service {
       issuedBy: options.issuedBy ?? 'api',
       ...(options.sid !== undefined ? { sid: options.sid } : {}),
       ...(options.chainId !== undefined ? { chainId: options.chainId } : {}),
+      ...(options.delegatedUserId !== undefined ? { delegatedUserId: options.delegatedUserId } : {}),
+      ...(options.delegationAudience !== undefined ? { delegationAudience: options.delegationAudience } : {}),
     })
     return { token, record }
+  }
+
+  /**
+   * 委托令牌交换（MCP 治理契约 §3，RFC 8693 语义子集）：
+   *   - 人类调用者：可为目标 agent/app principal 签发 OBO 委托令牌（sub=用户，act=调用者+目标）；
+   *   - 机器调用者（agent/app 凭证）：仅可携带 userId 换取 sub=该用户 的委托令牌（act=调用者主体）；
+   *   - 授权事实校验 fail-closed：delegationGuard 未注入一律拒绝（DELEGATION_GUARD_UNAVAILABLE）；
+   *   - audience 强校验：必须 mcp:service:<slug> 或 plugin:<id> 形态（复用 issueToken 既有收敛）；
+   *   - scopes = 请求 ∩ 调用者 scopes ∩ 目标 principal scopes（verify 侧 delegate: 前缀二次夹紧）；
+   *   - TTL 默认 900s 上限 3600s；act 链（human 之后）跳数 ≤ 4。
+   * issueOnBehalfOf 保留不动（旧链路兼容）。
+   */
+  async exchangeDelegatedToken(input: {
+    caller: VerifiedPrincipal
+    userId?: string
+    targetPrincipalId?: string
+    audience: string
+    scopes?: string[]
+    ttlSeconds?: number
+  }): Promise<{ token: string; record: TokenRecord }> {
+    if (!this.delegationGuard) {
+      throw new DelegationError('DELEGATION_GUARD_UNAVAILABLE', t('委托授权钩子未装配（fail-closed），令牌交换被拒绝'))
+    }
+    // audience 形态强校验：仅接受服务级 MCP 与插件命名空间两种形态
+    const audience = String(input.audience ?? '')
+    if (!(audience.startsWith('mcp:service:') && audience.length > 'mcp:service:'.length)
+      && !(audience.startsWith('plugin:') && audience.length > 'plugin:'.length)) {
+      throw new DelegationError('DELEGATION_AUDIENCE_INVALID', t('委托令牌受众必须是 mcp:service:<slug> 或 plugin:<id> 形态'))
+    }
+    const ttlSeconds = Math.min(Math.max(Math.floor(Number(input.ttlSeconds ?? DELEGATION_TTL_DEFAULT_SECONDS)) || DELEGATION_TTL_DEFAULT_SECONDS, 1), DELEGATION_TTL_MAX_SECONDS)
+
+    const caller = input.caller
+    const callerEntry: ActEntry = { principalId: caller.principal.id, name: caller.principal.name, type: caller.principal.type }
+    let subjectPrincipalId: string
+    let subjectUserId: string
+    let actChain: ActEntry[]
+    let targetScopes: string[]
+
+    if (caller.principal.type === 'human') {
+      // 人类调用者：目标 agent/app principal 必填，sub=用户（本人或显式指定的 subject）
+      if (!input.targetPrincipalId) {
+        throw new DelegationError('DELEGATION_TARGET_REQUIRED', t('人类调用者必须指定目标主体（targetPrincipalId，agent/app）'))
+      }
+      const target = this.principals().get(input.targetPrincipalId)
+      if (!target || target.type !== 'machine' || !(target.refType === 'agent' || target.refType === 'app')) {
+        throw new DelegationError('DELEGATION_TARGET_INVALID', t('目标主体不存在或不是 agent/app 机器主体'))
+      }
+      subjectUserId = input.userId ?? caller.principal.refId ?? ''
+      if (!subjectUserId) throw new DelegationError('DELEGATION_USER_REQUIRED', t('调用者令牌缺少用户身份（refId），无法确定委托 subject'))
+      // subject 用户必须真实存在且在册（显式指定他人时校验档案，防拼错主体）
+      const subjectUser = this.ctx.iam.users().get(subjectUserId)
+      if (!subjectUser) throw new DelegationError('DELEGATION_USER_NOT_FOUND', t('委托 subject 用户不存在：{id}', { id: subjectUserId }))
+      if (subjectUser.status !== 'active') throw new DelegationError('DELEGATION_USER_INACTIVE', t('委托 subject 用户状态异常（{status}），拒绝签发', { status: subjectUser.status }))
+      const subjectPrincipal = this.ensureHumanPrincipal(subjectUser.id, subjectUser.displayName)
+      subjectPrincipalId = subjectPrincipal.id
+      actChain = [...caller.actChain, callerEntry, { principalId: target.id, name: target.name, type: target.type }]
+      targetScopes = this.resolveMachineScopes(target)
+    } else {
+      // 机器调用者：两种模式
+      //  ① 自委托（不传 userId/targetPrincipalId）：sub=调用者自身，act 链为空——即计划 §6.2
+      //     「Agent 自身调用」形态（sub=agent:xxx, aud=mcp:service:<slug>）。平台长期机器凭证
+      //     不出域，只换出「短期 + 绑定单一服务受众」的令牌（aud 强校验在数据面强制）。
+      //  ② 代用户委托（传 userId）：sub=该用户，act 链含调用者主体（既有语义不变）。
+      if (input.targetPrincipalId) {
+        throw new DelegationError('DELEGATION_TARGET_NOT_ALLOWED', t('机器调用者仅可携带 userId 换取委托令牌（不可指定 targetPrincipalId）'))
+      }
+      if (!input.userId) {
+        // 自委托：主体即调用者自身，无需用户档案与绑定校验
+        subjectPrincipalId = caller.principal.id
+        actChain = []
+        targetScopes = caller.scopes
+      } else {
+        const user = this.ctx.iam.users().get(input.userId)
+        if (!user) throw new DelegationError('DELEGATION_USER_NOT_FOUND', t('委托 subject 用户不存在：{id}', { id: input.userId }))
+        if (user.status !== 'active') throw new DelegationError('DELEGATION_USER_INACTIVE', t('委托 subject 用户状态异常（{status}），拒绝签发', { status: user.status }))
+        const subjectPrincipal = this.ensureHumanPrincipal(user.id, user.displayName)
+        subjectUserId = user.id
+        subjectPrincipalId = subjectPrincipal.id
+        actChain = [...caller.actChain, callerEntry]
+        targetScopes = this.ctx.iam.userPermissions(user.id)
+      }
+    }
+
+    // act 链跳数：链首为 human 时其自身不计（human 之后 ≤ 4）；链首即机器时全部计（subject 用户为链外 human）
+    const jumps = actChain.length > 0 && actChain[0]!.type === 'human' ? actChain.length - 1 : actChain.length
+    if (jumps > DELEGATION_CHAIN_MAX_JUMPS) {
+      throw new DelegationError('DELEGATION_CHAIN_TOO_LONG', t('委托链过长：human 之后跳数 {jumps} 超过上限 {max}', { jumps, max: DELEGATION_CHAIN_MAX_JUMPS }))
+    }
+
+    // 授权事实校验（fail-closed）：guard 拒绝/不可用即终止
+    const allowed = await this.delegationGuard({
+      userId: subjectUserId,
+      ...(input.targetPrincipalId !== undefined ? { targetPrincipalId: input.targetPrincipalId } : {}),
+      caller: {
+        principalId: caller.principal.id,
+        kind: caller.principal.type,
+        ...(caller.principal.refType !== undefined ? { refType: caller.principal.refType } : {}),
+        ...(caller.principal.refId !== undefined ? { refId: caller.principal.refId } : {}),
+      },
+    })
+    if (!allowed) {
+      throw new DelegationError('DELEGATION_DENIED', t('委托授权校验未通过（绑定关系/归属/管理员白名单均未命中）'))
+    }
+
+    // scopes 三方交集：请求 ∩ 调用者实时 scopes ∩ 目标 principal scopes（'*' 按既有交集语义收敛）
+    const requested = input.scopes ?? caller.scopes
+    const scopes = intersectScopes(intersectScopes(requested, caller.scopes), targetScopes)
+
+    return this.issueToken(subjectPrincipalId, {
+      kind: 'machine',
+      ttlHours: ttlSeconds / 3600,
+      scopes,
+      audience,
+      actChain,
+      issuedBy: `delegate:${caller.principal.id}`,
+      delegatedUserId: subjectUserId,
+      delegationAudience: audience,
+    })
+  }
+
+  /** 注册委托授权事实钩子（宿主装配时注入；传 undefined 恢复 fail-closed 拒绝态）。 */
+  setDelegationGuard(fn: DelegationGuardFn | undefined): void {
+    this.delegationGuard = fn
   }
 
   /** on-behalf-of：以当前主体身份为另一主体签发透传令牌（act 链叠加）。 */
@@ -902,7 +1105,8 @@ export class AuthnService extends Service {
     // QA A-07：OBO 令牌签发时 scopes 取「父链 ∩ 目标」交集——验签若只按主体实时解析，
     // 交集即被丢弃（透传令牌反而拿到目标全量权限）。对 OBO 签发的令牌按签发交集二次夹紧：
     // 实时权限收缩仍然生效（交集），但不再放大出签发时刻授予之外的能力。
-    if (record.issuedBy?.startsWith('obo:')) {
+    // MCP 治理（契约 §3）：delegate: 前缀的委托令牌同口径（签发时已做三方交集，实时只收不放）。
+    if (record.issuedBy?.startsWith('obo:') || record.issuedBy?.startsWith('delegate:')) {
       scopes = intersectScopes(scopes, record.scopes)
     }
     this.tokens().update(record.id, { lastUsedAt: new Date().toISOString() })

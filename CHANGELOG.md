@@ -3,6 +3,191 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [1.5.0] · 2026-10-22 · AI 平台 MCP 治理与身份权限整改
+
+**统一身份与委托令牌**
+
+- 平台新增统一 Principal（`UnifiedPrincipal`）：控制台鉴权中间件是唯一权威装配点，
+  verify 后组装 `CallerInfo` 兼容超集 + `unified` 字段——bridge / A2A / NAS OBO / MCP invoke
+  等消费面一律读 `unified`，从请求参数或 header 声明身份一律无效（参数伪造身份防线）。
+- 新增委托令牌交换 `POST /api/authn/token/exchange`（RFC 8693 风格）：人类调用者可为目标
+  Agent/应用签发 OBO 令牌，机器凭证可换取 `sub=用户` 的委托令牌；audience 强校验
+  `mcp:service:<slug>` / `plugin:<id>` 形态；TTL 默认 900s 上限 3600s，act 链（human 之后）
+  跳数上限 4；授权事实 fail-closed（守卫未注入一律拒绝）；账号冻结即时吊销其被代理令牌。
+- `X-On-Behalf-User` 降级为**仅归因**（审计口径），不再是授权事实：授权一律以令牌及其委托链为准，
+  代用户操作优先改用委托令牌；NAS 侧保留 header 兼容并标记 `delegationSource`（token / header-legacy）。
+
+**服务级 MCP 数据面**
+
+- 新增服务级 MCP 端点 `POST /mcp/services/<服务slug>`（别名 `POST /mcp/s/<服务ID>`）：标准
+  Streamable HTTP（JSON-RPC 2.0 over POST），initialize / ping / tools/list / tools/call 全量支持；
+  Bearer 令牌 audience 强校验（`AUDIENCE_MISMATCH` 即拒）；调用统一走既有网关链
+  （鉴权 / 权限组 / 限流 / 熔断 / 风险 / 审计 / 计量），长令牌不出域。
+- `tools/list` 按调用方权限过滤：权限组 allowedTools 交集 + 只读约束过滤写工具 + 高敏数据类无授权
+  不出现——列表即边界，不在列表中的工具调用返回 `-32003 TOOL_NOT_VISIBLE_OR_DENIED`（拒绝路径与
+  列表过滤一致，不泄露工具存在性）；平台 `/mcp` 运维面同口径过滤；`/api/mcp/invoke` 与 `mcp_invoke`
+  保留为兼容层（行为不变）。
+- 下游凭证经 Secret Broker 保管：`PUT/GET /api/mcp/services/:id/credential` 下发/回显（API 永不回显
+  密钥原文），值落 `data/secrets/mcp/`（0600），业务集合零密钥；`POST /api/mcp/credentials/migrate`
+  把存量明文敏感头一键迁入（先 dryRun 预检）；新写入敏感 headers 直接 400 `SENSITIVE_HEADERS_FORBIDDEN`
+  （`MCP_ALLOW_PLAIN_HEADERS=1` 为迁移期逃生门，默认关）。
+
+**应用能力绑定与生命周期**
+
+- 新增应用能力声明：`GET/POST/DELETE /api/apps/:id/capabilities(…)`（`app.write`）——应用对 MCP 服务
+  显式挂载 `required/optional` 能力，绑定自动回写服务归属（owner 唯一，冲突 409 `OWNER_CONFLICT`）；
+  服务摘要投影零 headers（业务集合与任何 API 响应绝不出现凭证/敏感头）。
+- 应用上线门禁扩展：每个 required 能力对应服务必须在线（online/gray）/ 已 verify / 工具非空 /
+  无未决高危登记 / 凭证就绪，任一不满足即 400 `CAPABILITY_GATE_FAILED` 并列明服务名+原因；
+  下架联动：归属该应用的服务自动置 offline，归档记 `archivedBy`。
+- MCP 服务记录新增治理属性：`ownerEntity / dataClass / exposureMode / visibility / environment /
+  credentialRef`（additive，启动幂等迁移补默认值）；资源依赖图补 `app→mcp (capability)` 边，
+  拓扑 app→agent→mcp 可穿透。
+
+**统一策略决策与组织约束**
+
+- MCP 调用主裁决收拢到策略决策点（PDP）：iam-permission / mcp-permgroup / scene-ABAC / org-constraint /
+  risk-gate 模块化裁决，deny 优先、reasons 聚合；NAS / Connector 决策出口统一以 PDP 表达
+  （decisionId + reasons 进审计）。每次调用/拒绝均带 `decisionId`。
+- 资源限定 scope：`mcp.service:<slug>.invoke` / `mcp.tool:<slug>:<tool>.invoke` 两种形态进入机器凭证
+  scope 校验与 invoke 首层判定（权限组仍是第二层强制闸门，不因 scope 放行绕过）；
+  `POST /api/mcp/perm-groups/:id/scope-template` 按权限组策略生成建议 scope 模板。
+- 组织与租户硬约束：`visibility='org'` 跨组织直接拒绝 `ORG_SCOPE_DENIED`，`'tenant'` 同租户放行，
+  `'cross-org'` 必须存在有效审批引用；委托链用户 org 与目标数据 org 校验同理。
+
+**审计冷热分层与全链追踪**
+
+- 审计日志追加 sha256 哈希链（`prevHash/hash`，可校验防篡改）与可选 `traceId`；
+  `GET /api/audit/logs?traceId=` 按 trace 检索，`GET /api/audit/export?since=&until=` ndjson 全链导出
+  （行序=时间序，附尾行 `_chainTip`）。
+- MCP 调用记录增量 `traceId / argsHash / decisionId / upstreamStatus`（热数据 `mcp:calls` 维持 5000
+  环形上限滚动清理，allow/deny 调用已双写审计事件不丢痕）；`mcp.invoked` 事件 payload v2
+  （traceId / argsHash / decisionId / decisionReasons / delegationChain / riskLevel / dataClass / upstreamStatus）。
+- 全链 trace：入口无 trace 即生成 32hex traceId，下游 HTTP 转发带 W3C `traceparent` 头，
+  usage 计量回填 `trace_id`；`POST /api/mcp/perm-groups/dry-run` 策略模拟（影响报告
+  newServices/writeTools/confidential/crossOrg/affectedSubjects，不落库）支撑权限变更预演。
+
+**控制台与开发者体验**
+
+- MCP 服务详情新增「治理」页：归属实体 / 数据密级 / 暴露模式 / 可见范围 / 环境与下游凭证状态
+  （`local:`/`env:` 引用 + 是否存有密钥；存量明文头就地警示「建议迁移」）；「服务级 MCP 端点」卡
+  给出 `POST /mcp/services/<slug>`、换牌+initialize/tools/list/tools/call 最小 curl 示例（一键复制）
+  与错误域码提示表。
+- MCP 页顶部治理待办横幅（未指派归属 / 明文凭证 / 非 gateway 暴露计数，可展开清单，unowned 项
+  就地「指派归属」）；工具栏「凭证迁移」入口（dryRun 报告 → 确认执行 → 迁移结果）。
+- 权限组编辑器新增「预演影响面」（dry-run 影响报告分组展示，含写工具/高敏/跨组织高危面时创建
+  二次确认）与每组建「scope 模板」（建议 scope 清单一键复制）。
+- 应用详情新增「MCP 能力」页（清单 + 绑定/解绑 + OWNER_CONFLICT 门禁文案就地渲染）；
+  上线被 `CAPABILITY_GATE_FAILED` 拒绝时失败项以醒目清单弹窗展示（不再一闪而过）。
+- Agent 详情新增「可调用 MCP 能力」页（权限组反查按服务聚合可调用工具面 + 最近 3 条拒绝原因）。
+- 接入提示词与文档对齐：Agent/App 注册模板补「服务级 MCP 数据面」步骤（换牌 → initialize →
+  tools/list → tools/call），X-On-Behalf-User 话术统一降级为「仅归因」；`docs/agent-onboarding.md`
+  新增 §4.6 服务级接入、`docs/app-onboarding.md` 同步归因口径。
+- 全部新增界面文案补齐 en-US / ja-JP 词典（`lint:i18n` 文件级 ≥95% 覆盖 + 占位符一致门禁保持全绿）。
+
+**W4 独立审计整改（对抗性验收发现并修复）**
+
+独立审计（功能完整性 + 对抗性安全两条线）挖出 4 个阻断项，全部修复并补回归护栏：
+- **审计哈希链可校验性**：哈希计算原将 `undefined` 值渲染为 `null`，而落盘 JSON 会丢弃该键，
+  导致「内存重算哈希」与「落盘记录重算哈希」分叉——哈希链对最关键的 MCP 调用记录不可校验。
+  `canonicalJson` 改为跳过 `undefined` 键（与 `JSON.stringify` 语义对齐），导出后逐条重算一致。
+- **机器自委托换牌通道**：原实现要求机器调用者必须携带 `userId`，而全部接入示例只传
+  `audience`（实测 400，推荐路径不可用）。按整改计划 §6.2「Agent 自身调用」新增自委托模式：
+  sub=调用者自身、act 链为空、audience 绑定目标服务；长期机器凭证不出域，授权面由 scopes
+  三方交集夹紧到自身实时权限。示例另补三种换牌模式说明（自委托 / 代用户 / 人类换牌）。
+- **委托链主体匹配**：委托令牌以 sub（用户）投影调用者，导致链上 Agent/App 身份永远匹配不到
+  同名主体权限组，标准接入路径静默返回空工具集。统一主体 `actChain` 节点随附 `refId`（资源 id），
+  调用者投影输出可匹配主体集合（主体 + 链上 Agent/App 演员），权限组按该集合匹配；人类普通会话
+  行为不变（不继承他人授权）。
+- **审计决策依据落库**：`decisionId` / `decisionReasons` 随 MCP 调用落审计，策略拒绝分档为
+  `denied`（区别于上游故障 `error`）——决策依据不再随 5000 条热数据滚动而丢失。
+- 附带收口：资源限定 scope 的服务存在性校验接线（错配 scope 签发期即拒）；清单生成器补齐
+  authn/app 新端点（防 `npm run manifests` 抹除）；`mcp:migrations` 纳入 JSON 保留名单；拓扑按
+  权限组合成 agent→mcp 边（App → Agent → MCP 可穿透）；既有权限组补「预演影响面」入口。
+- 回归护栏：selftest 新增「W4 P0 安全整改回归」段（自委托 e2e / 主体匹配 / 哈希链落盘重算 /
+  审计决策依据），断言总数 1604 → **1610 全绿**；新增单测 93 例全绿；独立黑盒复验 18/18 通过。
+
+> 已知遗留（P2，不阻断）：委托令牌的 `audience` 在 REST 面不做强制（仅 MCP 数据面校验），
+> 令牌 scopes 已按「请求 ∩ 调用者 ∩ 目标」夹紧，不构成提权，后续可收敛为全入口受众校验。
+
+> 升级说明：治理属性由启动幂等迁移自动补默认值（存量服务落 `ownerEntity={type:'platform'}` 并计入
+> 治理待办）；存量明文敏感头服务会在 MCP 页治理待办横幅提示，走「凭证迁移」即可无感转入 Secret Broker；
+> 服务级端点需要委托令牌（audience=`mcp:service:<slug>`），旧的长令牌直连路径仍可用但不再推荐。
+
+## [1.4.0] · 2026-10-22 · 信息架构收敛 + 部门面板登记制 + 登录可用性预检 + 治理属性瘦身
+
+**导航信息架构（IA）重排（对外可见的界面变更）**
+
+- 侧边栏由「总览 / 资源 / 治理 / 企业」重排为 **「总览 / 资源 / 协作与执行 / 治理 / 企业」**。
+  「协作与执行」独立成组，承载执行中枢、A2A 协作、UHP 执行——这三者是「让数字员工跑起来」
+  的一条主线，此前混在资源台账里会被误读成又一类可盘点资产。
+- **资产登记页（`#/register`）下线**：登记动作回归各资源页自身的新建入口，不再有独立登记看板。
+  `register.js` 及其样式、命令面板条目、资产台账的「登记资产」按钮一并移除。
+- 数据权限（`#/nas-authz`）迁入治理组；A2A 与 UHP 各自拥有一级入口（UHP 落到 `#/a2a?tab=uhp`）。
+- 同路径下带查询串的导航项优先高亮（`#/a2a` 与 `#/a2a?tab=uhp` 共存时只亮一个）。
+
+**部门面板改为「宿主 × 部门」登记制（入口不再硬编码）**
+
+- 此前「部门面板」是固定外链 `${BASE}/panel/`，与控制台的宿主服务连接清单没有事实关联——
+  换宿主后进哪个部门完全由目标宿主自己的 `localStorage` 记忆决定。现在面板入口 = 一条登记项：
+  只有登记过的「宿主 + 部门」才产生跳转地址，未登记不产生任何链接。
+- 新增 `#/panels` 登记清单页；登记面同时嵌在「宿主服务连接」页（`#/connections`）。
+  存储留在浏览器（`heng_ops_panels`，与连接清单同域同生命期），不引入服务端状态。
+- 删除宿主连接时，指向它的面板登记一并清理；绕过删除产生的脏数据在清单里标「宿主已删除」并禁用进入。
+- 面板侧新增 `?dept=` 深链：优先于本地记忆，越权/不存在的部门静默回落（不把越权尝试暴露成错误）。
+  深链校验与服务端 `DEPT_RE`（`/^[a-z]{2,12}$/`）严格同口径——此前前端放宽到大写/数字/连字符，
+  会让 `?dept=RD`、`?dept=rd-team` 先通过前端再被 `/api/panel/*` 以 400 拒绝，表现为点进面板空白。
+- 落地分诊（`app.js boot()` / `login.js finishLogin()`）改用登记项：有已登记且可达的面板直达该面板，
+  无登记落 `#/panels` 引导。登录侧挂载前缀改取页面自身路径，不再误用远程宿主态的 `BASE`。
+- 工作台「协作会话」卡的「进入面板」补 `?dept=`，直达对应部门而非目标宿主的默认记忆部门。
+
+**钉钉扫码登录可用性预检**
+
+- 新增适配器可选契约 `probeAuthorize(redirectUri)`：服务端先拉一次授权页，识别 IdP 侧应用级拒绝
+  （钉钉 `900103`「应用不存在」/ `900108` 未开通登录能力），把「整页跳转到一张只能关掉的错误页」
+  换成登录页上的可执行指引（开发者后台「登录与分享」补回调域名、核对 AppKey），并自动切回账号密码兜底。
+- 预检结果按 `provider|configId|redirectUri` 缓存 2 分钟，登录页重复点击不再每次多打一次 IdP；
+  网络失败/页面结构变化一律按放行处理——预检只做增强，不作为登录门禁。
+- 授权页（`#/oauth/authorize`）同口径：命中拒绝时就地展开手动授权码兜底，授权流不中断。
+
+**治理属性瘦身：移除 `systemPromptVersion`**
+
+- Agent 白名单与上线门禁移除「系统提示词版本」。上线门禁收敛为三项：`dataClass`（密级）、
+  身份纳管（OIDC 客户端或 `entryUrl`）、进入试运行另需 `trialGroups` 非空。
+- UHP harness 记录的 `systemPromptVersion` 一并移除；平台不承担提示词版本台账职责，
+  提示词与模型版本请写进 `description` / `tags`。
+- 存量登记里的 `systemPromptVersion` 值不再参与校验，展示层（Agent 详情）也不再读取。
+
+**三方身份解绑与更换（账号详情页）**
+
+- 新增 `POST /api/auth/sso/unbind`（本人自助，操作对象恒为会话本人）与
+  `DELETE /api/iam/users/:id/bindings/:provider?corpId=…`（管理面，`corpId` 限定单一主体）。
+- 新增 `POST /api/iam/users/:id/bindings/:provider/replace`：更换 = 前置解绑 + 扫码重绑两步。
+  不在同一请求里「先解后绑」——绑定必须由 IdP 授权拿到 unionId，提前解绑会让用户在授权
+  失败/取消时白丢既有绑定。
+- 解绑写入 `bindingExemptions`（`provider|corpId`）：连接器同步不再按工号自动把身份绑回来，
+  否则用户会看到「点了没反应」；重新扫码绑定即自动清除豁免。与 `leaderSource='manual'`
+  的「人工决定优先于同步事实」同构。
+- 反锁定护栏：三方身份是 SSO 自注册 / 通讯录同步账号唯一已知的登录凭据（初始口令为随机值
+  且从未下发）。解绑后若既无剩余三方绑定、又无 `passwordKnown` 标记，直接拒绝并提示先设口令。
+- 解绑按 `provider`（或 `provider+corpId`）全量删除事实源链接，`bindings` 投影由剩余
+  `identityLinks` 重算——此前 `findOne` + 单条 `remove` 会留下幽灵链接，且按 provider 一刀切
+  过滤投影会误清其他主体的展示行。
+
+**回归护栏**
+
+- `connections.test.mjs` 面板登记用例 6 → 7（新增「dept 口径与服务端 DEPT_RE 一致 + 存量脏数据被滤」）；
+  新增 `plugin-panel-core/public/js/dept.test.mjs`（深链解析/越权回落/脏参数忽略，6 例）。
+- `selftest` 前端接线节改断言：NAV 指向 `#/panels` 而非硬编码 `/panel/`；落地分诊走 `resolvePanels`；
+  `#/register` 已从导航与命令面板下线；「协作与执行」独立分组承载三项。
+- `cmdk` 页面索引补 A2A / UHP / 执行中枢，移除资产登记。
+- 修复 `npm run manifests` 破坏性覆盖：生成器清单漏登记 `GET /api/usage/collaborations`，
+  每次重生成都会静默删掉这条真实路由的声明。
+- 补齐 `cpu` 图标（此前 UHP 导航项引用未定义图标，会静默回落成 info 图标）。
+
+> 界面变更对现有部署无破坏性：老用户的 `#/register` 书签会落到工作台；面板入口需在 `#/panels`
+> 登记一次「宿主 × 部门」（此前是硬编码直达，现在改为显式登记）。
+
 ## [1.3.1] · 2026-10-21 · A2A/UHP 复测整改（QA P1×1 + P2×6，含 1 项「声称已修」实为空操作的回退修复）
 
 **外部集成闭环（P1-01，对外部第三方 Agent 开放的前置阻断项）**
