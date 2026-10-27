@@ -3,6 +3,40 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · AI 自治治理闭环（MCP 工具面补全）
+
+**登记/评审工具面（+6 个 MCP 工具，86 → 92）**
+
+- 平台 `/mcp` 此前管理面「评审强、登记弱」：MCP 服务登记/verify/终审、Agent 登记/上线提请、
+  AI 应用登记只有 REST 入口，审批待办也无法经 MCP 发现。本次补全（权限点全部复用既有目录，无新增）：
+  - `approval_list`（plugin-audit，`approval.read`）：审批列表查询（状态/类型/关键字过滤），
+    自治闭环入口——先发现待办再 `approval_decide`。
+  - `mcp_service_register`（plugin-mcp，`mcp.service.write`）：登记 MCP 服务（draft 态）；
+    工具清单风险缺省 unknown（与 REST 同口径不隐式 read）；敏感凭证不入工具参数（走 credential API）。
+  - `mcp_service_review`（plugin-mcp，`mcp.service.deploy`）：verify（真实探活）/ final-review
+    （公司级终审水印）/ sync-tools 三动作，补齐 draft → verifying → online 状态机的 MCP 面。
+  - `agent_register`（plugin-agent，`agent.write`）：登记数字员工（draft + 机器凭证签发）；
+    schema 必填 attrs（description/model/riskLevel）在工具描述中显式声明。
+  - `agent_transition`（plugin-agent，`agent.approve`）：submit_trial / online / archive 流转；
+    online 提请仍生成 L4 审批单（职责分离不旁路）。
+  - `app_register`（plugin-app，`app.write`）：登记 AI 应用（可编排已上线 Agent，签发机器凭证）；
+    developerId 校验与 REST 同口径。
+- 登记类工具身份一律取令牌（`exec.principal` fail-closed），动作落 `audit` 变更哈希链
+  （agent.create / mcp.service.create / app.create 等与 REST changeLog 同口径）。
+- 修复既有缺陷：`mcp_deploy`/`mcp_offline` 工具运行时访问 `ctx.resourceCore` 未声明 inject，
+  /mcp 链路触发 `cannot get property "resourceCore" without inject`——mcp-tools inject 清单补齐
+  （`iam`/`audit`/`resourceCore`）。
+- 清单同步：四个插件 manifest api.yaml tools 声明补齐，契约比对工具 97/97 零红；首屏计数
+  文案 86 → 92（index.html / launch / en-US / ja-JP locale 同步，含词典 key）。
+
+**AI 自治治理双身份接入**
+
+- 新增 `scripts/register-governance-credentials.mjs`：一键签发「治理执行官（`'*'` 全权）+
+  治理评审官（只读 + 审批决策）」双机器身份。单凭证无法闭环 agent.online（R12 职责分离
+  提交人≠审批人，且 `/mcp` 服务端强制 approval_decide 审批人=令牌身份）——双身份让自治
+  链路天然满足职责分离。幂等可重跑（查重复用 / `--rotate` 轮换），凭证落盘 0600，
+  自验（换牌 + tools/list + approval_list）后输出 MCP 客户端接入配置。
+
 ## [1.5.0] · 2026-10-22 · AI 平台 MCP 治理与身份权限整改
 
 **统一身份与委托令牌**

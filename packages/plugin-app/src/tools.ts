@@ -2,13 +2,20 @@
  * app 插件对模型暴露的工具。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '../../platform-core/src/index.ts'
+import { defineTool, type ToolPrincipal } from '../../platform-core/src/index.ts'
+import { t as translate } from '../../platform-i18n/src/index.ts'
 
 export const name = 'app-tools'
-export const inject = ['tools', 'appRegistry', 'resourceCore']
+export const inject = ['tools', 'appRegistry', 'resourceCore', 'iam', 'audit']
 
 export function apply(ctx: Context) {
   const t = ctx.tools
+
+  /** 登记类工具的调用方投影（fail-closed）：owner 取令牌身份，禁止从 args 组装。 */
+  const registrarOf = (principal?: ToolPrincipal): { id: string; name: string } => {
+    if (!principal) throw new Error(translate('工具执行缺少身份上下文（fail-closed）'))
+    return { id: principal.userId ?? principal.principalId, name: principal.name }
+  }
 
   t.register(defineTool({
     name: 'app_list',
@@ -97,6 +104,68 @@ export function apply(ctx: Context) {
     output: { type: 'object', additionalProperties: true },
     async execute(args) {
       return { rows: ctx.appRegistry.costBreakdown(args.appId) }
+    },
+  }))
+
+  t.register(defineTool({
+    name: 'app_register',
+    description: '登记 AI 应用进平台台账（draft 态，登记即入治理轨道），可编排已上线 Agent（agentIds 编排仅接受 online 态），默认签发机器凭证（client_secret 仅本次返回）。发布上线走审批流。',
+    permission: 'app.write',
+    parameters: {
+      name: { type: 'string', required: true, description: '应用名称' },
+      slug: { type: 'string', description: '标识（缺省由名称生成）' },
+      attrs: { type: 'object', description: '扩展属性。必填：description（应用描述）、appType（web/h5/miniapp/desktop/api）、riskLevel（low/medium/high）；上线前还需 url 与 dataClass（public/internal/confidential/secret）；developerId 可指定平台用户为开发者' },
+      agentIds: { type: 'array', items: { type: 'string' }, description: '编排的 Agent ID 清单（仅接受已上线 Agent）' },
+      orgId: { type: 'string', description: '归属组织 ID（缺省首个组织）' },
+      withCredential: { type: 'boolean', description: '是否签发机器凭证，缺省 true' },
+    },
+    output: { type: 'object', additionalProperties: true },
+    async execute(args, exec) {
+      const registrar = registrarOf(exec.principal)
+      const attrs = { ...(args.attrs && typeof args.attrs === 'object' ? args.attrs as Record<string, unknown> : {}) }
+      // 与 REST POST /api/apps 同口径：developerId 须为在编平台用户（校验失败即拒绝登记）
+      const developerId = typeof attrs['developerId'] === 'string' ? attrs['developerId'].trim() : ''
+      if (developerId) {
+        const developer = ctx.iam.users().get(developerId)
+        if (!developer) throw new Error(translate('开发者不存在：{id}（developerId 须为平台用户 ID）', { id: developerId }))
+        if (developer.status !== 'active') throw new Error(translate('开发者非在编状态，不能登记为应用开发者'))
+        attrs['developerId'] = developer.id
+        attrs['developerName'] = developer.displayName
+      } else {
+        delete attrs['developerId']
+      }
+      const orgId = (args.orgId && ctx.iam.orgs().get(String(args.orgId)))
+        ? String(args.orgId)
+        : (ctx.iam.orgs().all()[0]?.id ?? 'org_unknown')
+      const agentIds = Array.isArray(args.agentIds) ? (args.agentIds as unknown[]).map(String) : undefined
+      const result = ctx.appRegistry.register({
+        name: args.name,
+        ...(args.slug ? { slug: String(args.slug) } : {}),
+        attrs,
+        ownerId: registrar.id,
+        ownerName: registrar.name,
+        orgId,
+        ...(agentIds ? { agentIds } : {}),
+        ...(args.withCredential !== undefined ? { withCredential: args.withCredential === true } : {}),
+      })
+      ctx.audit.record({
+        type: 'change',
+        actorType: exec.principal?.kind === 'human' ? 'human' : 'machine',
+        actorId: registrar.id,
+        actorName: registrar.name,
+        action: 'app.create',
+        resourceType: 'app',
+        resourceId: (result.app as { id: string }).id,
+        resourceName: (result.app as { name: string }).name,
+        result: 'ok',
+        detail: 'app_register 工具登记（draft）',
+        ...(exec.principal?.actChain?.length ? { actChain: exec.principal.actChain } : {}),
+      })
+      return {
+        app: { id: (result.app as { id: string }).id, name: (result.app as { name: string }).name, slug: (result.app as { slug: string }).slug, status: (result.app as { status: string }).status, orgId },
+        ...(result.credential ? { credential: result.credential, credentialNote: 'client_secret 仅本次返回，请立即妥善保管；丢失走 onboarding-prompt(rotate=true) 轮换' } : {}),
+        nextStep: '上线走审批流（trial → online），经 approval_list / approval_decide 处理',
+      }
     },
   }))
 }

@@ -23,6 +23,8 @@ tools:
   - mcp_metrics
   - mcp_invoke
   - mcp_health_check
+  - mcp_service_register
+  - mcp_service_review
 services:
   - key: mcpRegistry
     access: ctx.mcpRegistry

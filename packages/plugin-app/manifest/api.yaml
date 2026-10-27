@@ -18,6 +18,7 @@ tools:
   - app_metrics
   - app_metrics_report
   - app_cost_breakdown
+  - app_register
 services:
   - key: appRegistry
     access: ctx.appRegistry

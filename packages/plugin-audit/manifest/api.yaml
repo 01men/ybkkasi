@@ -14,6 +14,7 @@ tools:
   - audit_alerts_list
   - audit_alerts_read_all
   - approval_decide
+  - approval_list
   - audit_cost_report
 services:
   - key: audit

@@ -76,6 +76,37 @@ export function apply(ctx: Context) {
   }))
 
   t.register(defineTool({
+    name: 'approval_list',
+    description: '查询审批列表（待办/已决/已执行），自治治理闭环入口：先 approval_list 发现待办，再 approval_decide 决策。默认最新在前。',
+    permission: 'approval.read',
+    parameters: {
+      status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'executed', 'failed'], description: '状态过滤（缺省全部）' },
+      kind: { type: 'string', description: '审批类型精确过滤（如 agent.online / mcp.offline / skill.publish）' },
+      q: { type: 'string', description: '标题关键字' },
+      limit: { type: 'number', description: '返回条数，默认 50' },
+    },
+    output: { type: 'object', additionalProperties: true },
+    async execute(args) {
+      const items = ctx.audit.approvals().all()
+        .filter((item) => (args.status ? item.status === args.status : true))
+        .filter((item) => (args.kind ? item.kind === args.kind : true))
+        .filter((item) => (args.q ? item.title.includes(args.q) : true))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      return {
+        total: items.length,
+        pending: items.filter((item) => item.status === 'pending').length,
+        approvals: items.slice(0, args.limit ?? 50).map((item) => ({
+          id: item.id, kind: item.kind, title: item.title, status: item.status,
+          riskLevel: item.riskLevel, requesterName: item.requesterName, createdAt: item.createdAt,
+          ...(item.decidedAt ? { decidedAt: item.decidedAt, approverName: item.approverName } : {}),
+          ...(item.opinion ? { opinion: item.opinion } : {}),
+          ...(item.execution ? { execution: item.execution } : {}),
+        })),
+      }
+    },
+  }))
+
+  t.register(defineTool({
     name: 'audit_cost_report',
     description: '成本穿透分析：按应用/Agent/组织/日期聚合 Token 消耗与成本。',
     permission: 'audit.read',
