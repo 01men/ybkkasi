@@ -22,6 +22,8 @@ export * from './storage-sqlite.ts'
 export * from './bus.ts'
 export * from './tools-lite.ts'
 export * from './http.ts'
+// OpenAPI 接口面投影（issue #6）：由 declaredRoutes 台账生成 3.0.3 文档，/api/openapi.json 据此伺服
+export * from './openapi.ts'
 export * from './rest-gate.ts'
 export * from './principal.ts'
 // 策略决策点 + 全链 trace 基元（MCP 治理契约 §11/§14，W3-T5）

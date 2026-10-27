@@ -6,12 +6,7 @@
  * 用法：npm run selftest
  */
 import { spawn } from 'node:child_process'
-// NAS 数据权限纯函数引擎（dev-plan-nas-authz O8：引擎直接单测，不经服务层）
-import {
-  MATRIX_DEFAULT, buildOrgIndex, check as engineCheck, deriveRole, findVacantLeaderOrgs, nearestLeaderOrg,
-} from '../packages/plugin-nas/src/authz/engine.ts'
 import { readFileSync as __readFileSyncSeed } from 'node:fs'
-const NAS_AUTHZ_SEED = JSON.parse(__readFileSyncSeed(new URL('../packages/plugin-nas/seed/nas-authz-rules.json', import.meta.url), 'utf8'))
 import { createServer, request as httpRequest } from 'node:http'
 import { createHash } from 'node:crypto'
 import { rm, mkdir } from 'node:fs/promises'
@@ -19,31 +14,59 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from '
 import { join } from 'node:path'
 // 进程内插件树（dsh 宿主挂载分节：伪造 webServer 模拟 dsh 前缀分发，不经子进程）
 import { Context } from '@deepseek-ai/cordis'
-import * as platformCore from '../packages/platform-core/src/index.ts'
-import * as resourceCore from '../packages/plugin-resource-core/src/index.ts'
-import * as iam from '../packages/plugin-iam/src/index.ts'
-import * as authn from '../packages/plugin-authn/src/index.ts'
-import * as usage from '../packages/plugin-usage/src/index.ts'
-import * as audit from '../packages/plugin-audit/src/index.ts'
-import * as market from '../packages/plugin-market/src/index.ts'
-import * as agent from '../packages/plugin-agent/src/index.ts'
-import * as app from '../packages/plugin-app/src/index.ts'
-import * as connector from '../packages/plugin-connector/src/index.ts'
-import * as mcp from '../packages/plugin-mcp/src/index.ts'
-import * as nas from '../packages/plugin-nas/src/index.ts'
-import * as skillhub from '../packages/plugin-skillhub/src/index.ts'
-import * as modelgw from '../packages/plugin-modelgw/src/index.ts'
-import * as connect from '../packages/plugin-connect/src/index.ts'
-import * as update from '../packages/plugin-update/src/index.ts'
-import * as portal from '../packages/plugin-portal/src/index.ts'
-import * as consolePlugin from '../packages/plugin-console/src/index.ts'
-import * as panelCore from '../packages/plugin-panel-core/src/index.ts'
-import * as dingtalkBridge from '../packages/plugin-dingtalk-bridge/src/index.ts'
-import * as dshBridge from '../packages/plugin-dsh-bridge/src/index.ts'
-// 数字员工工作闭环（组7）：flowCore / execHub 为既有插件（静态引入）；workforce 为并行施工新包——
+
+// ---------------- Node 22.6–22.17 兼容守卫（issue #4）
+// 本文件直接装载 .ts 源（原生 TypeScript 运行，零构建），而 Node 的类型剥离在 22.18 / 23.6 起才默认
+// 开启，更早版本必须显式 --experimental-strip-types。静态 import 会被提升到任何语句之前执行，
+// 守卫在同一进程内来不及生效，故：(1) 下方 .ts 装载全部改为顶层 await 动态 import；(2) 运行时未
+// 默认开启且 NODE_OPTIONS 尚未携带 flag 时自重启——走 NODE_OPTIONS 而非 execArgv，是因为它会被
+// 本自测拉起的全部子进程（隔离实例 src/main.ts、各 *.test.mjs）继承，一处守卫覆盖整条链；
+// 即便调用方已用 `node --experimental-strip-types` 启动本文件，子进程也不会继承 execArgv，仍需补齐。
+function typeStrippingDefaultOn() {
+  const [major, minor] = process.versions.node.split('.').map(Number)
+  return major >= 24 || (major === 23 && minor >= 6) || (major === 22 && minor >= 18)
+}
+if (!typeStrippingDefaultOn() && !(process.env.NODE_OPTIONS ?? '').includes('--experimental-strip-types')) {
+  const nodeOptions = [process.env.NODE_OPTIONS, '--experimental-strip-types'].filter(Boolean).join(' ')
+  console.log(`\x1b[90m» Node ${process.versions.node} 未默认启用类型剥离，以 NODE_OPTIONS=${nodeOptions} 重启自测…\x1b[0m`)
+  const child = spawn(process.execPath, [...process.execArgv, process.argv[1], ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: { ...process.env, NODE_OPTIONS: nodeOptions },
+  })
+  const exitCode = await new Promise((resolve) => child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0))))
+  process.exit(exitCode)
+}
+
+// NAS 数据权限纯函数引擎（dev-plan-nas-authz O8：引擎直接单测，不经服务层）
+const {
+  MATRIX_DEFAULT, buildOrgIndex, check: engineCheck, deriveRole, findVacantLeaderOrgs, nearestLeaderOrg,
+} = await import('../packages/plugin-nas/src/authz/engine.ts')
+const NAS_AUTHZ_SEED = JSON.parse(__readFileSyncSeed(new URL('../packages/plugin-nas/seed/nas-authz-rules.json', import.meta.url), 'utf8'))
+const platformCore = await import('../packages/platform-core/src/index.ts')
+const resourceCore = await import('../packages/plugin-resource-core/src/index.ts')
+const iam = await import('../packages/plugin-iam/src/index.ts')
+const authn = await import('../packages/plugin-authn/src/index.ts')
+const usage = await import('../packages/plugin-usage/src/index.ts')
+const audit = await import('../packages/plugin-audit/src/index.ts')
+const market = await import('../packages/plugin-market/src/index.ts')
+const agent = await import('../packages/plugin-agent/src/index.ts')
+const app = await import('../packages/plugin-app/src/index.ts')
+const connector = await import('../packages/plugin-connector/src/index.ts')
+const mcp = await import('../packages/plugin-mcp/src/index.ts')
+const nas = await import('../packages/plugin-nas/src/index.ts')
+const skillhub = await import('../packages/plugin-skillhub/src/index.ts')
+const modelgw = await import('../packages/plugin-modelgw/src/index.ts')
+const connect = await import('../packages/plugin-connect/src/index.ts')
+const update = await import('../packages/plugin-update/src/index.ts')
+const portal = await import('../packages/plugin-portal/src/index.ts')
+const consolePlugin = await import('../packages/plugin-console/src/index.ts')
+const panelCore = await import('../packages/plugin-panel-core/src/index.ts')
+const dingtalkBridge = await import('../packages/plugin-dingtalk-bridge/src/index.ts')
+const dshBridge = await import('../packages/plugin-dsh-bridge/src/index.ts')
+// 数字员工工作闭环（组7）：flowCore / execHub 为既有插件（顶层装载）；workforce 为并行施工新包——
 // 其实现文件由组1/2 持续交付，动态 import（章节内）避免实现未齐时拖垮整个自测装载
-import * as flowCore from '../packages/plugin-flow-core/src/index.ts'
-import * as execHub from '../packages/plugin-exec-hub/src/index.ts'
+const flowCore = await import('../packages/plugin-flow-core/src/index.ts')
+const execHub = await import('../packages/plugin-exec-hub/src/index.ts')
 
 const readBody = (req) => new Promise((resolve) => {
   const chunks = []
@@ -1353,6 +1376,41 @@ try {
       matrix.data.counts.declaredApi === matrix.data.counts.guarded + matrix.data.counts.public + matrix.data.counts.authenticated
       && matrix.data.counts.undeclaredApi === 0,
       JSON.stringify(matrix.data.counts))
+    // issue #6：OpenAPI 接口面发现——由同一份 declaredRoutes 台账投影，分类计数必须与矩阵逐类吻合
+    const openapiAnon = await rawReq('GET', '/api/openapi.json')
+    check('OpenAPI：/api/openapi.json 匿名 → 401（authenticated 面，接口清单不对匿名开放）', openapiAnon.status === 401, `status=${openapiAnon.status}`)
+    const openapiRaw = await rawReq('GET', '/api/openapi.json', { headers: { authorization: `Bearer ${admin}` } })
+    const spec = jsonBody(openapiRaw)
+    check('OpenAPI：合法 Bearer → 200 原始 3.0.3 文档（非 {ok,data} 信封，Swagger UI / 代码生成器可直接消费）',
+      openapiRaw.status === 200 && String(openapiRaw.headers['content-type']).startsWith('application/json')
+      && spec.openapi === '3.0.3' && !('ok' in spec) && typeof spec.paths === 'object' && Boolean(spec.info?.version)
+      && spec.components?.securitySchemes?.bearerAuth?.scheme === 'bearer',
+      `status=${openapiRaw.status} openapi=${spec.openapi}`)
+    const specOps = Object.entries(spec.paths ?? {}).flatMap(([path, item]) => Object.entries(item).map(([method, op]) => ({ method, path, op })))
+    const specByAccess = specOps.reduce((acc, { op }) => { const access = op['x-auth']?.access ?? 'missing'; acc[access] = (acc[access] ?? 0) + 1; return acc }, {})
+    check(`OpenAPI：操作按鉴权分类计数与 route-matrix 逐类吻合（guarded ${specByAccess.guarded} / public ${specByAccess.public} / authenticated ${specByAccess.authenticated}）`,
+      specByAccess.guarded === matrix.data.counts.guarded && specByAccess.public === matrix.data.counts.public
+      && specByAccess.authenticated === matrix.data.counts.authenticated && specByAccess.missing === undefined,
+      JSON.stringify({ spec: specByAccess, matrix: matrix.data.counts }))
+    check('OpenAPI：guarded 端点 security=bearerAuth + x-permission；public 端点 security=[]；自身声明 authenticated',
+      spec.paths['/api/platform/route-matrix']?.get?.['x-permission'] === 'audit.read'
+      && JSON.stringify(spec.paths['/api/platform/route-matrix']?.get?.security) === '[{"bearerAuth":[]}]'
+      && JSON.stringify(spec.paths['/api/health']?.get?.security) === '[]'
+      && spec.paths['/api/openapi.json']?.get?.['x-auth']?.access === 'authenticated')
+    const paramOps = specOps.filter(({ path }) => path.includes('{'))
+    check(`OpenAPI：参数路由以 {param} 表达并逐一声明 required path parameters（${paramOps.length} 个操作）`,
+      paramOps.length > 0 && paramOps.every(({ path, op }) => {
+        const names = (path.match(/\{([^}]+)\}/g) ?? []).map((segment) => segment.slice(1, -1))
+        const declared = (op.parameters ?? []).filter((p) => p.in === 'path' && p.required === true).map((p) => p.name)
+        return names.join() === declared.join()
+      }))
+    const operationIds = specOps.map(({ op }) => op.operationId)
+    check('OpenAPI：operationId 全量唯一；/mcp 等协议面标为 outside-api、不声明 security、不套统一信封',
+      new Set(operationIds).size === operationIds.length && operationIds.every(Boolean)
+      && spec.paths['/mcp']?.post?.['x-auth']?.access === 'outside-api' && spec.paths['/mcp']?.post?.security === undefined
+      && spec.paths['/mcp']?.post?.responses?.['200'] === undefined)
+    check('OpenAPI 纯函数：toOpenApiPath 把 :id 段转 {id} 并按序返回参数名',
+      JSON.stringify(platformCore.toOpenApiPath('/api/iam/users/:id/roles/:roleId')) === JSON.stringify({ path: '/api/iam/users/{id}/roles/{roleId}', params: ['id', 'roleId'] }))
     const selfValidated = matrix.data.publicEntries.filter((entry) => entry.selfValidated)
     const anonLeaked = []
     for (const route of selfValidated) {
@@ -5722,11 +5780,12 @@ try {
   check('/docs/app-sso-integration.md 可读（markdown + 正文）', docFile.status === 200 && String(docFile.headers['content-type']).startsWith('text/markdown') && docFile.body.includes('OIDC') && docFile.body.includes('接入'))
   const docMissing = await rawReq('GET', '/docs/not-exists.md')
   check('/docs 未知文档 404', docMissing.status === 404)
-  // 路径穿越探测：字面 .. 与编码 %2e%2e 均被 URL 解析归一化（WHATWG 规范视编码点段为点段）→ 回落 SPA 兜底页，不泄露文件
+  // 路径穿越探测：字面 .. 与编码 %2e%2e 均被 URL 解析归一化（WHATWG 规范视编码点段为点段）→ /package.json；
+  // 带扩展名的资源路径未命中不再回落 SPA 页（issue #6），改 404 JSON——同样不泄露文件，且不再给探测方 200 假阳性
   const docTraverseLiteral = await rawReq('GET', '/docs/../package.json')
-  check('/docs 字面 .. 穿越 → SPA 兜底页（不泄露文件）', docTraverseLiteral.status === 200 && String(docTraverseLiteral.headers['content-type']).startsWith('text/html') && !docTraverseLiteral.body.includes('"name": "dsh-enterprise-ops"'))
+  check('/docs 字面 .. 穿越 → 404 JSON（不泄露文件，不回 SPA 200）', docTraverseLiteral.status === 404 && jsonBody(docTraverseLiteral)?.error?.code === 'NOT_FOUND' && !docTraverseLiteral.body.includes('"name": "dsh-enterprise-ops"'), `status=${docTraverseLiteral.status}`)
   const docTraverseEncoded = await rawReq('GET', '/docs/%2e%2e/package.json')
-  check('/docs 编码 %2e%2e 穿越 → SPA 兜底页（不泄露文件）', docTraverseEncoded.status === 200 && String(docTraverseEncoded.headers['content-type']).startsWith('text/html') && !docTraverseEncoded.body.includes('"name": "dsh-enterprise-ops"'))
+  check('/docs 编码 %2e%2e 穿越 → 404 JSON（不泄露文件，不回 SPA 200）', docTraverseEncoded.status === 404 && jsonBody(docTraverseEncoded)?.error?.code === 'NOT_FOUND' && !docTraverseEncoded.body.includes('"name": "dsh-enterprise-ops"'), `status=${docTraverseEncoded.status}`)
   const spaStillOk = await rawReq('GET', '/')
   check('SPA 静态兜底不受影响（/ 仍返回控制台首页）', spaStillOk.status === 200 && String(spaStillOk.headers['content-type']).startsWith('text/html') && spaStillOk.body.includes('元冰可'))
 
@@ -5763,6 +5822,20 @@ try {
   const spaUnknownRoute = await rawReq('GET', '/some/unknown/spa/route')
   check('非保留前缀未知路径仍回落 SPA（控制台 hash 路由不受 C-10 影响）',
     spaUnknownRoute.status === 200 && String(spaUnknownRoute.headers['content-type']).startsWith('text/html'), `status=${spaUnknownRoute.status}`)
+
+  // issue #6：带扩展名的资源路径未命中 → 404 JSON（「看似 JSON」的路径回 200 HTML 会让 Agent 接口探测假阳性）；
+  // 无扩展名前端路由照旧兜底（上一条已证）；真实静态资源不受影响
+  const jsonLikeMiss = await rawReq('GET', '/openapi.json')
+  check('/openapi.json（非 /api、带扩展名、无此文件）→ 404 NOT_FOUND JSON，不再被 SPA 兜底吞成 200 HTML（issue #6）',
+    jsonLikeMiss.status === 404 && jsonBody(jsonLikeMiss)?.error?.code === 'NOT_FOUND' && !String(jsonLikeMiss.headers['content-type']).startsWith('text/html'),
+    `status=${jsonLikeMiss.status} type=${jsonLikeMiss.headers['content-type']}`)
+  const assetMiss = await rawReq('GET', '/js/definitely-missing.js')
+  check('缺失静态资源 /js/*.js → 404（不再以 index.html 200 伪装，浏览器拿到真实缺失信号）', assetMiss.status === 404, `status=${assetMiss.status}`)
+  const indexExplicit = await rawReq('GET', '/index.html')
+  check('显式 /index.html 仍 200 HTML（扩展名规则只作用于未命中路径）', indexExplicit.status === 200 && String(indexExplicit.headers['content-type']).startsWith('text/html'), `status=${indexExplicit.status}`)
+  check('扩展名判定纯函数：/openapi.json、/js/a.min.js、/docs/x.md 为资源；/、/panel、/locales/zh-CN、无扩展名深链接不是',
+    platformCore.hasFileExtension('/openapi.json') && platformCore.hasFileExtension('/js/a.min.js') && platformCore.hasFileExtension('/docs/x.md')
+    && !platformCore.hasFileExtension('/') && !platformCore.hasFileExtension('/panel') && !platformCore.hasFileExtension('/locales/zh-CN') && !platformCore.hasFileExtension('/some/unknown/spa/route'))
 
   // ================================================================ 门户数据通道（plugin-portal：外部拉取端点）
   section('统一入口：/panel 无尾斜杠 302 归一（相对资源解析防御）')

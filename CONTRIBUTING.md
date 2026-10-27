@@ -7,10 +7,17 @@
 - **Node ≥ 22.6**（原生 TypeScript 运行，无构建步骤；`node:sqlite` 为内置能力）
 - `npm install`（workspace 安装全部 packages）
 
-已验证版本：**v24.21.0 实测全绿**（selftest + 全部 lint 门禁）。`engines` 的 `>=22.6`
-是「零构建、原生跑 TypeScript」硬约束给出的宽声明，建议贡献者用 **v22.6+ 或 v24**
-等实测过的版本线。`node:sqlite` 在 Node 22 / 24 下仍打印 Experimental 警告，属上游
-正常状态，无害。
+已验证版本：**v24.21.0 与 v22.14.0 实测全绿**（selftest + 全部 lint 门禁，CI 双版本轨）。
+`engines` 的 `>=22.6` 是「零构建、原生跑 TypeScript」硬约束给出的声明，建议贡献者用
+**v22.14+ 或 v24** 等实测过的版本线。`node:sqlite` 在 Node 22 / 24 下仍打印 Experimental
+警告，属上游正常状态，无害。
+
+> **Node 22.6–22.17 注意**：这些版本的 TypeScript 类型剥离尚未默认开启（22.18 / 23.6 起才默认）。
+> 仓库的 npm 脚本（`start` / `lint:manifests` / `lint:boot-order` / `test:contracts`）已内联
+> `--experimental-strip-types`，`npm run selftest` 会检测版本并以 `NODE_OPTIONS` 带 flag 自动重启
+> （子进程一并继承）。只有绕开脚本直接 `node <file>.ts` / `node <直接装载 .ts 的脚本>.mjs` 时
+> 才需要自己加 flag：`NODE_OPTIONS=--experimental-strip-types node …`。该 flag 在 Node ≥ 22.18 上是
+> 静默 no-op，脚本里保留它不影响新版本。
 
 ## 开发闭环
 
@@ -24,7 +31,7 @@ npm run lint:cjk                # 中文文案 i18n 覆盖门禁
 node scripts/storage-bench.mjs  # 存储后端基准（改存储相关代码后建议跑）
 ```
 
-CI（`.github/workflows/selftest.yml`）在每次 push / PR 跑契约 lint + 全量自测 + P95 闸门。
+CI（`.github/workflows/quality-gate.yml`）在每次 push / PR 于 Node 22.14 与 24 双版本轨跑契约 lint + 全量自测 + P95 闸门。
 **selftest 不全绿、lint 有错的 PR 不予合并。**
 
 ## 改动约束（架构不变量）

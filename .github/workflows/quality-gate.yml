@@ -20,6 +20,13 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # 24 = 主线（CONTRIBUTING 实测版本）；22.14 = 类型剥离尚未默认开启的 Node 线（22.18 / 23.6 起才默认），
+        # 守住 engines >=22.6 的承诺：selftest 自守卫与 npm scripts 内联 --experimental-strip-types 在此轨实证（issue #4 回归护栏）
+        node: ['22.14', '24']
+    name: gate (node ${{ matrix.node }})
     env:
       P95_GATE_LOGIN_MS: '800'
       P95_GATE_INVOKE_MS: '1500'
@@ -27,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node }}
           cache: npm
       - name: Install dependencies
         run: npm install --no-audit --no-fund

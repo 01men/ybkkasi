@@ -1,7 +1,8 @@
 # 元冰可 AIOS —— 平台镜像（W1 市场引爆批次，2026-10-17）。
 #
-# 零构建基线照进容器：仓库原生 TS 直接运行（Node ≥22 的类型剥离为默认行为），
-# node:sqlite 是 Node 内置模块——镜像里不需要装任何数据库，npm ci 之外零额外依赖。
+# 零构建基线照进容器：仓库原生 TS 直接运行，node:sqlite 是 Node 内置模块——镜像里不需要装任何数据库，
+# npm ci 之外零额外依赖。CMD 内联 --experimental-strip-types：node:22-alpine 浮动标签当前已默认开启
+# 类型剥离（22.18+），但被钉到 22.6–22.17 时仍可启动（issue #4）；新版本上该 flag 是静默 no-op。
 # 运行时只读四样东西：src/、packages/（含控制台 SPA 与词典）、docs/（/docs 白名单伺服）、
 # 根 package.json（版本信息）；其余目录（archive/tests/cli/integrations/数据目录等）
 # 由 .dockerignore 排除，不进镜像。
@@ -32,4 +33,4 @@ VOLUME ["/app/data"]
 # 生产部署挂 ADMIN_PASSWORD + 自建 volume，且**不要**带 DEMO_* 变量（见 README「生产部署」）；
 # DEMO_MODE=1 会把实例的全部只读视图开放给免登访客，仅限演示种子数据实例。
 EXPOSE 7300
-CMD ["node", "src/main.ts", "--port", "7300", "--data", "/app/data"]
+CMD ["node", "--experimental-strip-types", "src/main.ts", "--port", "7300", "--data", "/app/data"]

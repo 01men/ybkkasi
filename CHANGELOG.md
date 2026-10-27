@@ -3,6 +3,48 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · GitHub 反馈修复批次（issue #4 / #5 / #6，2026-10-27）
+
+**#6 OpenAPI 接口面发现 + SPA 兜底收口**
+
+- 新增 `GET /api/openapi.json`（authenticated）：由 httpServer 的 `declaredRoutes` 路由台账运行时投影为
+  OpenAPI 3.0.3 原始文档（不包 `{ok,data}` 信封，Swagger UI / 代码生成器直接消费）。每个操作携带
+  `x-auth`（guarded / authenticated / public / outside-api 精确声明）与 `x-permission`（权限点），
+  `:id` 段转 `{id}` 并逐一声明 path parameters；分类计数与 `/api/platform/route-matrix` 逐类吻合
+  （selftest 固化：guarded 425 / public 27 / authenticated 11，operationId 全量唯一）。
+- 静态兜底收口：带扩展名的资源路径未命中（`/openapi.json`、`/js/missing.js`、`/docs/x.md`、
+  `/docs/../package.json` 归一后的 `/package.json`）不再回落 `index.html` 200 HTML，改 404
+  `NOT_FOUND` JSON——「看似 JSON」的路径回 200 HTML 曾让 Agent 接口探测与 interface-check 假阳性；
+  无扩展名前端路由（hash 路由深链接）与真实静态资源行为不变。
+- 加载屏 REST 路由数 462 → 463（index.html + en-US / ja-JP 词典同步）；README 路由数按运行时实测校正
+  450 → 463；plugin-console manifest api.yaml 登记新端点。
+
+**#4 Node 22.6–22.17 可运行性（engines 承诺落实）**
+
+- `scripts/selftest.mjs` 此前顶部静态导入 `.ts` 源，在类型剥离未默认开启的 Node（22.18 / 23.6 之前）
+  上父进程在任何断言前即 `ERR_UNKNOWN_FILE_EXTENSION` 崩溃。现改为顶层 `await import()` 装载，并加
+  版本守卫：未默认开启且 `NODE_OPTIONS` 未带 flag 时以 `NODE_OPTIONS=--experimental-strip-types`
+  自重启——子进程（隔离实例、各 `*.test.mjs`）一并继承，一处守卫覆盖整条链。
+- npm 脚本 `start` / `lint:manifests` / `lint:boot-order` / `test:contracts` 与 Dockerfile CMD 内联
+  `--experimental-strip-types`（Node ≥ 22.18 上为静默 no-op）。
+- CI `quality-gate` 增加 Node 22.14 轨（与 24 并行矩阵），守住 `>=22.6` 声明；README / CONTRIBUTING
+  补充版本说明。
+
+**#5 dsh bundle 安装后 rq-card `ERR_MODULE_NOT_FOUND`**
+
+- 根因（实证）：client-modules 的 `locatePkgJson` 取条目首段包名、再向上找名字完全匹配的 package.json，
+  rq-card 条目只能写裸包名 `@dsh-ops/plugin-rq-card`，因此必须能从 profile 根解析；而根 `package.json`
+  此前 `dependencies` 为空，`workspaces` 只在仓库内生效，单包安装进 profile 后该包缺席。
+- 修复：根 `dependencies` 声明 `"@dsh-ops/plugin-rq-card": "file:packages/plugin-rq-card"`——dsh profile
+  为 pnpm `nodeLinker: hoisted`，copy 安装（`github:` / `file:`）时 pnpm 会把它 hoist 到 profile 根
+  （模拟 profile 实测 `createRequire(profile).resolve(...)` 成功）。仓库内 `npm install` 行为不变
+  （workspace 链接复用）。
+- link 安装（`dsh plugin add /path`，不带 `file:`）属 pnpm 语义限制（不装被链接包的依赖），README 与
+  `cordis.patch.yml` 明示需再 `add /path/packages/plugin-rq-card` 补一条链接；纠正了「workspace 包随发布/
+  安装链路就位」的误导性注释。
+
+断言总数 1610 → **1621 全绿**（Node 24.21.0 与 22.14.0 双版本实测）。
+
 ## [Unreleased] · AI 自治治理闭环（MCP 工具面补全）
 
 **登记/评审工具面（+6 个 MCP 工具，86 → 92）**

@@ -3,7 +3,7 @@
 > **v1.5.0 · MIT · self-hosted.** One control plane for every MCP server, skill, agent and AI app.
 
 [![MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![selftest](https://img.shields.io/badge/selftest-1610%20green-success)](https://github.com/01men/ybkkasi/actions/workflows/quality-gate.yml)
+[![selftest](https://img.shields.io/badge/selftest-1621%20green-success)](https://github.com/01men/ybkkasi/actions/workflows/quality-gate.yml)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.6-339933)]()
 [![i18n](https://img.shields.io/badge/i18n-zh--en--ja-blue)]()
 [![Demo](https://img.shields.io/badge/demo-demo.ybkkasi.com-FF6B35)](https://demo.ybkkasi.com)
@@ -75,6 +75,10 @@ docker run -d --name ybkkasi -p 7300:7300 \
 npm install && npm start          # → http://127.0.0.1:7300
 ```
 
+> Node 22.6–22.17 的类型剥离尚未默认开启(22.18 / 23.6 起才默认):`npm start` / `npm run selftest`
+> 等脚本已内置处理(自测会带 flag 自动重启);若绕开脚本直接 `node src/main.ts`,请自行附加
+> `--experimental-strip-types`(或写入 `NODE_OPTIONS`)。CI 在 Node 22.14 与 24 双版本轨验证。
+
 生产基线默认:内置角色 + 根组织 + `admin` 账号(**无任何演示业务数据**)。
 `admin` 口令取 `ADMIN_PASSWORD` 环境变量;未设置则随机生成并写入 `data/admin-initial-password.txt`。
 
@@ -93,11 +97,12 @@ PLATFORM_STORAGE=sqlite npm start # 业务集合切换 SQLite 后端(WAL + 事�
 ```
 
 ```bash
-npm run selftest                  # 1610 项端到端断言(隔离实例,全绿;含 SQLite 后端契约节)
+npm run selftest                  # 1621 项端到端断言(隔离实例,全绿;含 SQLite 后端契约节)
 npm run lint:manifests            # 插件清单五面 YAML 校验
 ```
 
 要求 **Node ≥ 22.6**(原生 TypeScript 运行,无构建步骤;`node:sqlite` 为 Node 内置,零新增依赖)。
+已实测版本线:v24.21.0 与 v22.14.0(CI 双版本轨)。
 
 ---
 
@@ -151,19 +156,32 @@ npm run lint:manifests            # 插件清单五面 YAML 校验
 
 ### 一份插件代码,两种宿主
 
-- **独立宿主**(默认,承诺 SLA 的形态)——`node src/main.ts` 启动完整平台:控制台 + API + 工具。
+- **独立宿主**(默认,承诺 SLA 的形态)——`npm start`(即 `node --experimental-strip-types src/main.ts`)启动完整平台:控制台 + API + 工具。
 - **完整 dsh 运行时**(experimental)——同一批插件挂进 `dsh web`,此时平台注册的运维工具
   **直接对模型可见可调用**:在会话里问「列出所有 MCP 服务和健康状态」,模型会调
   `mcp_service_list`,而不是静态作答。这是"Agent 自运维"形态。
 
 ```bash
-# 安装形态(推荐发布用)
+# 安装形态(推荐发布用)——copy 安装,根 dependencies 会把 @dsh-ops/plugin-rq-card 一并装入 profile
 dsh plugin --profile web add github:01men/ybkkasi
+# 本地目录同理请用 file: 前缀(copy 语义,依赖自动就位):
+#   dsh plugin --profile web add file:/path/to/ybkkasi
 
 # 源码检出模式(本地开发)——需要把 cordis 指向 dsh 源码树的 vendor/cordis,
 # 保证插件与宿主加载同一个 cordis 实例(两份实例会导致 ctx.plugin() 静默失效)
 dsh web --patch <本项目绝对路径>/cordis.yml
 ```
+
+> ⚠️ 若用 **link: 安装**(`dsh plugin --profile web add /path/to/checkout`,不带 `file:` 前缀),
+> pnpm 的 link 语义**不会**安装被链接包的依赖——`@dsh-ops/plugin-rq-card`(client-modules 按
+> 裸包名从 profile 根解析)需要额外补一条链接,否则该条目启动时报 `ERR_MODULE_NOT_FOUND`:
+>
+> ```bash
+> dsh plugin --profile web add /path/to/ybkkasi/packages/plugin-rq-card
+> ```
+>
+> 另:浏览器半 bundle(`packages/plugin-rq-card/lib/client.js`)已随仓库入库,无需现场构建;
+> 若源码改动过 rq-card 前端,重跑 `node packages/plugin-rq-card/build.mjs`。
 
 > ⚠️ 宿主形态依赖 dsh `>=0.1.0-rc.7 <0.2.0`。dsh 目前仍是 developer preview,
 > 官方明示会有破坏性变更。**独立宿主形态不依赖 dsh 版本稳定性**,是最稳的部署方式。
@@ -184,7 +202,7 @@ usage / connect / update       计量 / 远程 dsh 接入 / 平台自更新
 sync / conflict / help         三方同步 / 组织冲突 / 帮助
 ```
 
-**REST**——450 条去重路由(代码注册口径),全部经统一鉴权中间件 + RBAC;
+**REST**——463 条去重路由(代码注册口径,运行时实测;完整接口清单可经 `GET /api/openapi.json` 机器可读获取,登录令牌访问),全部经统一鉴权中间件 + RBAC;
 未匹配路由的匿名请求统一返回 401(而非 404),不提供路由探测侧信道。
 
 **MCP**——平台即 MCP Server,任意 MCP 客户端可直接接入;86 个注册工具
@@ -245,7 +263,7 @@ sync / conflict / help         三方同步 / 组织冲突 / 帮助
 ## 开发
 
 ```bash
-npm run selftest              # 1610 项端到端断言(含 P95 尾延迟闸门 + 故障注入 + SQLite 后端契约)
+npm run selftest              # 1621 项端到端断言(含 P95 尾延迟闸门 + 故障注入 + SQLite 后端契约)
 npm run lint:manifests        # 插件清单校验
 npm run lint:boot-order       # 插件装配顺序
 npm run lint:cjk              # 中文残留门禁
@@ -257,7 +275,7 @@ node tests/full-chain-drill.mjs        # 全链路演练
 node tests/workforce-loop-drill.mjs    # 数字员工闭环演练
 ```
 
-CI(`.github/workflows/selftest.yml`)在每次 push / PR 跑契约 lint + 全量自测 + P95 闸门。
+CI(`.github/workflows/quality-gate.yml`)在每次 push / PR 于 Node 22.14 与 24 双版本轨跑契约 lint + 全量自测 + P95 闸门。
 
 仓库只保留对外文档(README / 架构说明 / 部署与接入指南 / 契约 7 份);
 QA 报告、交接单、重构基线等内部过程物料在 [`docs/internal/`](docs/internal/)。

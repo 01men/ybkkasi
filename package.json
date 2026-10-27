@@ -35,17 +35,20 @@
     }
   },
   "scripts": {
-    "start": "node src/main.ts",
+    "start": "node --experimental-strip-types src/main.ts",
     "selftest": "node scripts/selftest.mjs",
-    "lint:manifests": "node scripts/lint-manifests.mjs",
+    "lint:manifests": "node --experimental-strip-types scripts/lint-manifests.mjs",
     "manifests": "node scripts/gen-manifests.mjs",
-    "lint:boot-order": "node scripts/check-boot-order.mjs",
+    "lint:boot-order": "node --experimental-strip-types scripts/check-boot-order.mjs",
     "lint:cjk": "node scripts/lint-cjk-coverage.mjs",
     "lint:i18n": "node scripts/lint-i18n-coverage.mjs",
-    "test:contracts": "node packages/plugin-dsh-bridge/tests/host-bridge.contract.mjs && node packages/plugin-rq-card/tests/host-bridge.contract.mjs"
+    "test:contracts": "node --experimental-strip-types packages/plugin-dsh-bridge/tests/host-bridge.contract.mjs && node --experimental-strip-types packages/plugin-rq-card/tests/host-bridge.contract.mjs"
   },
   "engines": {
     "node": ">=22.6"
+  },
+  "dependencies": {
+    "@dsh-ops/plugin-rq-card": "file:packages/plugin-rq-card"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

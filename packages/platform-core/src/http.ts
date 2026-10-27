@@ -493,11 +493,24 @@ export class HttpServerService extends Service {
       const info = await stat(target)
       if (info.isDirectory()) target = join(target, 'index.html')
     } catch {
+      // 带扩展名的资源路径未命中（/openapi.json、/js/missing.js、/docs/x.md…）不回落 index.html（issue #6）：
+      // 「看起来是 JSON/脚本」的路径回 200 HTML 会让 Agent 的接口探测与健康检查假阳性；SPA 兜底只服务
+      // 无扩展名的前端路由（控制台/面板为 hash 路由，深链接路径本就不带扩展名）。
+      if (hasFileExtension(rel)) {
+        exchange.fail(404, 'NOT_FOUND', t('路由不存在：{method} {path}', { method: exchange.method, path: exchange.path }))
+        return
+      }
       const fallback = entry.fallback ?? '/index.html'
       target = join(entry.dir, fallback.replace(/^\/+/, ''))
     }
     exchange.file(target)
   }
+}
+
+/** 末段含 `.ext`（ext 为 1–8 位字母数字）即视为资源文件路径；`/v1/x`、`/locales/zh-CN` 这类无扩展名路径不算。 */
+export function hasFileExtension(pathname: string): boolean {
+  const last = pathname.split('/').filter(Boolean).at(-1) ?? ''
+  return /\.[a-zA-Z0-9]{1,8}$/.test(last)
 }
 
 /** 以当前模块为基准解析资源目录（ESM 下替代 __dirname）。 */

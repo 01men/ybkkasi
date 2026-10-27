@@ -5,7 +5,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
-import { platformVersionInfo, lookupsFromHost, resolveUnifiedPrincipal, toCallerInfo } from '../../../platform-core/src/index.ts'
+import { platformVersionInfo, lookupsFromHost, resolveUnifiedPrincipal, toCallerInfo, buildOpenApiDocument } from '../../../platform-core/src/index.ts'
 import type { CallerInfo, HttpExchange } from '../../../platform-core/src/index.ts'
 import { noteForwardedPrincipal } from '../../../plugin-connect/src/host.ts'
 import { consolePermissionAllows } from './mcp-dataplane.ts'
@@ -38,6 +38,18 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
       note: t('guarded=权限点保护端点；public=免鉴权（selfValidated=自带凭证校验）；authenticated=仅 Bearer；变动须经评审'),
     }
   })
+
+  // OpenAPI 接口面发现（issue #6）：由 declaredRoutes 台账投影 3.0.3 文档（原始文档，不包信封——Swagger UI /
+  // 代码生成器直接消费）。仅要求登录（authenticated）：接口面本身随包 manifest 与 /docs 公开，不是秘密；
+  // 权限点标识是客户端理解「调用需要什么」的必要信息。与 route-matrix（audit.read，越权断言网口径）分层。
+  http.register('GET', '/api/openapi.json', (exchange) => {
+    const document = buildOpenApiDocument(http.declaredRoutes, {
+      version: platformVersionInfo().version,
+      externalBase: http.externalBase,
+    })
+    exchange.res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+    exchange.res.end(JSON.stringify(document))
+  }, { access: 'authenticated' })
 
   // console.read（2026-10-17）：平台信息/插件清单为纯读面，被 console.login 蕴含（真实用户零感知），
   // 免登演示态据此可开「插件与工具」页。注意：DEMO_MODE=1 时本路由暴露实例全部只读视图，

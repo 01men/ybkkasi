@@ -101,10 +101,17 @@
       config:
         mountPath: /rq
     # 会话侧注入插件（WP-06）：四态执行卡 + 👍/👎 反馈条（dsh.client 双面插件）。
-    # name 必须写包名（client-modules 走 require.resolve 解析包元数据，文件路径
-    # 会被负判为「非 client 包」且永久缓存，spike §4.2）；安装形态下要求 profile
-    # 的 node_modules 能解析 @dsh-ops/plugin-rq-card（workspace 包随发布/安装链路就位）。
-    # 启动前必须先构建浏览器半（激活期缺 bundle 会响亮抛错、宿主启动失败，spike §4.4）：
+    # name 必须写包名（client-modules 的 locatePkgJson 取条目首段包名，再从解析结果向上找「名字完全
+    # 匹配」的最近 package.json——路径式条目会匹配到根包 dsh-enterprise-ops 而非本包清单，被负判为
+    # 「非 client 包」且永久缓存，spike §4.2）。因此安装形态下 profile 的 node_modules 必须能按裸包名
+    # 解析 @dsh-ops/plugin-rq-card（issue #5 实证，dsh profile 为 pnpm nodeLinker=hoisted）：
+    #   · copy 安装（`dsh plugin add github:01men/ybkkasi` / `add file:/path`）：根 package.json 的
+    #     dependencies 已声明 "@dsh-ops/plugin-rq-card": "file:packages/plugin-rq-card"，pnpm 会把它
+    #     hoist 到 profile 根，自动就位；
+    #   · link 安装（`dsh plugin add /path/to/checkout`，不带 file:）：pnpm 不装被链接包的依赖，须再
+    #     `dsh plugin --profile <p> add /path/to/checkout/packages/plugin-rq-card` 补一条链接。
+    # 浏览器半 bundle（lib/client.js）已随仓库入库；源码改动过 rq-card 前端时重跑
     #   node packages/plugin-rq-card/build.mjs   →  packages/plugin-rq-card/lib/client.js
+    # （激活期缺 bundle 会响亮抛错、宿主启动失败，spike §4.4）
     - id: rq-card
       name: '@dsh-ops/plugin-rq-card'
