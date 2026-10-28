@@ -11,7 +11,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
-import { PlatformEvents, createZip, newId, slugify, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
+import { PlatformEvents, createZip, newId, slugify, alignAssetCategory, withLegacyCategories, type Collection, type RecordBase } from '../../platform-core/src/index.ts'
 import { t } from '../../platform-i18n/src/index.ts'
 import * as skillhubTools from './tools.ts'
 
@@ -142,7 +142,9 @@ export class SkillHubService extends Service {
   }
 
   categories(): string[] {
-    return [...new Set(this.skills().all().map((skill) => skill.category))].filter(Boolean)
+    // 标准分类（platform-core ASSET_CATEGORIES）固定全量返回——市场筛选条不再随数据漂移；
+    // 数据里仍存在的遗留分类附在标准项之后，保证存量记录迁移前仍可筛选。
+    return withLegacyCategories(this.skills().all().map((skill) => skill.category))
   }
 
   // -- 提交与扫描 ---------------------------------------------------------
@@ -196,12 +198,14 @@ export class SkillHubService extends Service {
       this.runScan(updated.id, version.version)
       return this.skills().get(updated.id)!
     }
+    // 分类对齐到平台标准口径（ASSET_CATEGORIES）；非标准原值保留进 tags 不丢信息
+    const aligned = alignAssetCategory(input.category, input.tags ?? [])
     const created = this.skills().insert({
       id: newId('skl'),
       name: input.name,
       slug,
-      category: input.category ?? '通用',
-      tags: input.tags ?? [],
+      category: aligned.category,
+      tags: aligned.tags,
       summary: input.summary ?? input.content.split('\n')[0]?.slice(0, 80) ?? '',
       description: input.description ?? '',
       authorId: input.authorId,
@@ -391,6 +395,12 @@ export class SkillHubService extends Service {
     }
     const allowed = ['name', 'category', 'tags', 'summary', 'description', 'visibility', 'targetOrgs', 'applicableModels', 'deps', 'cover', 'authorName'] as const
     const changes = Object.fromEntries(allowed.map((key) => [key, patch[key]]).filter(([, value]) => value !== undefined))
+    // 分类对齐到平台标准口径（ASSET_CATEGORIES）；非标准原值保留进 tags 不丢信息
+    if (changes['category'] !== undefined || changes['tags'] !== undefined) {
+      const aligned = alignAssetCategory(changes['category'] ?? skill.category, changes['tags'] ?? skill.tags)
+      changes['category'] = aligned.category
+      changes['tags'] = aligned.tags
+    }
     if (Object.keys(changes).length === 0) return skill
     // 名称可改、slug 不变：slug 是安装依赖回填（agent.attrs.skills）的引用键
     const updated = this.skills().update(skillId, {
@@ -582,7 +592,8 @@ export class SkillHubService extends Service {
       if (options.tag && !skill.tags.includes(options.tag)) return false
       if (skill.visibility === 'orgs' && options.viewerOrgId && !skill.targetOrgs.includes(options.viewerOrgId)) return false
       if (options.q) {
-        const haystack = `${skill.name} ${skill.summary} ${skill.tags.join(' ')} ${skill.category}`.toLowerCase()
+        // 关键字覆盖：名称 / 简介 / 描述 / 标签 / 分类 / 作者（市场搜索框口径）
+        const haystack = `${skill.name} ${skill.summary} ${skill.description} ${skill.tags.join(' ')} ${skill.category} ${skill.authorName}`.toLowerCase()
         if (!haystack.includes(options.q.toLowerCase())) return false
       }
       return true

@@ -13,6 +13,7 @@ import {
   gateManagedWork, WORK_DENY_CODE_LABELS,
   newTraceId, formatTraceparent,
   PolicyDecisionPoint, wrapPolicyDecision,
+  normalizeAssetCategory,
   type Collection, type RecordBase,
   type PolicyDecision, type PolicyModule, type PolicyRequest,
   type UnifiedPrincipal,
@@ -122,6 +123,8 @@ export interface McpServiceRecord extends RecordBase {
   slug: string
   description: string
   icon: string
+  /** 业务分类（各资产板块统一口径 ASSET_CATEGORIES；缺省「其他」，存量记录读侧回落）。 */
+  category?: string
   endpoint: string
   transport: 'stdio' | 'sse' | 'http'
   mode: 'hosted' | 'external'
@@ -463,6 +466,8 @@ export class McpService extends Service {
     slug?: string
     description?: string
     icon?: string
+    /** 业务分类（各资产板块统一口径）；非法/缺省值归一化为「其他」。 */
+    category?: string
     endpoint?: string
     transport?: McpServiceRecord['transport']
     mode?: McpServiceRecord['mode']
@@ -498,6 +503,7 @@ export class McpService extends Service {
       slug,
       description: input.description ?? '',
       icon: input.icon ?? 'mcp',
+      category: normalizeAssetCategory(input.category),
       endpoint: input.endpoint ?? '',
       transport: input.transport ?? 'http',
       mode: input.mode ?? 'hosted',
@@ -527,11 +533,11 @@ export class McpService extends Service {
 
   /** 通用 PATCH 允许直改的字段（治理归属 ownerEntity 不在列——走专用归属指派端点做资源校验）。 */
   private static readonly UPDATABLE_KEYS = [
-    'name', 'description', 'icon', 'endpoint', 'tools', 'headers', 'rateLimitPerMin',
+    'name', 'description', 'icon', 'endpoint', 'tools', 'headers', 'rateLimitPerMin', 'category',
   ] as const
 
   updateService(id: string, patch: Partial<Pick<McpServiceRecord,
-    'name' | 'description' | 'icon' | 'endpoint' | 'tools' | 'headers' | 'rateLimitPerMin'
+    'name' | 'description' | 'icon' | 'endpoint' | 'tools' | 'headers' | 'rateLimitPerMin' | 'category'
     | 'capabilityId' | 'exposureMode' | 'dataClass' | 'environment' | 'visibility' | 'credentialRef'
   >>): McpServiceRecord {
     const service = this.requireService(id)
@@ -545,6 +551,7 @@ export class McpService extends Service {
     for (const key of McpService.UPDATABLE_KEYS) {
       if (patch[key] !== undefined) next[key] = patch[key]
     }
+    if (next['category'] !== undefined) next['category'] = normalizeAssetCategory(next['category'])
     for (const [key, value] of Object.entries(governance)) next[key] = value
     if (patch.capabilityId !== undefined) next.capabilityId = patch.capabilityId
     if (patch.credentialRef !== undefined) next.credentialRef = patch.credentialRef

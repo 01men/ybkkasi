@@ -3,6 +3,10 @@
  * schema 同时驱动：控制台注册表单（分「基本/技术/治理」三组）、属性校验、详情页展示。
  */
 import type { ResourceTypeSpec } from '../../platform-core/src/index.ts'
+import { ASSET_CATEGORIES } from '../../platform-core/src/index.ts'
+
+/** 各资产板块统一业务分类选项（口径见 platform-core/src/taxonomy.ts）。 */
+const CATEGORY_OPTIONS = ASSET_CATEGORIES.map((value) => ({ value, label: value }))
 
 export const AGENT_TYPE_SPEC: ResourceTypeSpec = {
   type: 'agent',
@@ -19,6 +23,7 @@ export const AGENT_TYPE_SPEC: ResourceTypeSpec = {
     fields: [
       { key: 'description', label: '描述', type: 'text', group: 'basic', required: true, placeholder: '这个 Agent 做什么、适用什么场景', hint: '展示在市场与详情页' },
       { key: 'avatar', label: '头像', type: 'string', group: 'basic', defaultValue: '🤖', hint: '一个 emoji 即可' },
+      { key: 'category', label: '业务分类', type: 'enum', group: 'basic', defaultValue: '其他', options: CATEGORY_OPTIONS, hint: '各资产板块统一口径（财务/行政/人事/销售/运营/战略/生产/研发/质量/制造/其他）；列表页按此筛选' },
       { key: 'tags', label: '标签', type: 'tags', group: 'basic', defaultValue: [] },
       { key: 'model', label: '底层模型', type: 'enum', group: 'tech', required: true, options: [
         { value: 'deepseek-chat', label: 'DeepSeek Chat', hint: '通用对话' },

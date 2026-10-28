@@ -949,7 +949,7 @@
   "延迟": "Latency",
   "尚无权限组授权该服务": "No permission group grants this service yet",
   "提交审批": "Submit for approval",
-  "预演影响面": "Dry-run impact",
+  "预演影响面": "Preview impact",
   "发布": "Release",
   "无直接依赖方，可安全发布": "No direct dependents; safe to release",
   "影响面预演（dry-run）": "Impact dry-run",
@@ -2084,7 +2084,12 @@
   "拒绝同样落审计与调用台账；按原因处理（缺授权找管理员、受众不符重新换牌），不要变形重试。": "Denials are recorded in audit and the call ledger; handle by reason (missing grant → ask an admin; audience mismatch → re-exchange the token) instead of blind retries.",
   "存在跨组织的主体/服务组合": "Cross-org subject/service combination exists",
   "预演该权限组的影响面：新增服务 / 写工具 / 高敏数据 / 跨组织": "Preview this permission group impact: new services / write tools / confidential data / cross-org",
-  "预演影响面": "Preview impact",
   "权限组影响预演：{name}": "Permission group impact preview: {name}",
-  "按该权限组当前策略预演（不落库）：新增可访问服务 / 涉及写工具 / 高敏数据 / 跨组织暴露。": "Preview by the group current policy (nothing is persisted): newly accessible services / write tools involved / confidential data / cross-org exposure."
+  "按该权限组当前策略预演（不落库）：新增可访问服务 / 涉及写工具 / 高敏数据 / 跨组织暴露。": "Preview by the group current policy (nothing is persisted): newly accessible services / write tools involved / confidential data / cross-org exposure.",
+  "共 {n} 个应用": "{n} apps in total",
+  "共 {n} 个服务": "{n} services in total",
+  "没有匹配的 AI 应用": "No matching AI apps",
+  "换个分类或关键字试试": "Try another category or keyword",
+  "全部分类": "All categories",
+  "搜索服务名称 / 描述": "Search service name / description"
 }

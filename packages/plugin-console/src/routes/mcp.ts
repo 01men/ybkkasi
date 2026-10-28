@@ -63,7 +63,7 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
   }))
 
   guarded('POST', '/api/mcp/services', 'mcp.service.write', (exchange) => {
-    const input = body<{ name: string; slug?: string; description?: string; icon?: string; endpoint?: string; transport?: 'stdio' | 'sse' | 'http'; mode?: 'hosted' | 'external'; orgId?: string; headers?: Record<string, string>; tools?: Array<{ name: string; description: string; riskLevel?: 'read' | 'write' | 'admin' | 'unknown'; inputSchema?: Record<string, unknown> }>; ownerEntity?: { type: 'platform' | 'app' | 'agent' | 'connector'; id?: string }; capabilityId?: string; exposureMode?: 'gateway' | 'direct' | 'internal'; dataClass?: 'public' | 'internal' | 'confidential'; environment?: 'dev' | 'staging' | 'prod'; visibility?: 'org' | 'tenant' | 'cross-org'; credentialRef?: string }>(exchange)
+    const input = body<{ name: string; slug?: string; description?: string; icon?: string; category?: string; endpoint?: string; transport?: 'stdio' | 'sse' | 'http'; mode?: 'hosted' | 'external'; orgId?: string; headers?: Record<string, string>; tools?: Array<{ name: string; description: string; riskLevel?: 'read' | 'write' | 'admin' | 'unknown'; inputSchema?: Record<string, unknown> }>; ownerEntity?: { type: 'platform' | 'app' | 'agent' | 'connector'; id?: string }; capabilityId?: string; exposureMode?: 'gateway' | 'direct' | 'internal'; dataClass?: 'public' | 'internal' | 'confidential'; environment?: 'dev' | 'staging' | 'prod'; visibility?: 'org' | 'tenant' | 'cross-org'; credentialRef?: string }>(exchange)
     // 契约 §6：显式写路径敏感 headers 一律拒绝（明文密钥不入业务集合）；
     // /api/mcp/import 为连接器桥接机器流程，走 importServices「导入即入保险箱」语义
     if (rejectPlainSensitiveHeaders(exchange, input.headers)) return

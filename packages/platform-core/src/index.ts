@@ -42,6 +42,8 @@ export * from './behavior.ts'
 export * from './scenegraph.ts'
 export * from './signature.ts'
 export * from './boot-probe.ts'
+// 平台资产统一业务分类（Skill/Agent/应用/MCP/A2A 各板块共用口径）
+export * from './taxonomy.ts'
 
 export interface PlatformCoreConfig {
   dataDir?: string

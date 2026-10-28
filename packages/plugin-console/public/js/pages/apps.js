@@ -10,6 +10,7 @@ import {
 } from '../ui.js'
 import { buildAppOnboardingText, openOnboardingModal } from '../onboarding.js'
 import { errorBarHtml } from '../errors.js'
+import { ASSET_CATEGORIES, assetCategory } from '../taxonomy.js'
 import {
   dataClassLabel, riskClass, riskLabel, typeLabel, stateLabel, actionLabel,
   miniStat, renderTopologyList, barChartSafe,
@@ -18,6 +19,12 @@ import {
 const APP_TYPE = { web: ['Web 应用', 'globe'], h5: ['H5', 'app'], miniapp: ['小程序', 'app'], desktop: ['桌面端', 'server'], api: ['API 服务', 'plug'] }
 
 const isIconUrl = (value) => /^https?:\/\//i.test(String(value ?? '').trim())
+
+/** 输入防抖（列表搜索用）。 */
+function debounce(fn, ms) {
+  let timer
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms) }
+}
 
 /** 头像 / 图标渲染：http(s) 图片地址渲染为 <img> 头像，其余按 emoji 文本展示（.res-icon 同尺寸）。 */
 function appIconHtml(value) {
@@ -63,15 +70,37 @@ export async function renderApps(content, params, ctx) {
         ${session.can('app.write') ? `<button class="btn btn-primary" id="app-add">${icon('plus', 14)}注册应用</button>` : ''}
       </div>
     </div>
+    <div class="filter-bar">
+      <div class="search-input">${icon('search')}<input class="input" id="app-q" placeholder="搜索应用名称 / 标识"></div>
+      <div class="chips" id="app-cats">
+        <span class="chip active" data-c="">全部</span>
+        ${ASSET_CATEGORIES.map((cat) => `<span class="chip" data-c="${cat}">${cat}</span>`).join('')}
+      </div>
+      <span class="fs-12 text-3" style="margin-left:auto" id="app-count"></span>
+    </div>
     <div class="card-grid" id="app-cards"></div>`
 
-  const holder = $('#app-cards')
-  if (!apps.length) {
-    holder.appendChild(emptyState({ title: '还没有 AI 应用', desc: '注册第一个应用，把 Agent 编排成产品', ...(session.can('app.write') ? { actionText: '注册应用', onAction: () => $('#app-add').click() } : {}), icon: 'app' }))
-  }
-  for (const app of apps) {
-    const [typeLabel_, typeIcon] = APP_TYPE[app.attrs['appType']] ?? ['应用', 'app']
-    const card = h(`
+  const apps0 = apps
+  let appFilter = { q: '', category: '' }
+
+  const renderCards = () => {
+    const list = apps0.filter((a) => {
+      if (appFilter.category && assetCategory(a.attrs) !== appFilter.category) return false
+      if (appFilter.q && !`${a.name}${a.slug}`.toLowerCase().includes(appFilter.q.toLowerCase())) return false
+      return true
+    })
+    const countEl = $('#app-count')
+    if (countEl) countEl.textContent = rqI18n.t('共 {n} 个应用', { n: list.length })
+    const holder = $('#app-cards')
+    if (!holder) return
+    holder.innerHTML = ''
+    if (!list.length) {
+      holder.appendChild(emptyState({ title: '没有匹配的 AI 应用', desc: '换个分类或关键字试试', icon: 'app' }))
+      return
+    }
+    for (const app of list) {
+      const [typeLabel_, typeIcon] = APP_TYPE[app.attrs['appType']] ?? ['应用', 'app']
+      const card = h(`
       <div class="res-card" data-id="${esc(app.id)}">
         <div class="res-card-top">
           ${appIconHtml(app.attrs['icon'])}
@@ -82,6 +111,7 @@ export async function renderApps(content, params, ctx) {
         </div>
         <div class="res-desc">${esc(app.attrs['description'] ?? '')}</div>
         <div class="flex" style="gap:6px;flex-wrap:wrap">
+          <span class="badge badge-brand no-dot">${esc(assetCategory(app.attrs))}</span>
           ${(Array.isArray(app.attrs['agentIds']) ? app.attrs['agentIds'] : []).length
             ? `<span class="badge badge-purple no-dot">${esc(rqI18n.t('编排 {n} 个 Agent', { n: app.attrs['agentIds'].length }))}</span>` : '<span class="text-4 fs-12">未编排 Agent</span>'}
           ${(app.attrs['channels'] ?? []).map((ch) => `<span class="badge badge-muted no-dot">${esc(ch)}</span>`).join('')}
@@ -99,11 +129,23 @@ export async function renderApps(content, params, ctx) {
           </div>
         </div>
       </div>`)
-    const entryBtn = card.querySelector('[data-entry]')
-    if (entryBtn) entryBtn.onclick = (e) => { e.stopPropagation(); void openAppEntry(app) }
-    card.onclick = () => openAppDetail(app.id, ctx)
-    holder.appendChild(card)
+      const entryBtn = card.querySelector('[data-entry]')
+      if (entryBtn) entryBtn.onclick = (e) => { e.stopPropagation(); void openAppEntry(app) }
+      card.onclick = () => openAppDetail(app.id, ctx)
+      holder.appendChild(card)
+    }
   }
+
+  $('#app-q').oninput = debounce(() => { appFilter.q = $('#app-q').value.trim(); renderCards() }, 250)
+  $$('#app-cats .chip').forEach((chip) => {
+    chip.onclick = () => {
+      $$('#app-cats .chip').forEach((c) => c.classList.remove('active'))
+      chip.classList.add('active')
+      appFilter.category = chip.dataset.c
+      renderCards()
+    }
+  })
+  renderCards()
 
   const addBtn = $('#app-add')
   if (addBtn) addBtn.onclick = () => openAppCreate(data.schema, ctx)

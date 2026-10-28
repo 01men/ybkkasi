@@ -9,6 +9,7 @@ import {
   searchableSelectField, multiSelectField, mountSearchableSelects,
 } from '../ui.js'
 import { buildAgentOnboardingText, openOnboardingModal } from '../onboarding.js'
+import { ASSET_CATEGORIES, assetCategory } from '../taxonomy.js'
 
 /** 平台授权直达：签发一次性入场票据后带 #entry_ticket 同窗口整页跳转交互界面
  *  （裸跳转已下线；弹窗子窗口已消灭——dsh 挂载形态下落到 /rq/panel/ 或目标页完整页面，§6）。 */
@@ -63,13 +64,21 @@ export async function renderAgents(content, params, ctx) {
       </div>
       <span class="fs-12 text-3" style="margin-left:auto" id="agent-count"></span>
     </div>
+    <div class="filter-bar" style="margin-top:-10px">
+      <div class="chips" id="agent-cats">
+        <span class="chip active" data-c="">全部</span>
+        ${ASSET_CATEGORIES.map((cat) => `<span class="chip" data-c="${cat}">${cat}</span>`).join('')}
+      </div>
+    </div>
     <div id="agent-list"></div>`
 
-  let filter = { q: '', status: '' }
+  let filter = { q: '', status: '', category: '' }
 
   const refresh = () => {
     const list = agents.filter((a) => {
       if (filter.status && a.status !== filter.status) return false
+      // 分类统一口径：attrs.category 缺失/非标准值的存量按「其他」归拢
+      if (filter.category && assetCategory(a.attrs) !== filter.category) return false
       if (filter.q && !`${a.name}${a.slug}`.toLowerCase().includes(filter.q.toLowerCase())) return false
       return true
     })
@@ -94,6 +103,7 @@ export async function renderAgents(content, params, ctx) {
             </div>
             <div class="res-desc">${esc(agent.attrs['description'] ?? '')}</div>
             <div class="flex" style="gap:6px;flex-wrap:wrap">
+              <span class="badge badge-brand no-dot">${esc(assetCategory(agent.attrs))}</span>
               <span class="badge badge-brand no-dot mono">${esc(agent.attrs['model'] ?? '—')}</span>
               ${Array.isArray(agent.attrs['skills']) && agent.attrs['skills'].length ? `<span class="badge badge-muted no-dot">${esc(rqI18n.t('{n} 个 Skill', { n: agent.attrs['skills'].length }))}</span>` : ''}
               ${agent.boundUserCount ? `<span class="badge badge-muted no-dot">${esc(rqI18n.t('{n} 绑定用户', { n: agent.boundUserCount }))}</span>` : ''}
@@ -119,6 +129,7 @@ export async function renderAgents(content, params, ctx) {
             render: (a) => `<div class="flex" style="gap:10px"><span style="font-size:18px">${esc(a.attrs['avatar'] ?? '🤖')}</span><div><div class="col-strong">${esc(a.name)}</div><div class="col-sub mono">${esc(a.slug)}</div></div></div>`,
           },
           { title: '状态', width: 90, render: (a) => statusBadge(a.status) },
+          { title: '业务分类', width: 80, render: (a) => `<span class="fs-12">${esc(assetCategory(a.attrs))}</span>` },
           { title: '模型', render: (a) => `<span class="mono fs-12">${esc(a.attrs['model'] ?? '—')}</span>` },
           { title: '负责人', render: (a) => esc(a.attrs['ownerName'] ?? '—') },
           { title: '调用', width: 90, render: (a) => `<span class="col-num">${fmtNum(a.metrics.calls)}</span>` },
@@ -147,6 +158,14 @@ export async function renderAgents(content, params, ctx) {
       $$('#agent-status .chip').forEach((c) => c.classList.remove('active'))
       chip.classList.add('active')
       filter.status = chip.dataset.s
+      refresh()
+    }
+  })
+  $$('#agent-cats .chip').forEach((chip) => {
+    chip.onclick = () => {
+      $$('#agent-cats .chip').forEach((c) => c.classList.remove('active'))
+      chip.classList.add('active')
+      filter.category = chip.dataset.c
       refresh()
     }
   })

@@ -15,6 +15,7 @@ import {
   searchableSelectField, mountSearchableSelects,
 } from '../ui.js'
 import { sectionHead, chipRow, heatStrip, emptyHint } from '../components/asset-drawer.js'
+import { ASSET_CATEGORIES } from '../taxonomy.js'
 
 /** Agent 状态枚举（协议值 ASCII）→ 选择器选项中文伴随（option 纯文本不能用 statusBadge） */
 const AGENT_STATUS_LABEL = { online: '已上线', offline: '已下线', draft: '开发中', archived: '已归档' }
@@ -47,7 +48,7 @@ export async function renderSkills(content, params, ctx) {
     <div id="skill-heatmap" class="mb-20"></div>
     <div class="filter-bar">
       <div id="skill-cats"></div>
-      <div class="search-input">${icon('search')}<input class="input" id="skill-q" placeholder="搜索技能 / 发布者" style="width:200px"></div>
+      <div class="search-input">${icon('search')}<input class="input" id="skill-q" placeholder="搜索技能名称、描述、标签、作者..." style="width:220px"></div>
       <div class="segmented" style="margin-left:auto" id="skill-sort">
         <span class="segmented-item active" data-sort="downloads">按下载</span>
         <span class="segmented-item" data-sort="rating">按评分</span>
@@ -136,7 +137,7 @@ export async function renderSkills(content, params, ctx) {
     })
     .catch(() => undefined)
 
-  // 分类 chipRow（全部 + 服务端分类；无分类数据则只有「全部」）
+  // 分类 chipRow（全部 + 服务端分类）：后端固定返回标准 11 项在前、存量遗留分类附后
   $('#skill-cats').appendChild(chipRow(
     [{ value: '', label: '全部' }, ...(data.categories ?? []).map((cat) => ({ value: cat, label: cat }))],
     state.cat,
@@ -397,7 +398,7 @@ function openSubmitModal(ctx, refresh) {
       </div>
       <div class="form-grid">
         ${field('名称', inputField('name'), { required: true })}
-        ${field('分类', selectField('category', ['办公提效', '研发效能', '客户服务', '数据分析', '人事行政', '市场情报', '法务合规', '通用'].map((c) => ({ value: c, label: c }))))}
+        ${field('分类', selectField('category', ASSET_CATEGORIES.map((c) => ({ value: c, label: c }))))}
         ${field('一句话简介', inputField('summary'), { full: true })}
         ${field('版本号', inputField('version', { value: '1.0.0' }))}
         ${field('标签（逗号分隔）', inputField('tags', { placeholder: '文档,自动化' }))}
@@ -455,7 +456,6 @@ function canManage(skill) {
 
 /** 编辑已上架 Skill 的市场信息（名称/分类/标签/简介/描述/适用模型/依赖/可见性）；slug 保持不变。 */
 function openEditModal(skill, ctx, refresh) {
-  const CATEGORIES = ['办公提效', '研发效能', '客户服务', '数据分析', '人事行政', '市场情报', '法务合规', '通用']
   const modal = openModal({
     title: rqI18n.t('编辑信息 · {name}', { name: skill.name }), wide: true,
     body: `
@@ -464,7 +464,7 @@ function openEditModal(skill, ctx, refresh) {
       </div>
       <div class="form-grid">
         ${field('名称', inputField('name', { value: skill.name }), { required: true })}
-        ${field('分类', selectField('category', CATEGORIES.map((c) => ({ value: c, label: c })), { value: skill.category }))}
+        ${field('分类', selectField('category', ASSET_CATEGORIES.map((c) => ({ value: c, label: c })), { value: ASSET_CATEGORIES.includes(skill.category) ? skill.category : '其他' }))}
         ${field('作者 / 开发者名称', inputField('authorName', { value: skill.authorName }), { hint: '市场署名（列表与详情展示）；Skill 归属账号不变' })}
         ${field('一句话简介', inputField('summary', { value: skill.summary }), { full: true })}
         ${field('标签（逗号分隔）', inputField('tags', { value: (skill.tags ?? []).join(','), placeholder: '文档,自动化' }))}

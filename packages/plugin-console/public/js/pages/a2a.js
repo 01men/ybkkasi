@@ -21,6 +21,7 @@ import {
   renderTable, fmtNum, fmtPct, fmtCost, timeAgo, emptyState, maybeShowConceptCard,
 } from '../ui.js'
 import { chipRow, emptyHint } from '../components/asset-drawer.js'
+import { ASSET_CATEGORIES } from '../taxonomy.js'
 
 /** 任务八态（协议枚举保留 ASCII）→ 徽标色 + 中文伴随。 */
 const A2A_STATE_META = {
@@ -158,6 +159,10 @@ async function renderDirectory() {
   body.innerHTML = `
     <div class="filter-bar">
       <div class="search-input">${icon('search')}<input class="input" id="a2a-q" placeholder="搜索员工名称 / slug / 能力描述" style="width:230px"></div>
+      <select class="select" id="a2a-category" style="width:130px">
+        <option value="">全部分类</option>
+        ${ASSET_CATEGORIES.map((cat) => `<option value="${cat}">${cat}</option>`).join('')}
+      </select>
       <select class="select" id="a2a-autonomy" style="width:150px">
         <option value="">全部自治级别</option>
         ${Object.entries(A2A_AUTONOMY_LABEL).map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join('')}
@@ -170,13 +175,14 @@ async function renderDirectory() {
     </div>
     <div class="grid-cards g3" id="a2a-agent-cards"></div>`
 
-  const state = { q: '', autonomy: '', runtime: '', dataClass: '' }
+  const state = { q: '', autonomy: '', runtime: '', dataClass: '', category: '' }
   const refresh = async () => {
     const result = await api.get('/api/a2a/directory' + api.qs({
       q: state.q || undefined,
       autonomy: state.autonomy || undefined,
       runtime: state.runtime || undefined,
       dataClass: state.dataClass || undefined,
+      category: state.category || undefined,
     }))
     renderAgentCards(result.agents ?? [])
   }
@@ -216,6 +222,7 @@ async function renderDirectory() {
           </div>
           <div class="res-desc" title="${esc(agent.description)}">${esc(agent.description || '（暂无能力描述）')}</div>
           <div class="flex" style="gap:6px;flex-wrap:wrap;margin-top:10px;min-height:22px">
+            <span class="badge badge-brand no-dot">${esc(agent.category ?? '其他')}</span>
             ${(agent.skills ?? []).slice(0, 4).map((skill) => `<span class="badge badge-muted no-dot" title="${esc(skill.description ?? '')}">${esc(skill.name)}</span>`).join('')}
             ${skillCount > 4 ? `<span class="fs-11 text-4" style="align-self:center">${esc(rqI18n.t('+{n} 项', { n: skillCount - 4 }))}</span>` : ''}
             ${skillCount === 0 ? `<span class="fs-11 text-4">${esc(rqI18n.t('暂未声明技能'))}</span>` : ''}
@@ -233,6 +240,7 @@ async function renderDirectory() {
   }
 
   $('#a2a-q').oninput = debounce(() => { state.q = $('#a2a-q').value.trim(); void refresh() }, 300)
+  $('#a2a-category').onchange = () => { state.category = $('#a2a-category').value; void refresh() }
   $('#a2a-autonomy').onchange = () => { state.autonomy = $('#a2a-autonomy').value; void refresh() }
   $('#a2a-runtime').onchange = () => { state.runtime = $('#a2a-runtime').value; void refresh() }
   $('#a2a-dataclass').onchange = () => { state.dataClass = $('#a2a-dataclass').value; void refresh() }
@@ -249,6 +257,7 @@ function openAgentDrawer(agent) {
     body: `
       <div class="flex mb-8" style="gap:8px;flex-wrap:wrap;align-items:center">
         ${autonomyBadge(agent.autonomy)}
+        <span class="badge badge-brand no-dot">${esc(agent.category ?? '其他')}</span>
         <span class="badge badge-info no-dot" title="可承接的最高任务密级">${esc(rqI18n.t('密级天花板'))} · ${esc(rqI18n.t(A2A_CLASS_LABEL[agent.dataClassCeiling] ?? agent.dataClassCeiling))}</span>
         <span class="badge badge-muted no-dot mono">${esc(agent.runtime)}</span>
       </div>

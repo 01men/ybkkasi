@@ -1,4 +1,4 @@
-/** MCP 服务：卡片墙 + 详情抽屉（监控图表/工具/版本/权限组）+ 部署向导。 */
+/** MCP 服务：卡片墙 + 分类/搜索筛选 + 详情抽屉（监控图表/工具/版本/权限组）+ 部署向导。 */
 import { api, session } from '../api.js'
 import rqI18n from '../i18n.js'
 import { icon } from '../icons.js'
@@ -8,8 +8,15 @@ import {
   fmtNum, fmtPct, timeAgo, emptyState, sparkline, barChart, lineChart, maybeShowConceptCard,
   multiSelectField, mountSearchableSelects,
 } from '../ui.js'
+import { ASSET_CATEGORIES, assetCategory } from '../taxonomy.js'
 
 const ICON_COLORS = { kb: ['#eef6ff', '#0052D9'], chart: ['#ecfdf5', '#10b981'], ticket: ['#fff7ed', '#f97316'], hr: ['#f5f3ff', '#8b5cf6'], fx: ['#fef2f2', '#ef4444'], mcp: ['#eff6ff', '#3b82f6'] }
+
+/** 输入防抖（列表搜索用）。 */
+function debounce(fn, ms) {
+  let timer
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms) }
+}
 
 export async function renderMcp(content, params, ctx) {
   const [data, governance] = await Promise.all([
@@ -55,13 +62,32 @@ export async function renderMcp(content, params, ctx) {
       ${miniStat('clock', 'P95 延迟', data.overview.p95Latency + 'ms')}
     </div>
 
+    <div class="filter-bar">
+      <div class="search-input">${icon('search')}<input class="input" id="mcp-q" placeholder="搜索服务名称 / 描述" style="width:200px"></div>
+      <div class="chips" id="mcp-cats">
+        <span class="chip active" data-c="">全部</span>
+        ${ASSET_CATEGORIES.map((cat) => `<span class="chip" data-c="${cat}">${cat}</span>`).join('')}
+      </div>
+      <span class="fs-12 text-3" style="margin-left:auto" id="mcp-count"></span>
+    </div>
     <div class="card-grid" id="mcp-cards"></div>`
 
-  const cards = $('#mcp-cards')
-  if (!services.length) {
-    cards.appendChild(emptyState({ title: '还没有 MCP 服务', desc: '接入第一个 MCP 服务，为 Agent 提供工具能力', ...(session.can('mcp.service.write') ? { actionText: '接入 MCP 服务', onAction: () => $('#mcp-deploy-wizard').click() } : {}) }))
-  }
-  for (const svc of services) {
+  let mcpFilter = { q: '', category: '' }
+  const renderCards = () => {
+    const list = services.filter((svc) => {
+      if (mcpFilter.category && assetCategory(svc) !== mcpFilter.category) return false
+      if (mcpFilter.q && !`${svc.name}${svc.slug}${svc.description ?? ''}`.toLowerCase().includes(mcpFilter.q.toLowerCase())) return false
+      return true
+    })
+    const countEl = $('#mcp-count')
+    if (countEl) countEl.textContent = rqI18n.t('共 {n} 个服务', { n: list.length })
+    const cards = $('#mcp-cards')
+    if (!cards) return
+    cards.innerHTML = ''
+    if (!list.length) {
+      cards.appendChild(emptyState({ title: services.length ? '没有匹配的 MCP 服务' : '还没有 MCP 服务', desc: services.length ? '换个分类或关键字试试' : '接入第一个 MCP 服务，为 Agent 提供工具能力', ...(session.can('mcp.service.write') && !services.length ? { actionText: '接入 MCP 服务', onAction: () => $('#mcp-deploy-wizard').click() } : {}) }))
+    }
+    for (const svc of list) {
     const [bg, color] = ICON_COLORS[svc.icon] ?? ICON_COLORS.mcp
     const health = svc.health?.status ?? 'unknown'
     const card = h(`
@@ -75,6 +101,9 @@ export async function renderMcp(content, params, ctx) {
           <span class="traffic ${trafficClass(health)}" title="${esc(rqI18n.t('健康状态：{status}', { status: health }))}"></span>
         </div>
         <div class="res-desc">${esc(svc.description || '暂无描述')}</div>
+        <div class="flex" style="gap:6px;flex-wrap:wrap">
+          <span class="badge badge-brand no-dot">${esc(assetCategory(svc))}</span>
+        </div>
         ${svc.status === 'gray' ? `
           <div>
             <div class="flex-between fs-12 mb-8"><span class="text-3">灰度比例</span><span>${svc.grayPercent}%</span></div>
@@ -90,6 +119,18 @@ export async function renderMcp(content, params, ctx) {
     card.onclick = () => openServiceDetail(svc.id, ctx)
     cards.appendChild(card)
   }
+  }
+
+  $('#mcp-q').oninput = debounce(() => { mcpFilter.q = $('#mcp-q').value.trim(); renderCards() }, 250)
+  $$('#mcp-cats .chip').forEach((chip) => {
+    chip.onclick = () => {
+      $$('#mcp-cats .chip').forEach((c) => c.classList.remove('active'))
+      chip.classList.add('active')
+      mcpFilter.category = chip.dataset.c
+      renderCards()
+    }
+  })
+  renderCards()
 
   const deployBtn = $('#mcp-deploy-wizard')
   if (deployBtn) deployBtn.onclick = () => openDeployWizard(ctx)
@@ -128,6 +169,7 @@ async function openServiceDetail(id, ctx) {
         <div class="grow">
           <div class="flex" style="gap:8px;flex-wrap:wrap">
             ${statusBadge(svcData.status)}
+            <span class="badge badge-brand no-dot">${esc(assetCategory(svcData))}</span>
             <span class="badge badge-muted no-dot">${svcData.transport.toUpperCase()}</span>
             <span class="badge ${svcData.health?.breakerOpen ? 'badge-danger' : 'badge-ok'} no-dot">${svcData.health?.breakerOpen ? '熔断开启' : '熔断关闭'}</span>
           </div>
@@ -470,6 +512,7 @@ function openDeployWizard(ctx) {
         <div class="form-grid">
           ${field('服务名称', inputField('name', { value: state.name }), { required: true })}
           ${field('服务标识', inputField('slug', { value: state.slug, placeholder: '小写字母与中划线' }), { hint: '唯一标识，用于权限组与调用' })}
+          ${field('业务分类', selectField('category', ASSET_CATEGORIES.map((c) => ({ value: c, label: c })), { value: state.category }), { hint: '各资产板块统一口径，市场/目录按此筛选' })}
           ${field(isExternal ? '服务 Endpoint' : '运行地址', inputField('endpoint', { value: state.endpoint, placeholder: isExternal ? 'https://your-mcp.example.com/mcp' : '自动生成' }), { required: isExternal, full: true })}
           <div class="form-item">
             <label class="form-label">传输协议</label>
@@ -581,6 +624,7 @@ tools: []           # 部署后在「工具」页登记`
       }
       await api.post('/api/mcp/services', {
         name: state.name, slug: state.slug || undefined, description: state.description,
+        category: state.category || undefined,
         endpoint: state.endpoint || undefined,
         transport: state.transport || 'http',
         mode: state.source === 'endpoint' ? 'external' : 'hosted',

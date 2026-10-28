@@ -23,6 +23,7 @@ import {
   newId,
   createRestGate,
   PlatformEvents,
+  normalizeAssetCategory,
   type Collection,
   type HttpExchange,
   type RecordBase,
@@ -354,7 +355,7 @@ export class A2aCollabService extends Service {
    * 组织隔离（Q-4）：按调用方可见组织子树收敛——与 /api/agents 的 R11 口径一致，
    * 下级组织持 a2a.directory.read 只能看到本组织子树的协作对象。
    */
-  directory(filter: { skill?: string; q?: string; runtime?: string; autonomy?: string; dataClass?: string }, caller?: CallerRefLike) {
+  directory(filter: { skill?: string; q?: string; runtime?: string; autonomy?: string; dataClass?: string; category?: string }, caller?: CallerRefLike) {
     const orgScope = caller ? this.visibleOrgIds(caller) : null
     const entries = this.ctx.resourceCore.list('agent')
       .filter((agent) => agent.status === 'online')
@@ -367,6 +368,8 @@ export class A2aCollabService extends Service {
           name: agent.name,
           description: card.description,
           avatar: String(agent.attrs['avatar'] ?? '🤖'),
+          // 业务分类（各资产板块统一口径）：存量登记无该属性按「其他」归拢
+          category: normalizeAssetCategory(agent.attrs['category']),
           url: card.url,
           skills: card.skills,
           autonomy: card.extensions[0]!.params.autonomy,
@@ -377,6 +380,7 @@ export class A2aCollabService extends Service {
         }
       })
     return entries
+      .filter((entry) => (filter.category ? entry.category === filter.category : true))
       .filter((entry) => (filter.runtime ? entry.runtime === filter.runtime : true))
       .filter((entry) => (filter.autonomy ? entry.autonomy === filter.autonomy : true))
       .filter((entry) => {
@@ -1306,6 +1310,7 @@ export function apply(ctx: Context) {
         runtime: exchange.query.get('runtime') ?? undefined,
         autonomy: exchange.query.get('autonomy') ?? undefined,
         dataClass: exchange.query.get('dataClass') ?? undefined,
+        category: exchange.query.get('category') ?? undefined,
       }, caller),
     }
   })

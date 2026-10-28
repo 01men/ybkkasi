@@ -175,7 +175,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     // 'cross-org' 保留「逐次审批单」强语义，仅供确有跨租户开放需求的服务显式声明——
     // 演示数据不设该形态，避免治理门禁误伤常规演示路径（三态覆盖见 plugin-mcp policy.test.mjs）。
     name: '企业知识库检索', slug: 'knowledge-base', orgId: aiDept.id,
-    description: '对制度文档、技术 Wiki、会议纪要做语义检索与引用定位。',
+    description: '对制度文档、技术 Wiki、会议纪要做语义检索与引用定位。', category: '行政',
     icon: 'kb', endpoint: 'mcp+http://platform-hosted/knowledge-base',
     ownerEntity: { type: 'platform' }, dataClass: 'public', exposureMode: 'gateway',
     environment: 'prod', visibility: 'org',
@@ -187,7 +187,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   })
   const dw = mkMcp({
     name: '数据分析引擎', slug: 'datawise', orgId: aiDept.id,
-    description: 'SQL 生成与执行、指标查询、报表导出。',
+    description: 'SQL 生成与执行、指标查询、报表导出。', category: '运营',
     icon: 'chart', endpoint: 'mcp+http://platform-hosted/datawise',
     ownerEntity: { type: 'platform' }, dataClass: 'confidential', exposureMode: 'gateway',
     environment: 'prod', visibility: 'org',
@@ -200,7 +200,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   })
   const ticket = mkMcp({
     name: '客服工单系统', slug: 'ticket-service', orgId: prodDept.id,
-    description: '工单创建、流转、催办与满意度回访。',
+    description: '工单创建、流转、催办与满意度回访。', category: '销售',
     icon: 'ticket', endpoint: 'https://ticket-mcp.yuanbingke.com/mcp', mode: 'external', transport: 'sse',
     ownerEntity: { type: 'platform' }, dataClass: 'internal', exposureMode: 'direct',
     environment: 'prod', visibility: 'org',
@@ -214,7 +214,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   })
   const hrSvc = mkMcp({
     name: 'HR 人事服务', slug: 'hr-service', orgId: root.id,
-    description: '人事档案查询、假期余额、考勤异常处理。',
+    description: '人事档案查询、假期余额、考勤异常处理。', category: '人事',
     icon: 'hr', endpoint: 'mcp+http://platform-hosted/hr-service',
     ownerEntity: { type: 'platform' }, dataClass: 'confidential', exposureMode: 'gateway',
     environment: 'prod', visibility: 'org',
@@ -226,7 +226,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   })
   const fx = mkMcp({
     name: '汇率与结算（灰度中）', slug: 'fx-settlement', orgId: beDept.id,
-    description: '跨境结算汇率查询与批量打款指令（灰度验证中）。',
+    description: '跨境结算汇率查询与批量打款指令（灰度验证中）。', category: '财务',
     icon: 'fx', endpoint: 'mcp+http://platform-hosted/fx-settlement',
     ownerEntity: { type: 'platform' }, dataClass: 'confidential', exposureMode: 'gateway',
     environment: 'staging', visibility: 'tenant',
@@ -321,31 +321,32 @@ async function seedDemo(ctx: Context): Promise<void> {
   }
 
   const skillWeekly = await mkSkill({
-    name: '周报生成器', category: '办公提效', tags: ['文档', '自动化'],
+    // 分类对齐平台标准口径（platform-core ASSET_CATEGORIES）；旧分类值保留进 tags
+    name: '周报生成器', category: '行政', tags: ['文档', '自动化', '办公提效'],
     summary: '汇总本周会话与项目进展，一键生成结构化周报',
     content: '# 周报生成器\n\n## 何时使用\n每周五 17:00 汇总个人与团队进展。\n\n## 步骤\n1. 读取本周所有会话摘要\n2. 按项目分组提炼结论\n3. 生成分节周报并发出确认\n\n## 输出格式\nMarkdown，含【本周结论】【风险】【下周计划】三节。',
     authorId: dev1.id, authorName: dev1.displayName, orgId: aiDept.id, version: '1.2.0', changelog: '支持自定义模板',
   })
   const skillSql = await mkSkill({
-    name: 'SQL 审查助手', category: '研发效能', tags: ['数据库', '评审'],
+    name: 'SQL 审查助手', category: '研发', tags: ['数据库', '评审', '研发效能'],
     summary: '对 SQL 变更做索引/风险审查并给出改写建议',
     content: '# SQL 审查助手\n\n## 何时使用\n提交含 SQL 变更的 MR 时触发。\n\n## 检查项\n- 全表扫描风险\n- 索引命中分析\n- 事务与锁范围\n\n## 输出\n审查意见 + 改写示例。',
     authorId: dev2.id, authorName: dev2.displayName, orgId: aiDept.id, version: '2.0.1', changelog: '适配新解析器',
   })
   const skillCs = await mkSkill({
-    name: '客诉安抚话术库', category: '客户服务', tags: ['客服', '话术'],
+    name: '客诉安抚话术库', category: '销售', tags: ['客服', '话术', '客户服务'],
     summary: '按情绪等级与场景匹配备选安抚话术',
     content: '# 客诉安抚话术库\n\n## 何时使用\n客服 Agent 识别到用户负面情绪时调用。\n\n## 分级\nL1 失望 / L2 愤怒 / L3 投诉升级\n\n## 原则\n先共情，后解释，给出可执行补偿选项。',
     authorId: orgAdmin.id, authorName: orgAdmin.displayName, orgId: prodDept.id, version: '1.0.3',
   })
   const skillData = await mkSkill({
-    name: '指标异动归因', category: '数据分析', tags: ['BI', '归因'],
+    name: '指标异动归因', category: '运营', tags: ['BI', '归因', '数据分析'],
     summary: '对指标波动做多维下钻归因，输出结论卡片',
     content: '# 指标异动归因\n\n## 何时使用\n看板指标同比/环比异常时。\n\n## 流程\n1. 确认异动显著性\n2. 按渠道/地区/客群下钻\n3. 输出 Top3 归因与置信度。',
     authorId: dev1.id, authorName: dev1.displayName, orgId: aiDept.id, version: '0.9.0',
   })
   const skillOnboard = await mkSkill({
-    name: '新人入职引导', category: '人事行政', tags: ['HR', '流程'],
+    name: '新人入职引导', category: '人事', tags: ['HR', '流程', '人事行政'],
     summary: '按入职清单引导新同学完成账号、设备、培训',
     content: '# 新人入职引导\n\n## 何时使用\n新员工入职首日。\n\n## 清单\n- 账号激活与三方绑定\n- 设备领用\n- 安全培训考试\n- 导师匹配',
     authorId: orgAdmin.id, authorName: orgAdmin.displayName, orgId: prodDept.id, version: '1.1.0',
@@ -353,7 +354,7 @@ async function seedDemo(ctx: Context): Promise<void> {
 
   // 高风险 Skill（含外联）演示两级审批 + 安全加签
   const skillWeb = await mkSkill({
-    name: '竞品舆情监控', category: '市场情报', tags: ['外联', '监控'],
+    name: '竞品舆情监控', category: '销售', tags: ['外联', '监控', '市场情报'],
     summary: '定时抓取公开舆情并生成竞品日报（高风险：外部网络）',
     content: '# 竞品舆情监控\n\n## 何时使用\n每日 08:00 定时任务。\n\n## 行为\n- 通过 https://news.example.com 获取公开新闻\n- 关键词过滤与情感标注\n- 生成日报',
     authorId: dev2.id, authorName: dev2.displayName, orgId: aiDept.id, version: '1.0.0',
@@ -361,7 +362,7 @@ async function seedDemo(ctx: Context): Promise<void> {
 
   // 待审批版本（供审批中心演示）
   const pendingSkill = ctx.skillHub.submit({
-    name: '合同条款审查', category: '法务合规', tags: ['法务'],
+    name: '合同条款审查', category: '行政', tags: ['法务', '法务合规'],
     summary: '标注合同风险条款并给出修改建议',
     content: '# 合同条款审查\n\n## 何时使用\n上传合同文件后触发。\n\n## 检查项\n- 违约责任对称性\n- 付款节点合理性\n- 知识产权归属',
     authorId: dev1.id, authorName: dev1.displayName, orgId: aiDept.id, version: '0.5.0',
@@ -385,7 +386,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '财务报告助手', slug: 'finance-report',
     attrs: {
       description: '自动汇总财务数据，生成月度经营分析报告初稿。',
-      avatar: '💰', tags: ['财务', '报告'],
+      avatar: '💰', tags: ['财务', '报告'], category: '财务',
       model: 'deepseek-reasoner',
       skills: ['sql-review', 'metric-attribution'], mcpPermGroupIds: [], env: 'sandbox',
       riskLevel: 'medium', dataClass: 'confidential',
@@ -396,7 +397,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '研发编码助手', slug: 'dev-coder',
     attrs: {
       description: '代码评审、SQL 审查与单测生成的研发搭档。',
-      avatar: '🧑‍💻', tags: ['研发'],
+      avatar: '🧑‍💻', tags: ['研发'], category: '研发',
       model: 'deepseek-coder',
       skills: [], mcpPermGroupIds: [], env: 'sandbox',
       riskLevel: 'low', dataClass: 'internal',
@@ -407,7 +408,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '智能客服', slug: 'smart-cs',
     attrs: {
       description: '7×24 客户咨询应答与工单流转。',
-      avatar: '🎧', tags: ['客服'],
+      avatar: '🎧', tags: ['客服'], category: '销售',
       model: 'deepseek-chat',
       skills: ['cs-soothe'], mcpPermGroupIds: [], env: 'shared',
       riskLevel: 'medium', dataClass: 'internal',
@@ -418,7 +419,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: 'HR 问答助手', slug: 'hr-assistant',
     attrs: {
       description: '人事制度问答、假期查询与入职引导。',
-      avatar: '📋', tags: ['HR'],
+      avatar: '📋', tags: ['HR'], category: '人事',
       model: 'deepseek-chat',
       skills: ['onboarding-guide'], mcpPermGroupIds: [], env: 'sandbox',
       riskLevel: 'low', dataClass: 'internal',
@@ -429,7 +430,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '数据分析师', slug: 'data-analyst',
     attrs: {
       description: '指标归因、异动检测与 BI 报表生成。',
-      avatar: '📊', tags: ['数据'],
+      avatar: '📊', tags: ['数据'], category: '运营',
       model: 'deepseek-reasoner',
       skills: ['metric-attribution'], mcpPermGroupIds: [], env: 'dedicated',
       riskLevel: 'medium', dataClass: 'internal',
@@ -440,7 +441,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '汇率结算试点', slug: 'fx-pilot',
     attrs: {
       description: '跨境结算打款指令试点（灰度验证）。',
-      avatar: '💱', tags: ['财务', '灰度'],
+      avatar: '💱', tags: ['财务', '灰度'], category: '财务',
       model: 'deepseek-chat',
       // 身份纳管（AGENT_SSO_ENFORCE=1）：entryUrl 免登通道即满足上线门禁
       entryUrl: 'https://fx-pilot.example.com/chat',
@@ -488,7 +489,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '智能客服门户', slug: 'cs-portal',
     attrs: {
       description: '面向客户的在线客服门户，编排客服 Agent 与工单系统。',
-      icon: '🛎️', appType: 'web', url: 'https://cs.yuanbingke.com',
+      icon: '🛎️', appType: 'web', url: 'https://cs.yuanbingke.com', category: '销售',
       agentIds: [agentCs.id], channels: ['官网', '小程序'], publishVersion: 'v3.2.1',
       riskLevel: 'medium', dataClass: 'internal',
     },
@@ -498,7 +499,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: '数据洞察 BI', slug: 'insight-bi',
     attrs: {
       description: '经营指标看板与归因分析工作台。',
-      icon: '📈', appType: 'web', url: 'https://bi.yuanbingke.com',
+      icon: '📈', appType: 'web', url: 'https://bi.yuanbingke.com', category: '运营',
       agentIds: [agentAnalyst.id, agentFinance.id], channels: ['内网'], publishVersion: 'v2.0.0',
       riskLevel: 'medium', dataClass: 'confidential',
     },
@@ -508,7 +509,7 @@ async function seedDemo(ctx: Context): Promise<void> {
     name: 'HR 助手小程序', slug: 'hr-mini',
     attrs: {
       description: '员工自助：制度问答、假期查询、入职引导。',
-      icon: '📱', appType: 'miniapp', url: 'https://m.yuanbingke.com/hr',
+      icon: '📱', appType: 'miniapp', url: 'https://m.yuanbingke.com/hr', category: '人事',
       agentIds: [agentHr.id], channels: ['企业微信'], publishVersion: 'v1.4.0',
       riskLevel: 'low', dataClass: 'internal',
     },
