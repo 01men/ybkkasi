@@ -22,11 +22,13 @@
  *
  * 用法：
  *   node scripts/refresh-governance-mcp-tokens.mjs [--data-dir <dir>] [--dsh-url http://127.0.0.1:7777]
- *       [--skip-if-fresh] [--fresh-window-min 30] [--force]
+ *       [--skip-if-fresh] [--fresh-window-min 90] [--force]
  *
  *   --skip-if-fresh   仅当 DSH 里存的令牌剩余寿命 < fresh-window-min 时才换牌+重建（定时器用，避免无谓重建连接）
+ *                     窗口 2026-10-28 由 30 调为 90：TTL 120 分钟 + 每小时巡检下，30 分钟窗口只要漏掉一次
+ *                     定时触发令牌即过期；90 分钟窗口保证任意单次漏触发都不会断（代价是每小时重建一次连接）
  *   --force           无条件刷新（忽略新鲜度判断）
- *   --max-staleness-min  写回核验允许的 updatedAt 最大陈旧度（默认 120 分钟；skip 路径令牌新鲜 ⇒ 必然 ≤ 90 分钟）
+ *   --max-staleness-min  写回核验允许的 updatedAt 最大陈旧度（默认 120 分钟；skip 路径令牌新鲜 ⇒ 必然 ≤ 30 分钟）
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -44,7 +46,7 @@ const CRED_FILE = join(DATA_DIR, 'governance-credentials.json')
 const DSH_STORE = resolve(arg('--dsh-store', join(homedir(), '.dsh', 'storages', 'mcp_connector.json')))
 const SKIP_IF_FRESH = argv.includes('--skip-if-fresh')
 const FORCE = argv.includes('--force')
-const FRESH_WINDOW_MIN = Number(arg('--fresh-window-min', '30'))
+const FRESH_WINDOW_MIN = Number(arg('--fresh-window-min', '90'))
 const MAX_STALENESS_MIN = Number(arg('--max-staleness-min', '120'))
 const ALERTS_FILE = join(DATA_DIR, 'governance-refresh-alerts.jsonl')
 const WEBHOOK_URL = process.env.GOV_REFRESH_WEBHOOK_URL ?? ''
