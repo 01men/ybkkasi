@@ -14,9 +14,12 @@
  *      ≤ --max-staleness-min（默认 120）且存储令牌未过期——连接器"应答 ok 但没落盘"
  *      时脚本以非零退出，gov-token 作业 GT-01 不再被假绿掩盖
  *
- * 失败告警出口（防静默，2026-10-28）：任何硬失败在退出前追加一条 JSONL 到
- *   <data-dir>/governance-refresh-alerts.jsonl，org daily 作业会把它计入当日摘要硬失败；
- *   若设置 GOV_REFRESH_WEBHOOK_URL（如钉钉机器人 webhook），同时 POST 一条文本告警（平台外通道）。
+ * 失败告警出口（防静默，2026-10-28；全链路只依赖平台能力与 DSH 基座，不引入任何外部 webhook）：
+ *   本脚本层（DSH 基座本地，平台不可达时也成立）：
+ *     · 追加一条 JSONL 到 <data-dir>/governance-refresh-alerts.jsonl（org daily 作业 D-GOV-ALERTS 计入当日摘要硬失败）
+ *     · macOS 本机通知（osascript display notification；launchd gui 域可直接弹出）
+ *   作业层（平台可见，org/automation/jobs/gov-token.mjs 负责）：硬失败边缘触发时向平台研发部面板发告警工件，
+ *     控制台面板即刻可见；需外推到钉钉群的由平台钉钉桥接（企业应用凭据在平台侧）承接，本地零配置。
  *
  * 不打印任何 secret/令牌原文，只报到期时刻。
  *
@@ -33,7 +36,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { createHmac } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 
 const argv = process.argv.slice(2)
@@ -52,59 +54,23 @@ const FRESH_WINDOW_MIN = Number(arg('--fresh-window-min', '90'))
 const MAX_STALENESS_MIN = Number(arg('--max-staleness-min', '120'))
 const ALERTS_FILE = join(DATA_DIR, 'governance-refresh-alerts.jsonl')
 
-/**
- * 平台外告警通道配置（任务卡 C，2026-10-28）：环境变量优先，缺省回落 ~/.config/ybkk/automation.json
- * 的 notify 段（chmod 600，与 org 自动化其余机器凭证同一配置源）：
- *   notify.dingtalkWebhook  钉钉群自定义机器人 webhook（安全设置建议「加签」或关键词 "gov-refresh"）
- *   notify.dingtalkSecret   加签密钥（可选；设置后按钉钉规范附 timestamp+sign）
- * 不打印任何 URL/secret 原文。
- */
-const NOTIFY_CFG_FILE = join(homedir(), '.config', 'ybkk', 'automation.json')
-const notifyCfg = (() => {
-  try { return JSON.parse(readFileSync(NOTIFY_CFG_FILE, 'utf8')).notify ?? {} } catch { return {} }
-})()
-const WEBHOOK_URL = process.env.GOV_REFRESH_WEBHOOK_URL || notifyCfg.dingtalkWebhook || ''
-const WEBHOOK_SECRET = process.env.GOV_REFRESH_WEBHOOK_SECRET || notifyCfg.dingtalkSecret || ''
-
 const log = (msg) => console.log(`[gov-refresh] ${msg}`)
 
-/** 钉钉机器人加签：timestamp + "\n" + secret → HMAC-SHA256 → base64 → urlencode（钉钉官方规范）。 */
-const signedWebhookUrl = () => {
-  if (!WEBHOOK_SECRET) return WEBHOOK_URL
-  const timestamp = Date.now()
-  const sign = createHmac('sha256', WEBHOOK_SECRET).update(`${timestamp}\n${WEBHOOK_SECRET}`).digest('base64')
-  return `${WEBHOOK_URL}${WEBHOOK_URL.includes('?') ? '&' : '?'}timestamp=${timestamp}&sign=${encodeURIComponent(sign)}`
-}
-
 /**
- * 硬失败告警出口（三层，任一失败不掩盖原始错误、不影响退出码）：
+ * 硬失败告警出口（脚本层，任一失败不掩盖原始错误、不影响退出码；平台不可达时也成立）：
  *   ① 落盘 JSONL（org daily 作业 D-GOV-ALERTS 消费，进当日摘要硬失败）
- *   ② 钉钉机器人 webhook（平台外即时通知；未配置则跳过）—— 必须 await，否则 exit 前发不出去
- *   ③ macOS 本机通知（osascript display notification；零配置，launchd gui 域可直接弹出）
+ *   ② macOS 本机通知（DSH 基座所在机器；osascript display notification，launchd gui 域可直接弹出）
+ * 平台侧可见的面板告警由 org gov-token 作业在检测到本脚本非零退出时边缘触发投递（见文件头）。
  */
 const alert = async (msg) => {
-  const text = `[gov-refresh] 治理令牌刷新失败：${String(msg).slice(0, 300)}`
   try {
     mkdirSync(DATA_DIR, { recursive: true })
     appendFileSync(ALERTS_FILE, JSON.stringify({ at: new Date().toISOString(), platform: PLATFORM_URL, error: String(msg).slice(0, 300) }) + '\n')
   } catch { /* ① 落盘失败不掩盖原始错误 */ }
-  if (WEBHOOK_URL) {
-    try {
-      const response = await fetch(signedWebhookUrl(), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ msgtype: 'text', text: { content: `${text}\n平台：${PLATFORM_URL}\n时间：${new Date().toISOString()}`.slice(0, 1800) } }),
-        signal: AbortSignal.timeout(8000),
-      })
-      log(`告警 webhook 已投递（HTTP ${response.status}）`)
-    } catch (e) {
-      console.error(`[gov-refresh] 告警 webhook 投递失败：${e.cause?.code ?? e.message}`)
-    }
-  }
   if (process.platform === 'darwin') {
     try {
       execFileSync('osascript', ['-e', `display notification ${JSON.stringify(String(msg).slice(0, 200))} with title "gov-refresh 治理令牌刷新失败" sound name "Basso"`], { stdio: 'ignore', timeout: 5000 })
-    } catch { /* ③ 本机通知不可用（无 GUI 会话等）即跳过 */ }
+    } catch { /* ② 本机通知不可用（无 GUI 会话等）即跳过 */ }
   }
 }
 const fail = async (msg) => { console.error(`[gov-refresh] ✘ ${msg}`); await alert(msg); process.exit(1) }
