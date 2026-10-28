@@ -33,6 +33,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { createHmac } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 
 const argv = process.argv.slice(2)
 const arg = (flag, fallback) => {
@@ -49,33 +51,65 @@ const FORCE = argv.includes('--force')
 const FRESH_WINDOW_MIN = Number(arg('--fresh-window-min', '90'))
 const MAX_STALENESS_MIN = Number(arg('--max-staleness-min', '120'))
 const ALERTS_FILE = join(DATA_DIR, 'governance-refresh-alerts.jsonl')
-const WEBHOOK_URL = process.env.GOV_REFRESH_WEBHOOK_URL ?? ''
+
+/**
+ * 平台外告警通道配置（任务卡 C，2026-10-28）：环境变量优先，缺省回落 ~/.config/ybkk/automation.json
+ * 的 notify 段（chmod 600，与 org 自动化其余机器凭证同一配置源）：
+ *   notify.dingtalkWebhook  钉钉群自定义机器人 webhook（安全设置建议「加签」或关键词 "gov-refresh"）
+ *   notify.dingtalkSecret   加签密钥（可选；设置后按钉钉规范附 timestamp+sign）
+ * 不打印任何 URL/secret 原文。
+ */
+const NOTIFY_CFG_FILE = join(homedir(), '.config', 'ybkk', 'automation.json')
+const notifyCfg = (() => {
+  try { return JSON.parse(readFileSync(NOTIFY_CFG_FILE, 'utf8')).notify ?? {} } catch { return {} }
+})()
+const WEBHOOK_URL = process.env.GOV_REFRESH_WEBHOOK_URL || notifyCfg.dingtalkWebhook || ''
+const WEBHOOK_SECRET = process.env.GOV_REFRESH_WEBHOOK_SECRET || notifyCfg.dingtalkSecret || ''
 
 const log = (msg) => console.log(`[gov-refresh] ${msg}`)
 
-/** 硬失败告警出口：落盘 JSONL（daily 摘要消费）+ 可选平台外 webhook，然后非零退出。 */
-const alert = (msg) => {
+/** 钉钉机器人加签：timestamp + "\n" + secret → HMAC-SHA256 → base64 → urlencode（钉钉官方规范）。 */
+const signedWebhookUrl = () => {
+  if (!WEBHOOK_SECRET) return WEBHOOK_URL
+  const timestamp = Date.now()
+  const sign = createHmac('sha256', WEBHOOK_SECRET).update(`${timestamp}\n${WEBHOOK_SECRET}`).digest('base64')
+  return `${WEBHOOK_URL}${WEBHOOK_URL.includes('?') ? '&' : '?'}timestamp=${timestamp}&sign=${encodeURIComponent(sign)}`
+}
+
+/**
+ * 硬失败告警出口（三层，任一失败不掩盖原始错误、不影响退出码）：
+ *   ① 落盘 JSONL（org daily 作业 D-GOV-ALERTS 消费，进当日摘要硬失败）
+ *   ② 钉钉机器人 webhook（平台外即时通知；未配置则跳过）—— 必须 await，否则 exit 前发不出去
+ *   ③ macOS 本机通知（osascript display notification；零配置，launchd gui 域可直接弹出）
+ */
+const alert = async (msg) => {
+  const text = `[gov-refresh] 治理令牌刷新失败：${String(msg).slice(0, 300)}`
   try {
     mkdirSync(DATA_DIR, { recursive: true })
-    appendFileSync(ALERTS_FILE, JSON.stringify({
-      at: new Date().toISOString(),
-      platform: PLATFORM_URL,
-      error: String(msg).slice(0, 300),
-    }) + '\n')
-  } catch { /* 告警落盘失败不掩盖原始错误 */ }
+    appendFileSync(ALERTS_FILE, JSON.stringify({ at: new Date().toISOString(), platform: PLATFORM_URL, error: String(msg).slice(0, 300) }) + '\n')
+  } catch { /* ① 落盘失败不掩盖原始错误 */ }
   if (WEBHOOK_URL) {
     try {
-      fetch(WEBHOOK_URL, {
+      const response = await fetch(signedWebhookUrl(), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ msgtype: 'text', text: { content: `[gov-refresh] 治理令牌刷新失败：${msg}`.slice(0, 1800) } }),
-      }).catch(() => { /* webhook 失败不影响退出码语义 */ })
-    } catch { /* 同上 */ }
+        body: JSON.stringify({ msgtype: 'text', text: { content: `${text}\n平台：${PLATFORM_URL}\n时间：${new Date().toISOString()}`.slice(0, 1800) } }),
+        signal: AbortSignal.timeout(8000),
+      })
+      log(`告警 webhook 已投递（HTTP ${response.status}）`)
+    } catch (e) {
+      console.error(`[gov-refresh] 告警 webhook 投递失败：${e.cause?.code ?? e.message}`)
+    }
+  }
+  if (process.platform === 'darwin') {
+    try {
+      execFileSync('osascript', ['-e', `display notification ${JSON.stringify(String(msg).slice(0, 200))} with title "gov-refresh 治理令牌刷新失败" sound name "Basso"`], { stdio: 'ignore', timeout: 5000 })
+    } catch { /* ③ 本机通知不可用（无 GUI 会话等）即跳过 */ }
   }
 }
-const fail = (msg) => { alert(msg); console.error(`[gov-refresh] ✘ ${msg}`); process.exit(1) }
+const fail = async (msg) => { console.error(`[gov-refresh] ✘ ${msg}`); await alert(msg); process.exit(1) }
 
-if (!existsSync(CRED_FILE)) fail(`凭证文件不存在：${CRED_FILE}（先跑 scripts/register-governance-credentials.mjs）`)
+if (!existsSync(CRED_FILE)) await fail(`凭证文件不存在：${CRED_FILE}（先跑 scripts/register-governance-credentials.mjs）`)
 const cred = JSON.parse(readFileSync(CRED_FILE, 'utf8'))
 
 /** 换牌取机器令牌（client-credentials）。网络层异常同样走告警出口。 */
@@ -90,9 +124,9 @@ const exchange = async (entry, label) => {
     })
     payload = await response.json().catch(() => null)
   } catch (e) {
-    fail(`${label} 换牌请求失败：${e.cause?.code ?? e.message}`)
+    await fail(`${label} 换牌请求失败：${e.cause?.code ?? e.message}`)
   }
-  if (!response.ok || payload?.ok === false) fail(`${label} 换牌失败：${payload?.error?.message ?? response.status}`)
+  if (!response.ok || payload?.ok === false) await fail(`${label} 换牌失败：${payload?.error?.message ?? response.status}`)
   return payload.data
 }
 
@@ -108,9 +142,9 @@ const configure = async (params, label) => {
     })
     payload = await response.json().catch(() => null)
   } catch (e) {
-    fail(`${label} 连接器请求失败：${e.cause?.code ?? e.message}`)
+    await fail(`${label} 连接器请求失败：${e.cause?.code ?? e.message}`)
   }
-  if (!response.ok || payload?.ok === false) fail(`${label} 配置失败：${payload?.message ?? response.status}`)
+  if (!response.ok || payload?.ok === false) await fail(`${label} 配置失败：${payload?.message ?? response.status}`)
   return payload
 }
 
@@ -138,7 +172,7 @@ let refreshed = 0
 let skipped = 0
 for (const target of targets) {
   const entry = cred[target.key]
-  if (!entry?.clientId) fail(`凭证文件缺少 ${target.key} 条目`)
+  if (!entry?.clientId) await fail(`凭证文件缺少 ${target.key} 条目`)
 
   if (SKIP_IF_FRESH && !FORCE) {
     const ttl = storedTokenTtlMin(target.dshKey)
@@ -183,5 +217,5 @@ for (const target of targets) {
   const ttl = storedTokenTtlMin(target.dshKey)
   if (ttl === null || ttl <= 0) stale.push(`${target.label}：存储令牌缺失或已过期`)
 }
-if (stale.length) fail(`写回核验失败（防假绿）：${stale.join('；')}`)
+if (stale.length) await fail(`写回核验失败（防假绿）：${stale.join('；')}`)
 log(`写回核验：${targets.length} 条连接 updatedAt ≤ ${MAX_STALENESS_MIN} 分钟且令牌未过期`)
