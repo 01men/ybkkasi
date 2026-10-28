@@ -3,6 +3,32 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · 治理令牌自愈刷新健壮化与告警出口收敛（gov-token / gov-refresh，2026-10-28）
+
+- `scripts/refresh-governance-mcp-tokens.mjs`（治理双身份 MCP 令牌自愈刷新入库，org 自动化
+  gov-token 作业每小时调用）三处健壮化：
+  - **写回核验（防假绿）**：刷新后重读 DSH 存储断言两连接 `updatedAt` ≤ 120 分钟且令牌未过期、
+    连接器应答 ok，任一不成立非零退出——杜绝「脚本绿、令牌已断」的假成功。
+  - **续期窗口 30 → 90 分钟**：TTL 120 分钟 + 每小时巡检节奏下，30 分钟窗口漏一次触发即过期
+    （10-27/28 实际断链 21 小时）；90 分钟窗口容忍任意单次漏触发不断链，org gov-token 作业同步显式传参。
+  - 换牌 / 连接器网络层异常并入告警出口（原先走未捕获异常绕过 fail）。
+- 告警出口收敛为 DSH 基座本地闭环：硬失败统一落盘 `data/governance-refresh-alerts.jsonl`
+  （org daily 作业 D-GOV-ALERTS 断言消费）+ macOS 本机通知（osascript，launchd gui 域可直接弹出）；
+  平台面板告警由 org gov-token 作业边缘触发投递，钉钉外推交平台钉钉桥接——脚本层不再需要任何
+  本地 webhook / secret 配置。
+- selftest：管理员编辑 Skill 断言对齐分类统一口径（「研发效能」→「研发」，原值保留进 tags）。
+
+## [Unreleased] · Skill 市场改名 + exec_claim 软读修复 + 自动化闭环实测（2026-10-28）
+
+- 控制台板块改名「AI 市场 → Skill 市场」：导航 / 命令面板 / 页头 / 三语键 / 冒烟用例名同步。
+- `exec_claim` 受管探测改 `ctx.reflect.get` 软读：修复装配 workforce 后调用必炸
+  「cannot get property without inject」（生产实测发现，闭环脚本首次跑通即暴露）。
+- 新增 `scripts/run-closed-loop-review.mjs`：执行中枢自动化闭环驱动（立案 → 心跳 → 唤醒 → 认领 →
+  审查 → 交回 → 脉络回读 → A2A 追踪），幂等可重跑；配套 `scripts/refresh-governance-mcp-tokens.mjs`
+  将治理双身份 MCP 令牌刷新纳入自动化。
+- 实测：三官心跳 30 分钟全部 healthy；血缘 / 唤醒 / run / A2A 任务追踪公网可读；ybkk 子域复核 200
+  （方案 V2.2 已落地）；闭环审查与修订记录见 `docs/internal/ybkk-subdomain-closed-loop-review-20261028.md`。
+
 ## [Unreleased] · 各资产板块标签分类统一（2026-10-28）
 
 - 平台资产统一业务分类口径固定为 11 项：**财务 / 行政 / 人事 / 销售 / 运营 / 战略 / 生产 / 研发 /
