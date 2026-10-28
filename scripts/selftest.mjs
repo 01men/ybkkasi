@@ -2685,7 +2685,8 @@ try {
   const editEmptyAuthor = await api('PATCH', `/api/skills/${skillId}`, { token: dev, body: { authorName: '  ' } })
   check('编辑校验：作者名称不可为空白', !editEmptyAuthor.ok)
   const editByAdmin = await api('PATCH', `/api/skills/${skillId}`, { token: admin, body: { category: '研发效能' } })
-  check('管理员（skill.publish）可编辑任意 Skill 信息', editByAdmin.ok && editByAdmin.data.category === '研发效能')
+  // 2026-10-28 分类统一：「研发效能」为遗留值，写入侧对齐标准分类「研发」，原值保留进 tags（platform-core taxonomy）
+  check('管理员（skill.publish）可编辑任意 Skill 信息', editByAdmin.ok && editByAdmin.data.category === '研发' && (editByAdmin.data.tags ?? []).includes('研发效能'))
   const editEmptyName = await api('PATCH', `/api/skills/${skillId}`, { token: dev, body: { name: '   ' } })
   check('编辑校验：名称不可为空白', !editEmptyName.ok)
 
