@@ -122,7 +122,7 @@ await test('P03 资产台账 assets：六类过滤 + 台账表', async () => {
   ])
   assert(await waitFor(() => /mcp:|agent:|app:|skill:|model:|nas:/.test($('#content').textContent), 8000), '台账应呈现资源键')
 })
-await test('P04 AI 市场 skills：市场卡片结构', async () => {
+await test('P04 Skill 市场 skills：市场卡片结构', async () => {
   await renderPage('pages/skills.js', 'renderSkills', new URLSearchParams())
   // 技能卡片的类名是 .res-card；.card 只有热力图区块（依赖 usage 数据）才有——
   // 只断言 .card 会让本用例随夹具的计量数据有无而红绿（QA 2026-10-21 P04 复现）。

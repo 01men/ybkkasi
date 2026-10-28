@@ -1823,13 +1823,21 @@ export function apply(ctx: Context) {
         const issue = hub.issues().get(issueId)
         if (!issue) throw new Error(t('任务不存在：{id}', { id: issueId }))
         const principal = exec.principal
-        // 受管数字员工路径（运行时结构化探测 workforce 服务，不进 inject——装配在 exec-hub 之后）
-        const workforce = ctx as unknown as {
-          workforceAdmission?: { claimWork?: (caller: unknown, input: { issueId: string }) => Promise<unknown> }
-          workforceIdentity?: { resolveByCaller?: (caller: unknown) => Promise<unknown> }
+        // 受管数字员工路径（运行时结构化探测 workforce 服务，不进 inject——装配在 exec-hub 之后）。
+        // 软读（同 dsh-bridge softRead 口径）：workforce 服务已由提供方声明进 ctx，cordis 严格注入下
+        // `(ctx as any).workforceAdmission` 直访会被 get trap 硬抛「without inject」，必须走 reflect。
+        const softRead = (key: string): unknown => {
+          try {
+            if (typeof (ctx as unknown as { reflect?: { get?: (k: string, optional?: boolean) => unknown } }).reflect?.get === 'function') {
+              return (ctx as unknown as { reflect: { get: (k: string, optional?: boolean) => unknown } }).reflect.get(key, false)
+            }
+            return (ctx as unknown as Record<string, unknown>)[key]
+          } catch {
+            return undefined
+          }
         }
-        const admission = workforce.workforceAdmission
-        const identity = workforce.workforceIdentity
+        const admission = softRead('workforceAdmission') as { claimWork?: (caller: unknown, input: { issueId: string }) => Promise<unknown> } | undefined
+        const identity = softRead('workforceIdentity') as { resolveByCaller?: (caller: unknown) => Promise<unknown> } | undefined
         const isManagedAgent = principal.kind === 'machine' && principal.refType === 'agent'
           && typeof admission?.claimWork === 'function' && typeof identity?.resolveByCaller === 'function'
         if (isManagedAgent) {

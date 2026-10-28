@@ -84,7 +84,7 @@ const NAV = [
   ] },
   { section: '资源', items: [
     { path: '#/assets', label: '资产台账', icon: 'boxes', perm: 'usage.read' },
-    { path: '#/skills', label: 'AI 市场', icon: 'store', perm: 'skill.read', badge: 'skills' },
+    { path: '#/skills', label: 'Skill 市场', icon: 'store', perm: 'skill.read', badge: 'skills' },
     { path: '#/gateway', label: '模型网关', icon: 'route', perm: 'usage.read' },
     { path: '#/agents', label: 'Agent 本体', icon: 'bot', perm: 'agent.read' },
     { path: '#/apps', label: 'AI 应用', icon: 'app', perm: 'app.read' },

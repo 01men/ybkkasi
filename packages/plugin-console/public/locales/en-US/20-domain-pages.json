@@ -1019,7 +1019,7 @@
   "能做什么：生成周报、读取合同要点、分析销售数据等专项任务。": "What it can do: weekly reports, contract key-point extraction, sales data analysis and other focused tasks.",
   "怎么上架：提交 → 自动安全扫描 → 两级审批 → 版本化上架，高风险需安全团队加签。": "How to publish: submit → automatic security scan → two-tier approval → versioned publishing; high risk needs a security-team co-sign.",
   "怎么使用：按场景在市场挑选，下载安装即登记依赖，随时可停用。": "How to use: pick by scenario in the marketplace; installing registers the dependency and can be disabled anytime.",
-  "AI 市场": "Skill Marketplace",
+  "Skill 市场": "Skill Marketplace",
   "提交 → 静态扫描 → 两级审批 → 版本化上架 · 契约五面 Ed25519 验签 · 卡片色深 = 当日使用次数（30 天热力）": "Submit → static scan → two-tier approval → versioned publishing · Ed25519 contract signature verification · card shade = uses that day (30-day heat)",
   "存储配置": "Storage settings",
   "我的提交": "My submissions",
