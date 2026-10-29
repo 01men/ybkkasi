@@ -401,11 +401,12 @@ export function apply(ctx: Context) {
   }
 
   // -- UI 全球化（2026-10-16）：/locales/:locale 词典合并端点 -----------------
-  // 三层词典一次取齐（前端 i18n.js 单请求加载）：服务端文案（platform-i18n/locales，
+  // 两层词典一次取齐（前端 i18n.js 单请求加载）：服务端文案（platform-i18n/locales，
   // 覆盖 API 错误消息/通知/审批文案——SPA 展示服务端错误时同样走前端词典翻译）
-  // + 控制台 SPA 词典（public/locales/<locale>/*.json）+ 面板 SPA 词典
-  // （plugin-panel-core/public/locales/<locale>/*.json）。多文件按文件名序浅合并，
+  // + 控制台 SPA 词典（public/locales/<locale>/*.json）。多文件按文件名序浅合并，
   // 多团队并行维护互不覆盖；企业定制走 I18N_EXTRA_DIR（platform-i18n 内核已并）。
+  // 面板 SPA 词典层已随 2026-10-29 面板架构统一摘除（收编 DeptAI-UI-DSH 面板轨实现，
+  // 其 IAW 工作台为零词典中文直出 SPA，不再提供 plugin-panel-core/public/locales 目录）。
   // 非 /api 路径：鉴权中间件天然放行（词典为静态文案，不含任何业务数据）。
   const packagesRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
   http.register('GET', '/locales/:locale', (exchange) => {
@@ -413,7 +414,6 @@ export function apply(ctx: Context) {
     const merged: Record<string, string> = {
       ...readCatalogDir(join(packagesRoot, 'platform-i18n', 'locales', locale)),
       ...readCatalogDir(join(packagesRoot, 'plugin-console', 'public', 'locales', locale)),
-      ...readCatalogDir(join(packagesRoot, 'plugin-panel-core', 'public', 'locales', locale)),
     }
     exchange.res.setHeader('cache-control', 'no-cache')
     exchange.ok({ locale, count: Object.keys(merged).length, catalog: merged })

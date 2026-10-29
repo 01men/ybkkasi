@@ -700,6 +700,13 @@ try {
   check('#13 复核：capabilities 每个族都有对应路由（无「声明即 404」族，spa 为静态挂载特例）',
     (health.data.contract.panel.capabilities ?? []).every((family) => family === 'spa' || routeFamilies.has(family)),
     JSON.stringify(health.data.contract.panel.capabilities))
+  // 交互连通性（2026-10-29 面板架构统一）：统一后的 IAW 架构能力族（board/mfg/ddws/auth/agent-stream 通道族）
+  // 必须全部出现在契约能力清单中，且五部门配置在列——前台据此判定宿主支持面
+  check('交互连通性：契约能力族覆盖统一架构面（board/mfg/ddws/auth 在列）+ 五部门配置下发',
+    ['board', 'mfg', 'ddws', 'auth'].every((family) => health.data.contract.panel.capabilities.includes(family))
+    && health.data.contract.panel.depts.length === 5
+    && ['rd', 'mfg', 'sales', 'strategy', 'fin'].every((id) => health.data.contract.panel.depts.includes(id)),
+    JSON.stringify({ capabilities: health.data.contract.panel.capabilities, depts: health.data.contract.panel.depts }))
 
   const noAuth = await api('GET', '/api/overview')
   check('无令牌访问被拒绝（401）', noAuth.status === 401)
@@ -6008,7 +6015,7 @@ try {
     panelBare.status === 302 && panelBare.headers.location === '/panel/',
     `status=${panelBare.status} location=${panelBare.headers.location}`)
   const panelSlash = await rawReq('GET', '/panel/')
-  check('/panel/ 面板 SPA 正常伺服（归一目标可达）', panelSlash.status === 200 && panelSlash.body.includes('部门 Agent 工作台'))
+  check('/panel/ 面板 SPA 正常伺服（归一目标可达；IAW 壳页随架构统一收编自 DeptAI-UI-DSH）', panelSlash.status === 200 && panelSlash.body.includes('行业 AI 工作台'))
   // 落地分诊纯函数随包单测（landing.test.mjs：五内置角色决议/通配展开/裸落地/回跳白名单）
   const landingTest = spawn(process.execPath, ['packages/plugin-console/public/js/landing.test.mjs'], { stdio: 'pipe' })
   await new Promise((resolve) => landingTest.on('close', resolve))
@@ -6065,8 +6072,10 @@ try {
   const panelApp = readFileSync(join(process.cwd(), 'packages', 'plugin-panel-core', 'public', 'js', 'app.js'), 'utf8')
   check('面板侧切换接线（管理控制台 data-landing 偏好 + 401 引导带 ?next= 回面板）',
     panelApp.includes('data-landing') && panelApp.includes('next='))
-  check('面板模型面接线（composer 模型切换 #chatModel + 模型配置界面 showModels + 回包模型徽标）',
-    panelApp.includes('#chatModel') && panelApp.includes('showModels') && panelApp.includes("role model"))
+  check('面板 IAW 架构接线（六空间导航 SPACE_META + 行业主题 data-industry + Agent 协作栏 railMode）',
+    panelApp.includes('SPACE_META') && panelApp.includes('data-industry') && panelApp.includes('renderAgentRail'))
+  check('面板流式应答接线（点名 streamAgent 跳隐式派发 + agent-stream 流读取 + SSE ticket 首选一次性票据）',
+    panelApp.includes('streamAgent: true') && panelApp.includes('streamAgentReplies') && panelApp.includes('stream-ticket'))
 
   // ================================================================ 宿主服务连接切换（docs/frontend-host-switching.md）
   section('宿主服务连接切换（前端多宿主 + 数据面跨域放行）')
@@ -6150,10 +6159,12 @@ try {
   const connectionsTest = spawn(process.execPath, ['packages/plugin-console/public/js/connections.test.mjs'], { stdio: 'pipe' })
   await new Promise((resolve) => connectionsTest.on('close', resolve))
   check('连接管理纯函数随包单测全绿（node --test）', connectionsTest.exitCode === 0, `exit=${connectionsTest.exitCode}`)
-  // 面板部门深链决议：面板 SPA 是 ES module（jsdom 跑不了），决议逻辑单列成纯函数直测
-  const deptTest = spawn(process.execPath, ['packages/plugin-panel-core/public/js/dept.test.mjs'], { stdio: 'pipe' })
-  await new Promise((resolve) => deptTest.on('close', resolve))
-  check('部门深链决议纯函数随包单测全绿（dept.test.mjs）', deptTest.exitCode === 0, `exit=${deptTest.exitCode}`)
+  // 面板实时通道（IAW 架构，2026-10-29 统一收编）：SSE 优先 + 轮询降级的决策逻辑单列
+  // realtime.js 纯函数（decideTransport/createEventStream，ES module 无 jsdom 直测面）→ 静态接线断言
+  const realtimeSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-panel-core', 'public', 'js', 'realtime.js'), 'utf8')
+  check('面板实时通道降级决策纯函数在列（decideTransport/createEventStream，无 WebSocket 依赖）',
+    realtimeSrc.includes('export function decideTransport') && realtimeSrc.includes('export function createEventStream')
+    && !realtimeSrc.includes('new WebSocket'))
   const apiSrc = readFileSync(join(process.cwd(), 'packages', 'plugin-console', 'public', 'js', 'api.js'), 'utf8')
   check('api.js 动态 BASE + 会话按连接隔离 + 桥接直通仅本机（连接切换的三个承重点）',
     apiSrc.includes('activeConnection(localStorage, MOUNT)') && apiSrc.includes('TOKEN_NS') && apiSrc.includes('IS_LOCAL_HOST'))
@@ -6303,24 +6314,32 @@ try {
 
     // -- 行业三态 + 激活审批链（申请 → 审批（高风险二次确认）→ 激活生效） -------------
     const industries = await api('GET', '/api/panel/industries', { token: panelAdmin })
-    check('面板：行业三态（QB01/GCJX 已激活，JQR/NEV/PCB 待授权）',
+    // 2026-10-29 面板架构统一（IAW 14 行业登记）：QB01/YB01/JB01 图谱包随平台分发默认激活，
+    // 其余 11 行业走「申请 → 审批（industry.activation · high）→ 激活」链路
+    check('面板：行业三态（14 行业全量登记；QB01/YB01/JB01 内置已激活，其余 11 行业待授权）',
       industries.ok
-      && industries.data.industries.filter((ind) => ind.state === 'active').map((ind) => ind.code).sort().join(',') === 'GCJX,QB01'
-      && industries.data.industries.filter((ind) => ind.state === 'locked').length === 3,
+      && industries.data.industries.length === 14
+      && industries.data.industries.filter((ind) => ind.state === 'active').map((ind) => ind.code).sort().join(',') === 'JB01,QB01,YB01'
+      && industries.data.industries.filter((ind) => ind.state === 'locked').length === 11,
       JSON.stringify(industries.data?.industries?.map((ind) => `${ind.code}:${ind.state}`)))
-    const actReq = await api('POST', '/api/panel/industries/NEV/activate-requests', { token: panelAdmin })
+    const actReq = await api('POST', '/api/panel/industries/SJ02/activate-requests', { token: panelAdmin })
     check('面板：激活申请进入审批中心（industry.activation · high）',
       actReq.ok && actReq.data.approval.kind === 'industry.activation',
       JSON.stringify(actReq.error ?? actReq.data?.approval?.id))
-    const actPending = (await api('GET', '/api/panel/industries', { token: panelAdmin })).data.industries.find((ind) => ind.code === 'NEV')
+    const actPending = (await api('GET', '/api/panel/industries', { token: panelAdmin })).data.industries.find((ind) => ind.code === 'SJ02')
     check('面板：申请后行业显示审批中（pending 三态）', actPending.state === 'pending')
-    const decideOk = await api('POST', `/api/approvals/${actReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '新能源汽车图谱启用', confirmed: true } })
+    const decideOk = await api('POST', `/api/approvals/${actReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '印制板行业图谱启用', confirmed: true } })
     check('面板：审批通过 → 激活执行器生效（active + grantCapabilities）',
       decideOk.ok && decideOk.data.status === 'executed', JSON.stringify(decideOk.data?.execution ?? decideOk.error))
     const industriesAfter = await api('GET', '/api/panel/industries', { token: panelAdmin })
-    check('面板：激活后 NEV 三态转 active', industriesAfter.data.industries.find((ind) => ind.code === 'NEV').state === 'active')
-    const dupActivate = await api('POST', '/api/panel/industries/NEV/activate-requests', { token: panelAdmin })
+    check('面板：激活后 SJ02 三态转 active', industriesAfter.data.industries.find((ind) => ind.code === 'SJ02').state === 'active')
+    const dupActivate = await api('POST', '/api/panel/industries/SJ02/activate-requests', { token: panelAdmin })
     check('面板：重复激活申请被拒（已是激活态）', !dupActivate.ok && /已是激活态/.test(dupActivate.error.message))
+    // 交互连通性（激活 → 图谱可读闭环）：激活后的行业场景图谱随即可下发（一图四清单）
+    const graphActivated = await api('GET', '/api/panel/scenegraph?industry=SJ02', { token: panelAdmin })
+    const sj02Scenes = Object.values(graphActivated.data?.pack?.activities ?? {}).reduce((sum, list) => sum + list.length, 0)
+    check('面板：激活后行业图谱即时可读（SJ02 一图四清单下发，base scenegraphs ↔ panel 连通）',
+      graphActivated.ok && sj02Scenes > 0 && graphActivated.data.pack.code === 'SJ02', `scenes=${sj02Scenes}`)
 
     // -- panelAgentRuntime：诚实降级 + 真实模型调用 + panel:* 计量（D1 键格式） -------
     const mentionFallback = await api('POST', '/api/panel/mfg/messages', { token: panelAdmin, body: { channelId: mainChannel.id, text: '@设备运维 Agent 自测：请巡检 3# 冲床', ddSync: false } })
@@ -6872,7 +6891,7 @@ try {
       JSON.stringify({ reconcileOk: reconcile.ok, alertSends: ddSends.filter((send) => send.chatId === 'cid-alerts').length, total: ddSends.length, before: sendsBeforeAlert }))
 
     // 审批推送
-    const pcbReq = await api('POST', '/api/panel/industries/PCB/activate-requests', { token: admin })
+    const pcbReq = await api('POST', '/api/panel/industries/QC01/activate-requests', { token: admin })
     const approvalPush = await api('POST', `/api/dingtalk/approvals/${pcbReq.data.approval.id}/push`, { token: admin })
     check('桥接：审批单推送钉钉', approvalPush.ok && approvalPush.data.delivered === true, JSON.stringify(approvalPush.data ?? approvalPush.error))
 
@@ -6885,8 +6904,8 @@ try {
     const cbOk = await api('POST', '/api/dingtalk/bridge/callback', { token: admin, body: { staffId: 'selftest-staff-001', approvalId: pcbReq.data.approval.id, decision: 'approve', opinion: '钉钉侧回决（自测）', confirmed: true } })
     check('桥接：合规回决写回（staffId↔identityLinks 反查 + confirmed）→ 审批执行',
       cbOk.ok && cbOk.data.approval.status === 'executed', JSON.stringify(cbOk.data ?? cbOk.error))
-    const pcbAfter = (await api('GET', '/api/panel/industries', { token: admin })).data.industries.find((ind) => ind.code === 'PCB')
-    check('桥接：回决生效后 PCB 行业转 active', pcbAfter.state === 'active')
+    const pcbAfter = (await api('GET', '/api/panel/industries', { token: admin })).data.industries.find((ind) => ind.code === 'QC01')
+    check('桥接：回决生效后 QC01 行业转 active', pcbAfter.state === 'active')
 
     // 解绑 + 恢复 mock（不污染后续断言）
     const unbind = await api('DELETE', `/api/dingtalk/channels/${syncChannel.id}/bridge`, { token: admin })
@@ -7058,7 +7077,7 @@ try {
     const asset = await simGet('/rq/js/app.js')
     check('/rq/js/* 控制台静态资源按前缀命中', asset.status === 200 && String(asset.headers.get('content-type') ?? '').includes('javascript'), `status=${asset.status}`)
     const panelSpa = await simGet('/rq/panel/')
-    check('/rq/panel/ 面板 SPA 经前缀挂载可达（宿主 web diff=0）', panelSpa.status === 200 && (await panelSpa.text()).includes('部门 Agent 工作台'), `status=${panelSpa.status}`)
+    check('/rq/panel/ 面板 SPA 经前缀挂载可达（宿主 web diff=0）', panelSpa.status === 200 && (await panelSpa.text()).includes('行业 AI 工作台'), `status=${panelSpa.status}`)
     const panelBareMounted = await simGet('/rq/panel')
     check('/rq/panel 302 → /rq/panel/（externalBase 感知，与独立形态同语义）',
       panelBareMounted.status === 302 && panelBareMounted.headers.get('location') === '/rq/panel/',
@@ -8536,9 +8555,9 @@ try {
     const localeRoot = new URL('../packages/platform-i18n/locales/', import.meta.url).pathname
     const dictParityFails = []
     let dictPairs = 0
+    // 面板 SPA 词典层已随 2026-10-29 架构统一摘除（IAW 工作台为中文直出 SPA，无 locales 目录）
     for (const rootDir of [localeRoot,
-      join(process.cwd(), 'packages', 'plugin-console', 'public', 'locales'),
-      join(process.cwd(), 'packages', 'plugin-panel-core', 'public', 'locales')]) {
+      join(process.cwd(), 'packages', 'plugin-console', 'public', 'locales')]) {
       const enFiles = existsSync(join(rootDir, 'en-US')) ? readdirSync(join(rootDir, 'en-US')).filter((f) => f.endsWith('.json')) : []
       for (const name of enFiles) {
         const enPath = join(rootDir, 'en-US', name)

@@ -43,10 +43,13 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
       else if (segments[panelIdx + 2] !== undefined && !segments[panelIdx + 2]!.startsWith(':')) capabilities.add(segments[panelIdx + 2]!)
     }
     if (ctx.httpServer.declaredRoutes.some((route) => route.path === '/panel')) capabilities.add('spa')
-    // 部门能力：面板域已配置部门（deptConfigs.id，如 mfg）——前台判断部门视图可用性
+    // 部门能力：面板域已配置部门（deptConfigs.id，如 mfg）——前台判断部门视图可用性。
+    // 面板服务经 reflect 软读（2026-10-29）：console 未声明 panel inject（cordis 未声明键
+    // 裸访问硬抛），此前 ctx.panel 在 catch 里被吞成空数组、契约 depts 恒空——软读后真实下发。
     let depts: string[] = []
     try {
-      depts = ctx.panel.deptConfigs().all().map((item) => item.id).filter(Boolean)
+      const panelSvc = ctx.reflect.get('panel', false) as { deptConfigs?: () => { all: () => Array<{ id?: string }> } } | undefined
+      depts = (panelSvc?.deptConfigs?.().all() ?? []).map((item) => item.id ?? '').filter(Boolean)
     } catch { /* 面板域未装配：能力清单照常返回，depts 置空 */ }
     panelRoutes.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
     exchange.ok({
@@ -76,9 +79,9 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
   }, { access: 'public' })
 
   // -- 认证 ---------------------------------------------------------------
-  // 面板自持登录面（交接 F 清单 N 节）与控制台登录转发同一 authn 后端、响应形状一致：
-  // 白名单早已登记两条 /api/panel/auth/* 路径，但处理器此前未合入 main（面板本页登录
-  // 实际 404，前台 #2 复核残留）——2026-10-29 补齐闭环，口令错误照旧 401。
+  // 面板命名空间登录/换票（/api/panel/auth/*）自 2026-10-29 面板架构统一（收编 DeptAI-UI-DSH
+  // 面板轨实现）起由 plugin-panel-core 自持注册（authn 转发、响应形状与本路由逐字段一致），
+  // console 不再重复注册——重复登记会让 /api/health 的 declaredRoutes 双计、契约 routes[] 出重。
   const handleLogin = async (exchange: HttpExchange): Promise<void> => {
     const { username, password } = body<{ username: string; password: string }>(exchange)
     if (!username || !password) {
@@ -105,7 +108,6 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
     }
   }
   http.register('POST', '/api/auth/login', handleLogin, { access: 'public' })
-  http.register('POST', '/api/panel/auth/login', handleLogin, { access: 'public' })
 
   const handleRefresh = async (exchange: HttpExchange): Promise<void> => {
     const { refreshToken } = body<{ refreshToken?: string }>(exchange)
@@ -122,7 +124,6 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
     }
   }
   http.register('POST', '/api/auth/refresh', handleRefresh, { access: 'public' })
-  http.register('POST', '/api/panel/auth/refresh', handleRefresh, { access: 'public' })
 
   // -- 三方登录（IdentityProviderAdapter 链路） ------------------------------
   http.register('POST', '/api/auth/sso/authorize', async (exchange) => {

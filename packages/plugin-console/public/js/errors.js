@@ -259,6 +259,25 @@ const COPY = {
     message: '执行中枢（exec-hub）装配不完整或暂不可用，数字员工待办暂无法拉取。请稍后重试；持续出现请联系平台管理员。',
     action: null,
   },
+  // ── 面板域（2026-10-29 架构统一收编：面板轨软依赖降级/只读面的对外原因码） ──
+  UNAUTHENTICATED: {
+    tone: 'danger',
+    title: '未认证',
+    message: '当前请求未携带有效登录凭证（鉴权中间件未覆盖或令牌缺失）。请重新登录后再试。',
+    action: { label: '重新登录', href: '#/login' },
+  },
+  DEGRADED: {
+    tone: 'warn',
+    title: '能力未接入',
+    message: '该能力在本机形态未装配（演示态诚实降级）——连接宿主平台后可用。',
+    action: null,
+  },
+  MODEL_READONLY: {
+    tone: 'warn',
+    title: '模型目录只读',
+    message: '模型目录由 dsh 配置托管（settings.yaml / llm 适配器），面板侧不可增删改。请在 dsh 侧调整模型配置。',
+    action: null,
+  },
 
   // ── NAS / 下载 / 版本冲突 ─────────────────────────────────────────────
   SHARE_LINK_INVALID: {

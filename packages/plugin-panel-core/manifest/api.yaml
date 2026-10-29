@@ -2,9 +2,11 @@
 plugin: dsh-plugin-panel-core
 base: /api
 endpoints:
+  - GET /api/panel/board?platform=（panel.read；战略看板聚合+卡片包下发，双轨迁移自 portal/console）
   - GET /api/panel/depts · GET /api/panel/:dept/overview · GET /api/panel/:dept/board（panel.read）
   - GET/PUT /api/panel/:dept/widgets · GET/PUT /api/panel/:dept/kpis（读 panel.read / 写 panel.config.write）
-  - GET/POST /api/panel/:dept/channels · GET/POST /api/panel/:dept/messages · POST /api/panel/messages/:id/card-action
+  - GET /api/panel/models（panel.read）· POST /api/panel/models · DELETE /api/panel/models/:id · POST /api/panel/models/:slug/test（panel.config.write；与 dsh 服务共用 modelgw 模型目录）
+  - GET/POST /api/panel/:dept/channels · GET/POST /api/panel/:dept/messages（POST 支持 model 参数=对话框切换已登记模型）· POST /api/panel/messages/:id/card-action
   - GET/POST /api/panel/:dept/tasks · POST /api/panel/tasks/:id/transition（panel.task.write）
   - GET /api/panel/:dept/artifacts · GET /api/panel/:dept/poll（降级轮询）
   - GET /api/panel/:dept/skills（panel.read）· POST /api/panel/:dept/skills/invoke（panel.write；J1 直调：降级=200+ok:false，鉴权/范围=403/400）
@@ -13,18 +15,23 @@ endpoints:
   - GET /api/panel/industries（三态）· POST /api/panel/industries/:code/activate-requests
   - GET /api/panel/scenegraph?industry=（scenegraph.read）· POST /api/panel/scenegraphs/reload（panel.config.write）
   - GET /panel（面板 SPA 页面） · GET /api/panel/orgs（部门树）
-  - GET/POST /api/panel/models（模型端点登记） · DELETE /api/panel/models/:id · POST /api/panel/models/:id/test（连通性测试）
   - POST /api/panel/channels/:id/read（频道已读游标）
   - PUT /api/panel/:dept/config（面板配置） · PUT /api/panel/:dept/agents（Agent 阵容） · POST /api/panel/:dept/artifacts（产物登记）
   - POST /api/panel/:dept/scenes/:scene/diagnose（场景诊断） · POST /api/panel/:dept/scenes/:scene/sync-dingtalk（场景钉钉同步）
-  - GET /api/panel/board（panel.read；战略看板：卡片包角色×平台过滤 + 漏斗/WAIC/ROI 估算聚合，DeptAI-UI-DSH 收编 2026-10-29）
-  - POST /api/panel/:dept/agent-stream（panel.write；SSE-over-POST 流式应答：start/delta/done/fallback 逐事件，应答照常落库广播）
-  - GET /api/panel/mfg/catalog · GET /api/panel/mfg/roadmap · GET /api/panel/mfg/releases · GET /api/panel/mfg/evaluation-plan · GET /api/panel/mfg/tools/:id/template（panel.read；制造工具箱目录/选题/放行/评估面）
-  - POST /api/panel/mfg/tools/:id/run · POST /api/panel/mfg/tools/:id/export（panel.write；工具执行与结果导出）
-  - POST /api/panel/mfg/evaluate · POST /api/panel/mfg/releases · DELETE /api/panel/mfg/releases/:skillId（panel.config.write；评估发起与放行签署/撤回——放行是治理动作）
-  - GET /api/panel/ddws/status · GET /api/panel/ddws/login（panel.read；本地钉钉面 dws CLI 桥状态与登录会话轮询）
-  - POST /api/panel/ddws/install · POST /api/panel/ddws/login · DELETE /api/panel/ddws/login · PUT/DELETE /api/panel/ddws/bind（panel.config.write；CLI 安装/设备流登录/群绑定）
-  - POST /api/panel/ddws/test · POST /api/panel/ddws/pull（panel.write；连通性测试与入向消息拉取，失败 200+ok:false 诚实降级）
+  - POST /api/panel/auth/login · POST /api/panel/auth/refresh（面板命名空间登录/换票：iam+authn 基线种子链，01门登录通道）
+  - GET/POST/DELETE /api/panel/ddws/login（dws CLI 设备流登录：发起/轮询/取消；写动词 panel.config.write，读 panel.read）
+  - GET /api/panel/ddws/status（panel.read；installed/bound/auth 形状）· POST /api/panel/ddws/install · POST /api/panel/ddws/test · POST /api/panel/ddws/pull（panel.config.write）
+  - PUT/DELETE /api/panel/ddws/bind（panel.config.write；绑定/解绑钉钉群）
+  - POST /api/panel/:dept/agent-stream（panel.read；SSE 流式对话降级通道）
+  - # —— 制造工具箱（2026-10-19 并入「制造业 AI 工具集」，docs/plan-mfg-toolkit-fusion-20261019.md）——
+  - # 13 个确定性计算内核 + 3 个 AI 工具（Skill 放行制）+ 100 项选题清单；模型面经平台网关，面板零密钥。
+  - GET /api/panel/mfg/catalog（panel.read；工具目录 + 分类 + Skill 放行状态 + 模型就绪态）
+  - GET /api/panel/mfg/roadmap（panel.read；100 项选题清单：来源追溯/验收标准/交付边界/状态）
+  - POST /api/panel/mfg/tools/:id/run（panel.write；统一执行入口：strict 字段校验 + 溢出拦截 + 质量门禁）
+  - GET /api/panel/mfg/tools/:id/template（panel.read；输入模板字段）· POST /api/panel/mfg/tools/:id/export（panel.read；JSON/Markdown 导出）
+  - GET /api/panel/mfg/releases（panel.read；Skill 放行记录与有效性判定）· GET /api/panel/mfg/evaluation-plan（panel.read；真实评估计划与四类样例，不发起调用）
+  - POST /api/panel/mfg/evaluate（panel.config.write；执行真实模型评估产出 live 报告——报告不构成放行）
+  - POST /api/panel/mfg/releases（panel.config.write；审核人签署放行）· DELETE /api/panel/mfg/releases/:skillId（panel.config.write；撤回放行）
 tools:
   - panel_agents_list
   - panel_msg_send
@@ -33,8 +40,8 @@ tools:
   - panel_scene_diag
   - panel_widget_data
   - panel_agent_invoke
-  - panel_skill_invoke
   - panel_board_digest
+  - panel_skill_invoke
   - panel_mfg_tools_list
   - panel_mfg_tool_run
   - panel_mfg_roadmap

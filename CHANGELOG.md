@@ -3,6 +3,43 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · 面板架构统一：底座侧部门面板整体收编为 DeptAI-UI-DSH 面板轨实现（2026-10-29）
+
+维护者拍板「当前项目的部门面板全部砍掉，统一使用 01men/DeptAI-UI-DSH 的面板架构」。
+底座仓 `packages/plugin-panel-core` 不再维护独立分叉——整包替换为面板轨（DeptAI-UI-DSH）
+同名插件的实现（同 id `dsh-plugin-panel-core`、同 `panel` 服务键、同权限点、同路由族，
+插件 id/服务契约零变化，全部消费方 dingtalk-bridge/console/CLI 零改动），自此面板架构
+只有一份事实：上游在面板轨仓演进，底座仓跟随收编。
+
+- **SPA 整体换代**：旧「五部门面板」前端（dept.js + en/ja 词典 + i18n.js）退役，
+  换为 IAW 六空间工作台（协作/图谱/执行/能力/数据/制造；SPACE_META 导航 +
+  行业主题 data-industry + Agent 协作栏 + 会话执行卡 + 连接宿主向导 + SSE 优先轮询降级
+  实时通道）。面板 SPA 词典层随之摘除（IAW 为中文直出零词典架构），
+  console `/locales/:locale` 合并端点同步移除 panel 词典目录层。
+- **服务端软依赖瘦身**：inject 从 13 键硬依赖收敛为数据面基座 5 键
+  （httpServer/opsStorage/platformBus/tools/scenegraphs），iam/authn/audit/usage/
+  modelgw/resourceCore/skillHub 转运行期软读 + 端点级诚实降级（503 DEGRADED）；
+  新增 demoAuth/landingRedirect 装配开关（仅 01门装态声明，全量形态缺省关闭、行为不变）。
+- **回植底座侧治理语义（6 项）**：①`PANEL_CONTRACT_VERSION` 契约版本导出（#13）；
+  ②#17 组织兜底链 `resolveOrgId`（caller→dept.orgId→根组织，机器主体点名不再
+  「已应答、usage org 必填」）覆盖 invoke/stream/ask/skill 全部计量与网关调用点；
+  ③A-01 场景级授权 `sceneGuard`（任务挂 sceneCode 时强制裁决，deny/fail-closed→403）；
+  ④D09/V16 技能证据化 `skillLoad`（REST 与工具面同构透传）与受管数字员工问答分型
+  `workforce` 标注；⑤ddws pull 部门取向自频道反查修正（平铺路径下原实现必 400）；
+  ⑥基线管理员种子以 demoAuth 门控（全量形态种子权归 console，消除双种子竞态）。
+  另修复收编版本 `invokeAgent/streamAgentReply` 审计路径 `asset/model` 坏引用
+  （prepareAgentInvocation 现随 ok 载荷返回 asset）。
+- **行业登记升级为工信部 2025 版 14 行业**：钢铁/石化/工程机械/机器人/汽车/医疗装备/家电/
+  制糖/白酒/美妆/锂电/印制板/智能终端/民爆；QB01/YB01/JB01 图谱包随平台分发默认激活，
+  其余 11 行业走「申请→审批→激活」链路。`platform-core/scenegraphs/` 数据目录
+  同步扩为 14 包（原 qb01/gcjx 两包退役，工程机械编码更替 GCJX→JB01）。
+- **面板自持登录路由归属归一**：`/api/panel/auth/login|refresh` 处理器由 console 移交
+  panel-core 自持注册（authn 转发、响应形状逐字段一致），console 不再重复登记
+  （避免 health 契约 declaredRoutes 双计）。
+- **连通性实测**：契约比对 0 红（501 代码路由 / 519 清单声明）；起服实测 health 契约
+  26 能力族 + 59 条面板路由、/panel 302 归一、IAW 壳页伺服、面板自持登录链全通；
+  selftest 面板三节（数据面/扩展面/J1 直调）+ #17 机器主体点名全绿。
+
 ## [Unreleased] · README 定位重写：从「堆工具」到「新生产关系的运行底座」（2026-10-29）
 
 - 根 README 以「新生产力 vs 旧生产关系」重写产品定位：新增「堆工具为什么不管用」

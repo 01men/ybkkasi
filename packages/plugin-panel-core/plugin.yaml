@@ -1,8 +1,8 @@
 # 插件声明：id、版本、依赖与权限点（插件标准解剖结构）
 id: dsh-plugin-panel-core
 version: 1.5.0
-label: 部门 Agent 工作台面板（骨架+数据面）
-depends: ['dsh-plugin-platform-core', 'dsh-plugin-iam', 'dsh-plugin-audit', 'dsh-plugin-usage', 'dsh-plugin-modelgw']
+label: 行业 AI 工作台面板（一图四清单 · 五空间 + 制造工具箱）
+depends: ['dsh-plugin-platform-core']
 provides:
   services:
     - panel

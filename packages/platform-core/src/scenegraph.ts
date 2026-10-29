@@ -54,7 +54,7 @@ export interface ScenegraphScene {
 }
 
 export interface ScenegraphPack {
-  /** 行业代码（工信部图谱编码，如 QB01 家电 / GCJX 工程机械）。 */
+  /** 行业代码（工信部《参考指引（2025 版）》图谱编码，如 QB01 家电 / JB01 工程机械）。 */
   code: string
   name: string
   icon: string
