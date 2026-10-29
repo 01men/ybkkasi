@@ -313,6 +313,7 @@ async function mountModelCatalog(rerender) {
           provider: record.provider ?? 'external',
           endpoint: record.endpoint ?? '',
           costCentsPerKTokens: record.costCentsPerKTokens ?? 0,
+          ...(record.inputCostCentsPerKTokens !== undefined ? { inputCostCentsPerKTokens: record.inputCostCentsPerKTokens } : {}),
           status: btn.dataset.next,
           ...(record.dataClassLimit ? { dataClassLimit: record.dataClassLimit } : {}),
           ...(typeof record.apiKey === 'string' && record.apiKey.startsWith('env:') ? { apiKey: record.apiKey } : {}),
@@ -358,6 +359,7 @@ function openModelForm(rerender) {
         ${field('endpoint', inputField('endpoint', { placeholder: 'https://api.example.com/v1' }), { full: true })}
         ${field('apiKey', inputField('apiKey', { placeholder: 'env:DEEPSEEK_API_KEY' }), { full: true, hint: '推荐 env:VAR_NAME 形式引用宿主环境变量，避免明文落库' })}
         ${field('成本（分/千tokens）', `<input class="input" type="number" step="any" name="costCentsPerKTokens" placeholder="如 12 = ¥0.12/千tokens">`)}
+        ${field('输入成本（分/千tokens）', `<input class="input" type="number" step="any" name="inputCostCentsPerKTokens" placeholder="如 2 = ¥0.02/千tokens（#14 输入 token 单独计价）">`)}
         ${field('状态', selectField('status', [{ value: 'online', label: '在线' }, { value: 'offline', label: '离线' }]))}
         ${field('数据密级上限', selectField('dataClassLimit', [
           { value: 'public', label: 'public（仅公开数据）' },
@@ -382,6 +384,7 @@ function openModelForm(rerender) {
       dataClassLimit: data.dataClassLimit || undefined,
     }
     if (data.costCentsPerKTokens !== '') payload.costCentsPerKTokens = Number(data.costCentsPerKTokens)
+    if (data.inputCostCentsPerKTokens !== '') payload.inputCostCentsPerKTokens = Number(data.inputCostCentsPerKTokens)
     btn.classList.add('btn-loading')
     try {
       await api.post('/api/modelgw/models', payload)

@@ -376,6 +376,14 @@ async function seedDemo(ctx: Context): Promise<void> {
   ctx.skillHub.rate(skillData.id, orgAdmin.id, 5)
   ctx.skillHub.rate(skillOnboard.id, dev1.id, 4)
 
+  // -- 模型路由台账（先于 Agent 注册：attrs.model 校验以模型目录为单一事实源，issue #8） ------
+  // 演示形态 offline 待接入——诚实降级不伪装可调用，但内部采购成本参考费率照配（成本穿透口径）；
+  // upsertModel 同时播种价格簿 model:<slug> 与 model:<slug>:input（#14 双米计价），计量事件才有计价规则
+  ctx.modelGateway.upsertModel({ slug: 'deepseek-chat', displayName: 'DeepSeek Chat（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 8, inputCostCentsPerKTokens: 2, status: 'offline' })
+  ctx.modelGateway.upsertModel({ slug: 'qwen-plus', displayName: 'Qwen Plus（待接入）', provider: 'qwen', endpoint: '', apiKey: '', costCentsPerKTokens: 12, inputCostCentsPerKTokens: 3, status: 'offline' })
+  ctx.modelGateway.upsertModel({ slug: 'deepseek-reasoner', displayName: 'DeepSeek Reasoner（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 16, inputCostCentsPerKTokens: 4, status: 'offline' })
+  ctx.modelGateway.upsertModel({ slug: 'deepseek-coder', displayName: 'DeepSeek Coder（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 8, inputCostCentsPerKTokens: 2, status: 'offline' })
+
   // -- Agent --------------------------------------------------------------
   const mkAgent = (input: Parameters<typeof ctx.agentRegistry.register>[0]) => {
     const result = ctx.agentRegistry.register(input)
@@ -591,11 +599,7 @@ async function seedDemo(ctx: Context): Promise<void> {
   // 确定性原则：所有数值由「资产:日期」锚定的 mulberry32 派生（同款防幂等键跨日重种冲突的写法），
   // 幂等键 seed:<resource>:<date> 绑定内容，重种 = 幂等重放；不使用裸随机。
 
-  // 模型路由台账须先登记（upsertModel 同时播种价格簿 model:<slug>，计量事件才有计价规则）；
-  // 演示形态 offline 待接入——诚实降级不伪装可调用，但内部采购成本参考费率照配（成本穿透口径）
-  ctx.modelGateway.upsertModel({ slug: 'deepseek-chat', displayName: 'DeepSeek Chat（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 8, status: 'offline' })
-  ctx.modelGateway.upsertModel({ slug: 'qwen-plus', displayName: 'Qwen Plus（待接入）', provider: 'qwen', endpoint: '', apiKey: '', costCentsPerKTokens: 12, status: 'offline' })
-
+  // 模型路由台账已在前（Agent 注册之前）登记——此处价格簿已就绪，计量事件直接计价
   /** 「键:日期」锚定的确定性数值（0-1），幂等键内容稳定跨重种。 */
   const dayRandom = (anchor: string): number => mulberry32([...anchor].reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) >>> 0, 0))()
   const seedUsage = (input: { resource: string; orgId: string; date: string; meters: Array<{ key: string; value: number; unit: string }> }) => {

@@ -543,7 +543,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
           for (const [key, value] of pendingOidc) {
             if (Date.now() - value.issuedAt > OIDC_PENDING_TTL) pendingOidc.delete(key)
           }
-          const authorize = new URL(`${oidc.issuer()}/oauth/authorize`)
+          const authorize = new URL(`${oidc.issuer({ headers: req.headers })}/oauth/authorize`)
           authorize.searchParams.set('response_type', 'code')
           authorize.searchParams.set('client_id', oidcClient!.clientId)
           authorize.searchParams.set('redirect_uri', redirectUri)
@@ -569,7 +569,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
               return
             }
             try {
-              const tokenRes = await fetch(`${oidc.issuer()}/oauth/token`, {
+              const tokenRes = await fetch(`${oidc.issuer({ headers: req.headers })}/oauth/token`, {
                 method: 'POST',
                 headers: {
                   'content-type': 'application/x-www-form-urlencoded',
@@ -585,7 +585,7 @@ export function apply(ctx: Context, config: DshBridgeConfig = {}) {
               const tokenPayload = await tokenRes.json().catch(() => null)
               const accessToken = tokenPayload?.access_token
               if (!tokenRes.ok || !accessToken) throw new Error(tokenPayload?.error_description ?? t('token 端点失败（{status}）', { status: tokenRes.status }))
-              const userinfoRes = await fetch(`${oidc.issuer()}/oauth/userinfo`, { headers: { authorization: `Bearer ${accessToken}` } })
+              const userinfoRes = await fetch(`${oidc.issuer({ headers: req.headers })}/oauth/userinfo`, { headers: { authorization: `Bearer ${accessToken}` } })
               const userinfo = await userinfoRes.json().catch(() => null)
               if (!userinfoRes.ok || !userinfo?.sub) throw new Error(t('userinfo 换取失败'))
               const identity = {

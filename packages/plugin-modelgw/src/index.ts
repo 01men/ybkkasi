@@ -68,6 +68,11 @@ export interface ModelRecord extends RecordBase {
   apiKey: string
   /** 内部采购成本参考（分/千 tokens）：仅用于成本穿透报表，不对外呈现金额结算。 */
   costCentsPerKTokens: number
+  /**
+   * 输入内部成本参考（分/千 tokens，#14 additive）：输入 token 与输出分开计价
+   * （组合计价行入 usage 事件）；缺省视为未定价（输入侧成本按 0，事件标 not_priced 语义由 usage 判定）。
+   */
+  inputCostCentsPerKTokens?: number
   status: 'online' | 'offline'
   /** 数据分级上限（1-1，additive）：该渠道可承载的最高数据分级；缺省 internal（存量登记兼容）。 */
   dataClassLimit?: DataClass
@@ -223,7 +228,43 @@ export class ModelGatewayService extends Service {
       currency: 'CNY',
       rate_version: `model:${input.slug}:cost-v1`,
     })
+    // #14：输入 token 费率独立登记（model:<slug>:input 只是费率载体，事件 resource 恒为
+    // model:<slug> 命中主条目；invoke 时点经 priceOfResource 读取后以组合计价行入账）
+    this.ctx.usage.upsertPrice({
+      pattern: `model:${input.slug}:input`,
+      meter_key: 'input_tokens',
+      list_cents_per_unit: 0,
+      cost_cents_per_unit: input.inputCostCentsPerKTokens ?? 0,
+      units_per_step: 1000,
+      tax_rate: 0.06,
+      currency: 'CNY',
+      rate_version: `model:${input.slug}:input-cost-v1`,
+    })
     return created
+  }
+
+  /** 存量模型更新（不入 seed 的运营调价路径）：价格簿两条目同步刷新，费率与目录单一事实源。 */
+  updateModelCost(slug: string, cost: { outputCostCentsPerKTokens: number; inputCostCentsPerKTokens?: number }): void {
+    this.ctx.usage.upsertPrice({
+      pattern: `model:${slug}`,
+      meter_key: 'output_tokens',
+      list_cents_per_unit: 0,
+      cost_cents_per_unit: cost.outputCostCentsPerKTokens,
+      units_per_step: 1000,
+      tax_rate: 0.06,
+      currency: 'CNY',
+      rate_version: `model:${slug}:cost-v1`,
+    })
+    this.ctx.usage.upsertPrice({
+      pattern: `model:${slug}:input`,
+      meter_key: 'input_tokens',
+      list_cents_per_unit: 0,
+      cost_cents_per_unit: cost.inputCostCentsPerKTokens ?? 0,
+      units_per_step: 1000,
+      tax_rate: 0.06,
+      currency: 'CNY',
+      rate_version: `model:${slug}:input-cost-v1`,
+    })
   }
 
   // -- 工作级授权与密级映射（D10/D14，additive） ---------------------------------
@@ -684,6 +725,20 @@ export class ModelGatewayService extends Service {
     const inputTokens = payload.usage?.prompt_tokens ?? 0
     const outputTokens = payload.usage?.completion_tokens ?? 0
 
+    // #14（2026-10-29）组合计价：input/output 分别按价格簿费率折算（调用时点读取，价格簿仍是
+    // 唯一调价面；行明细原样进 usage 快照 rate.line_items，对账可复算）。费率未登记的行不入列
+    //（usage 侧回落价格簿单米口径；主条目缺失时 record 照旧响亮拒绝）。
+    const outputPrice = this.ctx.usage.priceOfResource(`model:${model.slug}`)
+    const inputPrice = this.ctx.usage.priceOfResource(`model:${model.slug}:input`)
+    const costLineItems = [
+      ...(outputPrice && outputPrice.cost_cents_per_unit > 0 && outputTokens > 0
+        ? [{ meter_key: 'output_tokens', value: outputTokens, cost_cents_per_unit: outputPrice.cost_cents_per_unit, units_per_step: outputPrice.units_per_step }]
+        : []),
+      ...(inputPrice && inputPrice.cost_cents_per_unit > 0 && inputTokens > 0
+        ? [{ meter_key: 'input_tokens', value: inputTokens, cost_cents_per_unit: inputPrice.cost_cents_per_unit, units_per_step: inputPrice.units_per_step }]
+        : []),
+    ]
+
     // 计量：input/output tokens 实测值（先计量后返回）；零价快照入账（charge=0），
     // cost 按内部成本参考折算，供成本穿透报表
     const event = this.ctx.usage.record({
@@ -696,6 +751,7 @@ export class ModelGatewayService extends Service {
         { key: 'input_tokens', value: inputTokens, unit: 'token' },
         { key: 'output_tokens', value: outputTokens, unit: 'token' },
       ],
+      ...(costLineItems.length > 0 ? { costLineItems } : {}),
       idempotency_key: `modelgw:${newId('mi')}`,
       // 工作关联（D11/V23/V27 additive）：受管调用时把 workforce 调用 ID 作为统一 trace 附加——
       // 幂等键 modelgw:<mi> 与历史键 model:<slug> 照旧不改；usage 侧未识别的关联字段由组7增量承接

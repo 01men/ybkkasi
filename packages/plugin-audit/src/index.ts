@@ -112,6 +112,13 @@ export interface CostRecord extends RecordBase {
   llmTokens: number
   toolCalls: number
   costYuan: number
+  /**
+   * 计价覆盖率（#14 additive）：priced=费率在配的事件数；notPriced=因费率未配置/全零费率
+   * 而零成本的事件数。下游不得把 0 成本读成「无消耗」——覆盖率是门禁判断「成本是否可归集」的依据。
+   * 存量记录无此两字段（缺省按 0 计，不计入覆盖率分母）。
+   */
+  pricedEvents?: number
+  notPricedEvents?: number
 }
 
 export interface ApprovalRecord extends RecordBase {
@@ -466,6 +473,10 @@ export class AuditService extends Service {
           resourceType: 'usage_event', resourceId: event.resource,
         })
       }
+      // #14（2026-10-29）：未定价判定——零成本且（零费率快照 或 显式 cost_status='not_priced'）。
+      // 费率在配但量小取整为 0 的事件仍算已定价（priced），不污染覆盖率。
+      const notPricedEvent = safeCostCents === 0
+        && ((event.pricing as { cost_status?: string }).cost_status === 'not_priced' || event.pricing.rate?.nonbillable === true)
       this.addCost({
         date: event.occurred_at.slice(0, 10),
         ...(agentId !== undefined ? { agentId } : {}),
@@ -477,6 +488,8 @@ export class AuditService extends Service {
         // QA B-06：成本口径取 cost_cents（内部成本）——此前取 charge_cents（应收口径）充当成本，
         // 价格簿一旦调非零即以成本名义呈现应收金额（M0 禁止的结算语义残留）；charge 恒 0 仅快照兼容
         costYuan: Math.round(safeCostCents * 100) / 10_000,
+        // #14：计价覆盖率——零成本且（零费率快照 or 显式 not_priced 标注）计为未定价，不与真零成本混读
+        ...(notPricedEvent ? { pricedEvents: 0, notPricedEvents: 1 } : { pricedEvents: 1, notPricedEvents: 0 }),
       })
     })
   }
@@ -764,14 +777,17 @@ export class AuditService extends Service {
         llmTokens: existing.llmTokens + input.llmTokens,
         toolCalls: existing.toolCalls + input.toolCalls,
         costYuan: Math.round((existing.costYuan + input.costYuan) * 1000) / 1000,
+        // #14：覆盖率增量合并（存量桶无字段按 0 起算，additive 不迁移）
+        pricedEvents: (existing.pricedEvents ?? 0) + (input.pricedEvents ?? 0),
+        notPricedEvents: (existing.notPricedEvents ?? 0) + (input.notPricedEvents ?? 0),
       })
     } else {
       this.costs().insert({ id: newId('cost'), ...input })
     }
   }
 
-  costReport(groupBy: 'app' | 'agent' | 'org' | 'date', from?: string, to?: string): Array<{ key: string; llmTokens: number; toolCalls: number; costYuan: number }> {
-    const buckets = new Map<string, { key: string; llmTokens: number; toolCalls: number; costYuan: number }>()
+  costReport(groupBy: 'app' | 'agent' | 'org' | 'date', from?: string, to?: string): Array<{ key: string; llmTokens: number; toolCalls: number; costYuan: number; priced: number; notPriced: number }> {
+    const buckets = new Map<string, { key: string; llmTokens: number; toolCalls: number; costYuan: number; priced: number; notPriced: number }>()
     for (const cost of this.costs().all()) {
       if (from && cost.date < from) continue
       if (to && cost.date > to) continue
@@ -782,10 +798,13 @@ export class AuditService extends Service {
         const entity = cost.agentId ? this.ctx.resourceCore?.collection('agent').get(cost.agentId) : undefined
         key = entity ? this.ctx.iam?.orgs().get(entity.orgId)?.name ?? entity.orgId : t('（未归集组织）')
       }
-      const bucket = buckets.get(key) ?? { key, llmTokens: 0, toolCalls: 0, costYuan: 0 }
+      const bucket = buckets.get(key) ?? { key, llmTokens: 0, toolCalls: 0, costYuan: 0, priced: 0, notPriced: 0 }
       bucket.llmTokens += cost.llmTokens
       bucket.toolCalls += cost.toolCalls
       bucket.costYuan += cost.costYuan
+      // #14：覆盖率（存量记录无字段不计入分母——门禁按 priced+notPriced>0 判定归集可信度）
+      bucket.priced += cost.pricedEvents ?? 0
+      bucket.notPriced += cost.notPricedEvents ?? 0
       buckets.set(key, bucket)
     }
     return [...buckets.values()].map((bucket) => ({ ...bucket, costYuan: Math.round(bucket.costYuan * 1000) / 1000 }))

@@ -131,6 +131,43 @@ export class AgentRegistryService extends Service {
     return this.ctx.opsStorage.collection<AgentUsageRecord>('agent:usage')
   }
 
+  // -- 模型目录单一事实源（issue #8） -------------------------------------
+  // attrs.model 不再维护静态枚举：可选值 = 模型网关目录（modelgw:models）。
+  // 登记 / PATCH（提供了 model 时）/ 上线门禁三处 fail-fast 校验「目录中存在」；
+  // 渠道是否 online、endpoint 是否就绪属运行时事实，由 modelgw invoke 权威 enforce
+  //（上线后再掉线的场景配置期门禁也拦不住）。
+
+  /** 模型目录 slugs（modelgw 未装配时返回 null——校验跳过，维持 legacy 行为）。
+   *  cordis 严格注入下直访 ctx.modelGateway 会被 get trap 硬抛「without inject」，
+   *  须走 ctx.reflect.get 软读（同 exec_claim 的 dsh-bridge softRead 口径）。 */
+  private modelCatalogSlugs(): string[] | null {
+    try {
+      const ctxAny = this.ctx as unknown as { reflect?: { get?: (key: string, optional?: boolean) => unknown } }
+      const gateway = (typeof ctxAny.reflect?.get === 'function'
+        ? ctxAny.reflect.get('modelGateway', true)
+        : (this.ctx as unknown as Record<string, unknown>)['modelGateway']) as
+        { models?: () => { all(): Array<{ slug: string }> } } | undefined
+      const all = gateway?.models?.().all()
+      if (!Array.isArray(all)) return null
+      return all.map((item) => item.slug)
+    } catch {
+      return null
+    }
+  }
+
+  /** 校验 attrs.model 在模型目录中存在（不校验 online 状态），不存在抛中文错误并列出可用 slugs。
+   *  空目录放行（引导期豁免）：全新部署一个模型都没登记时，不得把 Agent 登记也锁死——
+   *  目录一旦有登记（成为实际可选面），未登记 slug 一律拒绝。modelgw 缺席（异常装配）同样跳过。 */
+  assertModelInCatalog(model: unknown): void {
+    const slug = String(model ?? '').trim()
+    if (!slug) return
+    const slugs = this.modelCatalogSlugs()
+    if (slugs === null || slugs.length === 0) return
+    if (!slugs.includes(slug)) {
+      throw new Error(t('底层模型「{slug}」不在模型目录：请先在模型网关登记（当前可用：{values}）', { slug, values: slugs.join(' / ') }))
+    }
+  }
+
   // -- 注册 -------------------------------------------------------------
 
   /**
@@ -169,6 +206,7 @@ export class AgentRegistryService extends Service {
       ownerName: input.ownerName,
       ...(input.attrs ?? {}),
     }
+    this.assertModelInCatalog(attrs['model'])
     const agent = this.ctx.resourceCore.create('agent', { ...input, attrs })
     // R7 组织化：managerId 环校验。id 由 create 内部生成、创建前无从自指，故创建后校验、
     // 失败即回滚（此刻尚未颁发凭证、未发注册事件，直接从集合移除即干净回滚）。
@@ -378,6 +416,8 @@ export class AgentRegistryService extends Service {
     if (!agent) throw new Error(t('Agent 不存在：{id}', { id: agentId }))
     const errors = this.ctx.resourceCore.validateAttrs('agent', agent.attrs, 'online')
     if (errors.length > 0) throw new Error(t('上线条件不满足：{errors}', { errors: errors.join('；') }))
+    // 上线门禁：底层模型必须是模型目录已登记的 slug（issue #8——「上线成功、派发才报模型不存在」在此拦截）
+    this.assertModelInCatalog(agent.attrs['model'])
     const ssoClientId = this.assertOnlineGate(agent)
     return this.ctx.audit.createApproval({
       kind: 'agent.online',

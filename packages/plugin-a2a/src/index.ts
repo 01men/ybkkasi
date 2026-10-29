@@ -1528,7 +1528,7 @@ export function apply(ctx: Context) {
       try { collab.runPatrol('system-routine') } catch (error) { ctx.logger('a2a').warn('例行一致性巡检失败', error) }
     }, intervalMinutes * 60_000)
     timer.unref?.()
-    ctx.effect(() => {
+    ctx.effect(() => () => {
       clearTimeout(first)
       clearInterval(timer)
     })

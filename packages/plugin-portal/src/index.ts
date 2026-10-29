@@ -105,7 +105,7 @@ export class PortalFeedService extends Service {
    * （门户 OIDC 登录换取；userinfo 校验含 token_use/有效客户端/jti 吊销/用户实时状态）。
    * 缺失或解析失败返回 undefined（路由层回 401，不泄露技能存在性）。
    */
-  resolveDownloader(authorization: unknown): { id: string; name: string; via: string } | undefined {
+  resolveDownloader(authorization: unknown, origin?: { headers: import('node:http').IncomingHttpHeaders }): { id: string; name: string; via: string } | undefined {
     const raw = typeof authorization === 'string' ? authorization.trim() : ''
     if (!/^bearer\s+/i.test(raw)) return undefined
     const token = raw.replace(/^bearer\s+/i, '').trim()
@@ -124,7 +124,8 @@ export class PortalFeedService extends Service {
       // 非 dst1 形态令牌，继续按 OIDC 解析
     }
     try {
-      const claims = this.ctx.oidc.userinfo(token)
+      // origin 提供时 iss 同步接受请求面派生值（#15：公网域名签发的 OIDC 令牌在同域名下解析通过）
+      const claims = this.ctx.oidc.userinfo(token, origin)
       return { id: String(claims.sub ?? ''), name: String(claims.name ?? claims.preferred_username ?? ''), via: 'oidc' }
     } catch {
       return undefined
@@ -228,7 +229,7 @@ export function apply(ctx: Context) {
       // 未带/无效令牌一律 401 契约错误（先于存在性判断，不泄露技能 ID），CORS 头照常携带（浏览器可读）
       const downloadMatch = exchange.path.slice(prefix.length).match(/^\/skills\/([^/]+)\/download$/)
       if (downloadMatch) {
-        const downloader = service.resolveDownloader(exchange.headers.authorization)
+        const downloader = service.resolveDownloader(exchange.headers.authorization, exchange)
         if (!downloader) {
           respond(exchange, 401, { code: 40100, message: t('下载需要登录：请携带门户登录令牌（Authorization: Bearer <token>）'), data: null }, headers)
           return true

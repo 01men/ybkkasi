@@ -138,9 +138,9 @@ export class OidcService extends Service {
   constructor(ctx: Context) {
     super(ctx, 'oidc')
     if (!process.env.OIDC_ISSUER) {
-      ctx.logger('oidc').warn(
-        '未配置 OIDC_ISSUER，issuer 回落为 http://127.0.0.1:<port>，仅供本机调试；' +
-        '跨机/内网部署必须显式声明对外地址（见 docs/app-sso-integration.md），否则跨机浏览器无法访问授权页',
+      ctx.logger('oidc').info(
+        '未配置 OIDC_ISSUER：issuer 按请求 Host/X-Forwarded-* 头派生（反代/公网域名部署开箱可用，#15）；' +
+        '多域名或需要固定 issuer 锚点的部署请显式声明 OIDC_ISSUER（见 docs/app-sso-integration.md）',
       )
     }
     this.keys = this.loadOrCreateKeys()
@@ -148,7 +148,7 @@ export class OidcService extends Service {
     this.cleanupExpired()
     this.cleanupTimer = setInterval(() => this.cleanupExpired(), 24 * 3600_000)
     this.cleanupTimer.unref?.() // OPT-P3-02
-    ctx.effect(() => {
+    ctx.effect(() => () => {
       if (this.cleanupTimer) clearInterval(this.cleanupTimer)
     })
     // -- 生命周期联动（真实事件名，见 platform-core/src/bus.ts） --------------------------
@@ -185,10 +185,37 @@ export class OidcService extends Service {
     })
   }
 
-  issuer(): string {
-    // 外部应用接入时以 OIDC_ISSUER 显式声明对外地址（默认本机；评审 L1）。
-    // dsh 宿主挂载形态（externalBase=/rq）下协议端点位于 <base>/oauth/*，默认值须带上前缀。
-    return process.env.OIDC_ISSUER ?? `http://127.0.0.1:${this.ctx.httpServer.port}${this.ctx.httpServer.externalBase}`
+  /**
+   * 签发方 issuer（#15，2026-10-29）：解析优先级——
+   *   1. OIDC_ISSUER 显式声明（多域名/严格部署的固定锚点，最高优先）；
+   *   2. 按请求派生：x-forwarded-host/host + x-forwarded-proto（反代场景，与 console requestOrigin
+   *      同口径）+ externalBase 前缀——公网域名部署时 discovery/签发/校验自动对齐，远程 SSO 开箱可用；
+   *   3. 回落 http://127.0.0.1:<port><base>（本机调试）。
+   * 不传请求上下文时保持旧行为（env ?? 环回）——非请求面调用（测试/内部校验）零感知。
+   */
+  issuer(origin?: { headers: import('node:http').IncomingHttpHeaders }): string {
+    if (process.env.OIDC_ISSUER) return process.env.OIDC_ISSUER
+    const derived = origin !== undefined ? this.deriveIssuerFromRequest(origin) : undefined
+    return derived ?? `http://127.0.0.1:${this.ctx.httpServer.port}${this.ctx.httpServer.externalBase}`
+  }
+
+  /** 按请求头派生对外 issuer（host 缺失返回 undefined 走回落）。 */
+  private deriveIssuerFromRequest(origin: { headers: import('node:http').IncomingHttpHeaders }): string | undefined {
+    const header = (name: string): string | undefined => {
+      const value = origin.headers[name]
+      return value === undefined ? undefined : String(Array.isArray(value) ? value[0] : value)
+    }
+    const host = header('x-forwarded-host') ?? header('host')
+    if (!host) return undefined
+    const proto = header('x-forwarded-proto') ?? 'http'
+    return `${proto}://${host}${this.webBase()}`
+  }
+
+  /** JWT 校验可接受的 issuer 集合：静态声明（env/环回）∪ 请求派生（同请求面自洽）。 */
+  private acceptedIssuers(origin?: { headers: import('node:http').IncomingHttpHeaders }): string[] {
+    const staticIssuer = this.issuer()
+    const derived = origin !== undefined ? this.deriveIssuerFromRequest(origin) : undefined
+    return derived !== undefined && derived !== staticIssuer ? [staticIssuer, derived] : [staticIssuer]
   }
 
   /** 平台 SPA 内部页面的对外前缀（独立形态 ''，dsh 挂载形态 '/rq'）。 */
@@ -395,7 +422,7 @@ export class OidcService extends Service {
    * 校验授权请求 →（需要同意时必须显式 consent）→ 签发一次性 code → 返回回跳地址。
    * consent 显式为 false → access_denied 回跳 + denied 事件；缺省 → 400（未表达同意）。
    */
-  completeAuthorization(input: { reqId: string; userId: string; consent?: boolean }): { location: string } {
+  completeAuthorization(input: { reqId: string; userId: string; consent?: boolean }, origin?: { headers: import('node:http').IncomingHttpHeaders }): { location: string } {
     const req = this.authRequests().get(input.reqId)
     if (!req) throw new Error(t('授权请求无效（reqId 错误或已被清理）'))
     if (req.consumedAt) throw new Error(t('授权请求已被使用（单次消费，防重放）'))
@@ -420,8 +447,8 @@ export class OidcService extends Service {
     this.ctx.platformBus.emit(PlatformEvents.OidcAuthorizeGranted, {
       reqId: req.id, clientId: client.clientId, clientName: client.name, userId: user.id, userName: user.displayName, scope: req.scope,
     })
-    // iss 回跳参数（RFC 9207 防 mix-up）
-    return { location: withQuery(req.redirectUri, { code, state: req.state, iss: this.issuer() }) }
+    // iss 回跳参数（RFC 9207 防 mix-up）——#15：按请求面派生，与 discovery 一致
+    return { location: withQuery(req.redirectUri, { code, state: req.state, iss: this.issuer(origin) }) }
   }
 
   private issueCode(req: { clientId: string; userId: string; redirectUri: string; state: string; scope: string; nonce?: string; codeChallenge: string }): string {
@@ -475,14 +502,14 @@ export class OidcService extends Service {
     codeVerifier?: string
     refreshToken?: string
     scope?: string
-  }): { access_token: string; id_token: string; token_type: 'Bearer'; expires_in: number; scope: string; refresh_token?: string } {
+  }, origin?: { headers: import('node:http').IncomingHttpHeaders }): { access_token: string; id_token: string; token_type: 'Bearer'; expires_in: number; scope: string; refresh_token?: string } {
     const client = this.authenticateClient(input.clientId, input.clientSecret)
-    if (input.grantType === 'authorization_code') return this.authorizationCodeGrant(client, input)
-    if (input.grantType === 'refresh_token') return this.refreshGrant(client, input)
+    if (input.grantType === 'authorization_code') return this.authorizationCodeGrant(client, input, origin)
+    if (input.grantType === 'refresh_token') return this.refreshGrant(client, input, origin)
     throw new OidcEndpointError(400, 'unsupported_grant_type', t('不支持的 grant_type：{grantType}', { grantType: input.grantType }))
   }
 
-  private authorizationCodeGrant(client: OidcClientRecord, input: { code?: string; redirectUri?: string; codeVerifier?: string }): ReturnType<OidcService['issueTokenSet']> {
+  private authorizationCodeGrant(client: OidcClientRecord, input: { code?: string; redirectUri?: string; codeVerifier?: string }, origin?: { headers: import('node:http').IncomingHttpHeaders }): ReturnType<OidcService['issueTokenSet']> {
     const bad = (description: string): OidcEndpointError => new OidcEndpointError(400, 'invalid_grant', description)
     if (!input.code) throw new OidcEndpointError(400, 'invalid_request', t('code 必填'))
     const record = this.codes().get(input.code)
@@ -499,10 +526,10 @@ export class OidcService extends Service {
     this.codes().update(record.id, { usedAt: new Date().toISOString() })
     const user = this.ctx.iam.users().get(record.userId)
     if (!user || user.status !== 'active') throw bad(t('用户状态异常，无法签发令牌'))
-    return this.issueTokenSet(client, { userId: record.userId, scope: record.scope, ...(record.nonce !== undefined ? { nonce: record.nonce } : {}) })
+    return this.issueTokenSet(client, { userId: record.userId, scope: record.scope, ...(record.nonce !== undefined ? { nonce: record.nonce } : {}) }, origin)
   }
 
-  private refreshGrant(client: OidcClientRecord, input: { refreshToken?: string; scope?: string }): ReturnType<OidcService['issueTokenSet']> {
+  private refreshGrant(client: OidcClientRecord, input: { refreshToken?: string; scope?: string }, origin?: { headers: import('node:http').IncomingHttpHeaders }): ReturnType<OidcService['issueTokenSet']> {
     const bad = (description: string): OidcEndpointError => new OidcEndpointError(400, 'invalid_grant', description)
     if (!input.refreshToken) throw new OidcEndpointError(400, 'invalid_request', t('refresh_token 必填'))
     if ((client.clientType ?? 'confidential') === 'public') throw bad(t('public 客户端不签发 refresh token'))
@@ -525,15 +552,16 @@ export class OidcService extends Service {
     if (widened) throw new OidcEndpointError(400, 'invalid_scope', t('refresh 只允许收窄 scope：{scopes} 未在原授权范围内', { scopes: widened }))
     const scope = requested.join(' ')
     this.refreshTokens().update(record.id, { rotatedAt: new Date().toISOString() })
-    const tokenSet = this.issueTokenSet(client, { userId: record.userId, scope, chainId: record.chainId })
+    const tokenSet = this.issueTokenSet(client, { userId: record.userId, scope, chainId: record.chainId }, origin)
     return tokenSet
   }
 
-  private issueTokenSet(client: OidcClientRecord, granted: { userId: string; scope: string; nonce?: string; chainId?: string }): { access_token: string; id_token: string; token_type: 'Bearer'; expires_in: number; scope: string; refresh_token?: string } {
+  private issueTokenSet(client: OidcClientRecord, granted: { userId: string; scope: string; nonce?: string; chainId?: string }, origin?: { headers: import('node:http').IncomingHttpHeaders }): { access_token: string; id_token: string; token_type: 'Bearer'; expires_in: number; scope: string; refresh_token?: string } {
     const nowSec = Math.floor(Date.now() / 1000)
     const user = this.ctx.iam.users().get(granted.userId)
     const payload = {
-      iss: this.issuer(),
+      // #15：iss 按请求面派生（env 显式声明优先），与 discovery 对齐
+      iss: this.issuer(origin),
       sub: granted.userId,
       aud: client.clientId,
       azp: client.clientId,
@@ -601,7 +629,7 @@ export class OidcService extends Service {
   }
 
   /** RFC 7009 /oauth/revoke：access（jti 黑名单）或 refresh（整链）；恒 200。 */
-  revokeToken(input: { clientId?: string; clientSecret?: string; token?: string; tokenTypeHint?: string }): void {
+  revokeToken(input: { clientId?: string; clientSecret?: string; token?: string; tokenTypeHint?: string }, origin?: { headers: import('node:http').IncomingHttpHeaders }): void {
     const client = this.authenticateClient(input.clientId, input.clientSecret)
     if (!input.token) return
     if (input.token.startsWith('otr_') || input.tokenTypeHint === 'refresh_token') {
@@ -611,7 +639,7 @@ export class OidcService extends Service {
       return
     }
     try {
-      const claims = this.verifyJwt(input.token, { audience: undefined })
+      const claims = this.verifyJwt(input.token, { audience: undefined, ...(origin !== undefined ? { origin } : {}) })
       if (claims.aud !== client.clientId) return
       this.deniedJtis().insert({
         id: newId('odj'),
@@ -636,11 +664,11 @@ export class OidcService extends Service {
    * 未携带 post_logout_redirect_uri 时（轻量 RP 只传 id_token_hint），若该 client 仅登记了
    * 一个登出回跳地址，按其登记意图回跳——仍受白名单约束，显式传参非法依旧拒绝（防开放重定向）。
    */
-  endSession(input: { idTokenHint?: string; postLogoutRedirectUri?: string; state?: string }): { location: string } {
+  endSession(input: { idTokenHint?: string; postLogoutRedirectUri?: string; state?: string }, origin?: { headers: import('node:http').IncomingHttpHeaders }): { location: string } {
     if (!input.idTokenHint) throw new OidcEndpointError(302, 'invalid_request', t('缺少 id_token_hint'))
     let claims: Record<string, unknown>
     try {
-      claims = this.verifyJwt(input.idTokenHint, { audience: undefined })
+      claims = this.verifyJwt(input.idTokenHint, { audience: undefined, ...(origin !== undefined ? { origin } : {}) })
     } catch (error) {
       throw new OidcEndpointError(302, 'invalid_request', t('id_token_hint 验签失败：{message}', { message: error instanceof Error ? error.message : String(error) }))
     }
@@ -676,9 +704,9 @@ export class OidcService extends Service {
 
   // -- userinfo ---------------------------------------------------------------
 
-  /** userinfo：仅接受 access token（token_use 校验）+ aud 必须命中有效 client + 用户实时状态。 */
-  userinfo(accessToken: string): Record<string, unknown> {
-    const claims = this.verifyJwt(accessToken, { audience: undefined })
+  /** userinfo：仅接受 access token（token_use 校验）+ aud 必须命中有效 client + 用户实时状态；origin 提供时 iss 同步接受请求面派生值（#15）。 */
+  userinfo(accessToken: string, origin?: { headers: import('node:http').IncomingHttpHeaders }): Record<string, unknown> {
+    const claims = this.verifyJwt(accessToken, { audience: undefined, ...(origin !== undefined ? { origin } : {}) })
     if (claims.token_use !== 'access') throw new Error(t('该端点仅接受 access token（id_token 不能直接调 userinfo）'))
     const client = this.clientByClientId(String(claims.aud ?? ''))
     if (!client || !OidcService.isClientActive(client)) throw new Error(t('token 受众（aud）不是有效客户端'))
@@ -721,9 +749,10 @@ export class OidcService extends Service {
 
   /**
    * JWT 校验：签名 + header.kid 匹配 JWKS 公布密钥 + iss 归属本 Provider + exp 有效；
-   * options.audience 指定时校验受众（azp/aud 必须命中）。
+   * options.audience 指定时校验受众（azp/aud 必须命中）；
+   * options.origin 指定时 iss 同时接受请求面派生值（#15：公网域名签发的令牌在同域名校验通过）。
    */
-  verifyJwt(token: string, options: { audience?: string } = {}): Record<string, unknown> {
+  verifyJwt(token: string, options: { audience?: string; origin?: { headers: import('node:http').IncomingHttpHeaders } } = {}): Record<string, unknown> {
     const parts = token.split('.')
     if (parts.length !== 3) throw new Error(t('JWT 格式不合法'))
     let header: Record<string, unknown>
@@ -745,7 +774,7 @@ export class OidcService extends Service {
     } catch {
       throw new Error(t('JWT 载荷解析失败'))
     }
-    if (claims.iss !== this.issuer()) throw new Error(t('JWT 签发方（iss）校验失败'))
+    if (!this.acceptedIssuers(options.origin).includes(String(claims.iss ?? ''))) throw new Error(t('JWT 签发方（iss）校验失败'))
     if (typeof claims.exp === 'number' && claims.exp * 1000 < Date.now()) throw new Error(t('JWT 已过期'))
     if (options.audience !== undefined) {
       const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
@@ -786,15 +815,16 @@ export class OidcService extends Service {
     return { graceHours: KEY_GRACE_MS / 3600_000, kid: material.kid }
   }
 
-  discovery(): Record<string, unknown> {
+  discovery(origin?: { headers: import('node:http').IncomingHttpHeaders }): Record<string, unknown> {
+    const issuer = this.issuer(origin)
     return {
-      issuer: this.issuer(),
-      jwks_uri: `${this.issuer()}/.well-known/jwks.json`,
-      authorization_endpoint: `${this.issuer()}/oauth/authorize`,
-      token_endpoint: `${this.issuer()}/oauth/token`,
-      userinfo_endpoint: `${this.issuer()}/oauth/userinfo`,
-      revocation_endpoint: `${this.issuer()}/oauth/revoke`,
-      end_session_endpoint: `${this.issuer()}/oauth/end_session`,
+      issuer,
+      jwks_uri: `${issuer}/.well-known/jwks.json`,
+      authorization_endpoint: `${issuer}/oauth/authorize`,
+      token_endpoint: `${issuer}/oauth/token`,
+      userinfo_endpoint: `${issuer}/oauth/userinfo`,
+      revocation_endpoint: `${issuer}/oauth/revoke`,
+      end_session_endpoint: `${issuer}/oauth/end_session`,
       response_types_supported: ['code'],
       grant_types_supported: ['authorization_code', 'refresh_token'],
       code_challenge_methods_supported: ['S256'],
@@ -926,7 +956,7 @@ export class OidcService extends Service {
     }
 
     http.register('GET', '/.well-known/openid-configuration', (exchange) => {
-      raw(exchange, 200, this.discovery())
+      raw(exchange, 200, this.discovery(exchange))
     })
 
     http.register('GET', '/.well-known/jwks.json', (exchange) => {
@@ -989,7 +1019,7 @@ export class OidcService extends Service {
         return
       }
       try {
-        const result = this.completeAuthorization({ reqId: input.reqId, userId: info.userId, ...(input.consent !== undefined ? { consent: input.consent } : {}) })
+        const result = this.completeAuthorization({ reqId: input.reqId, userId: info.userId, ...(input.consent !== undefined ? { consent: input.consent } : {}) }, exchange)
         raw(exchange, 200, result)
       } catch (error) {
         raw(exchange, 400, { error: 'consent_required', error_description: error instanceof Error ? error.message : String(error) })
@@ -1021,7 +1051,7 @@ export class OidcService extends Service {
           ...(bodyInput['code_verifier'] !== undefined ? { codeVerifier: bodyInput['code_verifier'] } : {}),
           ...(bodyInput['refresh_token'] !== undefined ? { refreshToken: bodyInput['refresh_token'] } : {}),
           ...(bodyInput['scope'] !== undefined ? { scope: bodyInput['scope'] } : {}),
-        })
+        }, exchange)
         raw(exchange, 200, result, { 'cache-control': 'no-store', pragma: 'no-cache' })
       } catch (error) {
         const err = error instanceof OidcEndpointError
@@ -1044,7 +1074,7 @@ export class OidcService extends Service {
         return
       }
       try {
-        raw(exchange, 200, this.userinfo(header.slice(7)))
+        raw(exchange, 200, this.userinfo(header.slice(7), exchange))
       } catch (error) {
         deny(error instanceof Error ? error.message : String(error))
       }
@@ -1058,7 +1088,7 @@ export class OidcService extends Service {
           idTokenHint: q.get('id_token_hint') ?? undefined,
           postLogoutRedirectUri: q.get('post_logout_redirect_uri') ?? undefined,
           state: q.get('state') ?? undefined,
-        })
+        }, exchange)
         redirect(exchange, result.location)
       } catch (error) {
         const err = error instanceof OidcEndpointError
@@ -1088,7 +1118,7 @@ export class OidcService extends Service {
           clientSecret: basicSecret ?? bodyInput['client_secret'],
           token: bodyInput['token'],
           tokenTypeHint: bodyInput['token_type_hint'],
-        })
+        }, exchange)
         raw(exchange, 200, {})
       } catch (error) {
         const err = error instanceof OidcEndpointError

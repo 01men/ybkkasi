@@ -181,14 +181,19 @@ export function registerUsageRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   }))
 
   guarded('POST', '/api/modelgw/models', 'modelgw.admin', (exchange) => {
-    const input = body<{ slug: string; displayName?: string; provider?: string; endpoint: string; apiKey?: string; costCentsPerKTokens?: number; status?: 'online' | 'offline'; dataClassLimit?: 'public' | 'internal' | 'secret' }>(exchange)
+    const input = body<{ slug: string; displayName?: string; provider?: string; endpoint: string; apiKey?: string; costCentsPerKTokens?: number; inputCostCentsPerKTokens?: number; status?: 'online' | 'offline'; dataClassLimit?: 'public' | 'internal' | 'secret' }>(exchange)
+    // #14：费率字段缺省时保留既有值（此前 `?? 0` 会把未勾选费率的保存静默清零价格簿，成本归集跟着归零）
+    const existing = ctx.modelGateway.models().findOne((item) => item.slug === input.slug)
     const model = ctx.modelGateway.upsertModel({
       slug: input.slug,
       displayName: input.displayName ?? input.slug,
       provider: input.provider ?? 'external',
       endpoint: input.endpoint,
       apiKey: input.apiKey ?? 'env:MODEL_API_KEY',
-      costCentsPerKTokens: input.costCentsPerKTokens ?? 0,
+      costCentsPerKTokens: input.costCentsPerKTokens ?? existing?.costCentsPerKTokens ?? 0,
+      ...(input.inputCostCentsPerKTokens !== undefined
+        ? { inputCostCentsPerKTokens: input.inputCostCentsPerKTokens }
+        : (existing?.inputCostCentsPerKTokens !== undefined ? { inputCostCentsPerKTokens: existing.inputCostCentsPerKTokens } : {})),
       status: input.status ?? 'online',
       ...(input.dataClassLimit !== undefined ? { dataClassLimit: input.dataClassLimit } : {}),
     })

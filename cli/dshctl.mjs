@@ -351,7 +351,7 @@ const COMMANDS = {
         '  update    status | check                    平台版本与上游更新状态 / 立即检查（60s 冷却）',
         '            apply [--dry-run] [--reason=<原因>]  一键升级（git pull + npm install，source 形态）',
         '            set [--auto=on|off] [--hours=24]   自动检查偏好',
-        '  connect   code [--template=readonly|executor|operator|full] [--ttl=15] [--remark=]   签发接入码',
+        '  connect   code [--template=readonly|operator|executor|full] [--ttl=15] [--remark=]   签发接入码',
         '            （创建一次性接入码：远程 dsh 凭此申请机器凭证）',
         '            codes | clients | disable <clientId> --reason=<原因>   接入码列表 / 已接入客户端 / 禁用',
         '  tool      exec --name=<工具名> [--args=<JSON>]   直接调用注册的工具',
