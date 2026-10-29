@@ -4128,6 +4128,17 @@ try {
   const machineOrgCreate = await api('POST', '/api/iam/orgs', { token: machineToken, body: { name: '越权组织' } })
   check('operator 模板无 iam.org.write（越权被拒 403）', machineOrgCreate.status === 403)
 
+  // #9：显式执行方模板从接入码到机器令牌真实认领任务，同时不扩大身份管理权限。
+  const executorCode = await api('POST', '/api/connect/codes', { token: admin, body: { template: 'executor', ttlMinutes: 10 } })
+  const executorEnroll = await api('POST', '/api/connect/enroll', { body: { enrollmentCode: executorCode.data.code, clientName: 'selftest-executor' } })
+  const executorLogin = await api('POST', '/api/auth/client-credentials', { body: { clientId: executorEnroll.data.clientId, clientSecret: executorEnroll.data.clientSecret } })
+  const executorToken = executorLogin.data.token
+  const executorIssue = await api('POST', '/api/exec/issues', { token: admin, body: { title: '执行方模板认领验证', priority: 'P2' } })
+  const executorClaim = await api('POST', '/api/tools/execute', { token: executorToken, body: { name: 'exec_claim', args: { issueId: executorIssue.data.id } } })
+  check('executor 模板接入后可认领任务', executorEnroll.data.template === 'executor' && executorClaim.ok && executorClaim.data.isError === false && executorClaim.data.value?.ok === true, JSON.stringify(executorClaim.error ?? executorClaim.data))
+  const executorOrgWrite = await api('POST', '/api/iam/orgs', { token: executorToken, body: { name: '越权组织' } })
+  check('executor 模板无组织管理权限', executorOrgWrite.status === 403)
+
   // 机器令牌走工具桥（远程工具代理的同一条宿主路径）
   const machineTool = await api('POST', '/api/tools/execute', { token: machineToken, body: { name: 'agent_list', args: {} } })
   check('机器令牌经工具桥执行 agent_list', machineTool.ok && machineTool.data.isError === false && machineTool.data.value.total >= 5)

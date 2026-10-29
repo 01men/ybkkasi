@@ -184,6 +184,7 @@ DSHCTL_URL=http://宿主IP:7300 DSHCTL_USER=admin DSHCTL_PASS=*** \
 | 模板 | 权限 |
 |---|---|
 | `readonly`（默认） | 全部查询类权限点（list/get/metrics/logs） |
+| `executor` | `console.login`（工具桥入口，隐含控制台概览只读）+ `exec.read` + `exec.write`；包含执行中枢任务创建、修改、唤醒和认领等**全部读写**，并非按单个任务或组织隔离；不含账号、凭证或资源管理权限。其他能力需另行授权 |
 | `operator` | 只读 + MCP/Skill/Agent/应用运维与审批决策；**不含**账号与凭证管理 |
 | `full` | 全部权限（`*`），仅可信环境使用 |
 
