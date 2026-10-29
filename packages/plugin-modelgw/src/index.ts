@@ -668,6 +668,11 @@ export class ModelGatewayService extends Service {
 
   /** 带遥测的单渠道调用：时延/成败/降级标记滚动落库（7d 可用率与 TPS 代理的数据源）。 */
   private async invokeTracked(model: ModelRecord, input: ModelInvokeInput, timeoutMs: number, degraded: boolean): Promise<ModelInvokeResult> {
+    // #17（2026-10-29）：组织归属先于上游调用校验（fail-fast）——此前 orgId 空串会在模型已应答、
+    // token 已消耗后的计量落账处抛「usage 事件 org 必填」（先花钱后报错，且该次成本未入账）
+    if (!input.orgId?.trim()) {
+      throw new Error(t('模型调用缺少组织归属（orgId 必填）：调用方须解析主体/部门/平台根组织后重试（#17 fail-fast）'))
+    }
     const startedAt = Date.now()
     try {
       const result = await this.invokeOnce(model, input, timeoutMs)

@@ -1915,6 +1915,11 @@ try {
   check('#14：成本报表携带 priced/notPriced 覆盖率（门禁判断「成本是否可归集」）',
     costRowsCoverage.ok && costRowsCoverage.data.rows.length >= 1 && costRowsCoverage.data.rows.every((row) => Number.isFinite(row.priced) && Number.isFinite(row.notPriced)),
     JSON.stringify(costRowsCoverage.data?.rows?.[0]))
+  // #17（2026-10-29）：组织归属 fail-fast——orgId 空串在调用上游前拒绝（先校验后花钱，
+  // 不再「模型已应答、计量抛错」导致该次成本未入账）
+  const noOrgInvoke = await api('POST', '/api/modelgw/invoke', { token: admin, body: { model: 'ds-stub', messages: [{ role: 'user', content: '#17' }], orgId: '' } })
+  check('#17：orgId 空串在调用上游前 fail-fast（不再「先花钱后报错」）',
+    !noOrgInvoke.ok && /(归口组织|组织归属)/.test(JSON.stringify(noOrgInvoke.error ?? {})), JSON.stringify(noOrgInvoke.error))
   modelStub.close()
 
   // ================================================================ 第 6 步：OIDC Provider（浏览器授权流 / 协议合规）
@@ -6508,6 +6513,22 @@ try {
       const j1AgentMissing = await api('POST', '/api/tools/execute', { token: j1Admin, body: { name: 'panel_agent_invoke', args: { dept: 'mfg', agent: '不存在AgentXYZ', message: 'x' } } })
       check('J1：Agent 点名诚实降级（名册无此 Agent → ok:false + 可用阵容提示）',
         j1AgentMissing.ok && j1AgentMissing.data.value?.ok === false && /名册无此 Agent/.test(j1AgentMissing.data.value.reason ?? ''))
+
+      // #17（2026-10-29）回归：机器主体（无用户组织归属）点名 Agent——组织兜底链
+      // caller→dept.orgId→平台根组织生效，不再「模型已应答、usage 事件 org 必填」
+      const p17Code = await api('POST', '/api/connect/codes', { token: j1Admin, body: { template: 'operator', ttlMinutes: 10, remark: 'selftest-17-machine' } })
+      const p17Enroll = await api('POST', '/api/connect/enroll', { body: { enrollmentCode: p17Code.data.code, clientName: 'selftest-17-machine', meta: { hostname: 'selftest-17', platform: 'test' } } })
+      await api('PATCH', `/api/authn/principals/${p17Enroll.data.principalId}`, { token: j1Admin, body: { scopes: ['console.login', 'panel.write'] } })
+      const p17Login = await api('POST', '/api/auth/client-credentials', { body: { clientId: p17Enroll.data.clientId, clientSecret: p17Enroll.data.clientSecret } })
+      const p17MachineInvoke = await api('POST', '/api/tools/execute', { token: p17Login.data.token, body: { name: 'panel_agent_invoke', args: { dept: 'mfg', agent: '面板质检员', message: '#17 机器主体点名' } } })
+      check('#17：机器主体（无用户组织）点名 Agent——组织兜底链生效（不再「usage 事件 org 必填」）',
+        p17MachineInvoke.ok && p17MachineInvoke.data.value?.ok === true && /J1 直调自测应答/.test(p17MachineInvoke.data.value.reply ?? ''),
+        JSON.stringify(p17MachineInvoke.error ?? p17MachineInvoke.data?.value).slice(0, 200))
+      const p17Summary = await api('GET', '/api/usage/summary?window=today', { token: j1Admin })
+      check('#17：机器主体面板协作计量入账（org 兜底非空，panel:* 资源事件出现）',
+        p17Summary.ok && p17Summary.data.byResource.some((row) => String(row.resource).startsWith('panel:')),
+        JSON.stringify(p17Summary.data?.byResource?.map((row) => row.resource).slice(0, 6)))
+      await api('POST', `/api/connect/clients/${p17Enroll.data.clientId}/disable`, { token: j1Admin, body: { reason: 'selftest #17 完成' } })
 
       // 可见性：orgs 限定技能不进清单、直调给 visibility 提示（对表定制侧 C1-2 语义）
       const j1OtherOrg = await api('POST', '/api/iam/orgs', { token: j1Admin, body: { name: 'J1 可见性对照组织' } })

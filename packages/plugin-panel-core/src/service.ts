@@ -492,7 +492,8 @@ export class PanelService extends Service {
 
   async invokeAgent(dept: DeptConfigRecord, agentCard: DeptAgent, trigger: MessageRecord, modelOverride?: string): Promise<void> {
     const channel = this.channels().get(trigger.channelId)
-    const orgId = this.callerOrgId(trigger.senderId)
+    // #17：组织兜底链（caller→dept.orgId→根组织）——机器主体/外部通道无用户归属时不再空串打穿计量
+    const { orgId, orgSource } = this.resolveOrgId(trigger.senderId, dept)
     const reply = async (text: string, card?: MessageRecord['card'], usedModel?: string) => {
       const record = this.messages().insert({
         id: newId('pmsg'), channelId: trigger.channelId, dept: dept.id,
@@ -552,7 +553,7 @@ export class PanelService extends Service {
         type: 'invoke', actorType: 'machine', actorId: `agent:${agentCard.name}`, actorName: agentCard.name,
         action: 'panel.agent.invoke', resourceType: 'agent', resourceId: asset.id, resourceName: agentCard.name,
         // V16：审计口径=问答/协作（panel.agent.invoke 非执行链）；受管员工命中时随 detail 留分型标注
-        result: 'ok', detail: `model=${result.model} tokens=${result.inputTokens}/${result.outputTokens}${workforce ? `；workforce=受管员工(${workforce.employeeId})，${workforce.notice}` : ''}`,
+        result: 'ok', detail: `model=${result.model} tokens=${result.inputTokens}/${result.outputTokens} org=${orgSource}${workforce ? `；workforce=受管员工(${workforce.employeeId})，${workforce.notice}` : ''}`,
         ...(trigger.sceneCode ? { sceneCode: trigger.sceneCode } : {}),
       })
     } catch (error) {
@@ -589,6 +590,30 @@ export class PanelService extends Service {
     } catch {
       return ''
     }
+  }
+
+  /** 平台首个根组织（无父组织）；组织树未播种时为 undefined。 */
+  private rootOrgId(): string | undefined {
+    try {
+      return this.ctx.iam.orgs().all().find((org) => !org.parentId)?.id
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * 组织归属解析兜底链（#17，2026-10-29）：调用方用户组织 → 部门绑定组织（R11）→ 平台根组织。
+   * 机器主体 / 外部工具通道没有用户归属，此前 orgId 空串直达 modelgw——模型应答后在计量落账处
+   * 抛「usage 事件 org 必填」，先花钱后报错；现在调用前即解析出真实归属，orgSource 随审计留痕。
+   */
+  private resolveOrgId(userId: string | undefined, dept?: { id: string; orgId?: string }): { orgId: string; orgSource: string } {
+    const caller = this.callerOrgId(userId)
+    if (caller) return { orgId: caller, orgSource: 'caller' }
+    const deptOrg = dept?.orgId ?? ''
+    if (deptOrg) return { orgId: deptOrg, orgSource: `dept:${dept!.id}` }
+    const root = this.rootOrgId()
+    if (root) return { orgId: root, orgSource: 'platform-root' }
+    return { orgId: '', orgSource: 'unresolved' }
   }
 
   /**
@@ -635,7 +660,8 @@ export class PanelService extends Service {
     // V16/D08 问答分型探测：命中受管员工 → 应答 additive 携带 workforce 标注（问答 ≠ 任务执行）；
     // 不新建 run、不改任务状态（问答与执行彻底分型）。
     const workforce = await this.managedWorkforceOf(asset.id)
-    const orgId = this.callerOrgId(options.userId)
+    // #17：组织兜底链（caller→dept.orgId→根组织），机器主体点名不再空串打穿计量
+    const { orgId, orgSource } = this.resolveOrgId(options.userId, dept)
     const sceneSummary = this.sceneSummaryForDept(dept)
     const systemPrompt = [
       String((asset.attrs as Record<string, unknown> | undefined)?.systemPrompt ?? `你是企业部门协作面板中的数字同事「${agentCard.name}」（${agentCard.desc}）。`),
@@ -654,7 +680,7 @@ export class PanelService extends Service {
         type: 'invoke', actorType: 'machine', actorId: `agent:${agentName}`, actorName: agentName,
         action: 'panel.agent.invoke', resourceType: 'agent', resourceId: asset.id, resourceName: agentName,
         // V16：审计口径=问答/协作；受管员工命中时随 detail 留分型标注
-        result: 'ok', detail: `model=${result.model}（askAgent 直答）${workforce ? `；workforce=受管员工(${workforce.employeeId})，${workforce.notice}` : ''}`,
+        result: 'ok', detail: `model=${result.model}（askAgent 直答）org=${orgSource}${workforce ? `；workforce=受管员工(${workforce.employeeId})，${workforce.notice}` : ''}`,
         ...(options.sceneCode ? { sceneCode: options.sceneCode } : {}),
       })
       return {
@@ -725,7 +751,8 @@ export class PanelService extends Service {
   ): Promise<{ ok: true; reply: string; model: string; skill: { name: string; version: string }; skillLoad?: PanelSkillLoad } | { ok: false; reason: string }> {
     const name = skillName.trim()
     if (!name) return { ok: false, reason: t('技能名为空（用 /技能名 或 panel_skill_invoke 点名）') }
-    const orgId = this.callerOrgId(options.userId)
+    // #17：组织兜底链（caller→根组织；技能直调无部门上下文）
+    const { orgId } = this.resolveOrgId(options.userId)
     const invokeable = this.listInvokeableSkills(orgId || undefined)
     // 按名全名匹配优先，slug 兜底（技能名常含中文与空格，通用 regex 兜不了）
     const skill = invokeable.find((item) => item.name === name) ?? invokeable.find((item) => item.slug === name)
