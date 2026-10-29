@@ -1,68 +1,26 @@
-# 元冰可（ybkk-AIOS）· 企业 AI 资源管理平台
+# 元冰可 AIOS
 
-> 元冰可是基于 dsh/cordis「一切皆插件」架构的企业级 AI 资源统一管理平台：把 MCP 服务、Skill、Agent、AI 应用、模型路由、NAS 文件存储六类资产纳入一套身份（IAM/OIDC SSO）、一套权限、一套用量计量、一套审计；按「团队 + 领域资产」定价（制造业客户可走私有化交付项目制），对外只呈现用量透明与内部成本穿透，不含任何金额结算语义。
+> 面向企业的 AI 运行与治理平台：围绕目标和任务组织数字员工协作，并管理其使用的 MCP、Skill、模型、应用等能力。支持独立部署和实验性的 dsh 挂载。
 
-YuanBingKe (ybkk-AIOS) is a self-hosted enterprise AI resource management platform: unified identity (IAM / OIDC SSO), permissions, usage metering and audit for six asset types — MCP services, skills, agents, AI apps, model routes and NAS file storage — priced by team and domain assets (private project-based delivery available for manufacturing).
+## 阅读入口
 
-## 核心能力（均为已实现功能）
+- [README](https://github.com/01men/ybkkasi/blob/main/README.md)：产品定位、快速体验、接入方式及运行边界。
+- [部署与接入指南](https://github.com/01men/ybkkasi/blob/main/docs/deploy-enterprise.md)：独立部署、dsh 挂载和远程接入。
+- [架构说明](https://github.com/01men/ybkkasi/blob/main/docs/ARCHITECTURE.md)：插件体系与服务边界。
+- [运维 Skill 索引](https://github.com/01men/ybkkasi/blob/main/skills/dsh-ops-admin/SKILL.md)：按领域查找具体操作手册。仓库内的 Skill 文件可以直接读取；如需 dsh 自动发现，请从源码将所需目录复制到 `~/.dsh/skills/` 或项目的 `.dsh/skills/`，先检查同名文件。
+- [CLI](https://github.com/01men/ybkkasi/blob/main/cli/dshctl.mjs)：`node cli/dshctl.mjs help` 查看命令；`--output json` 便于机器读取。
 
-- 统一身份与访问管理（IAM）：多级组织树、角色/用户组、权限点矩阵、钉钉连接器定时自动同步、全员名册 API（`GET /api/iam/roster`，PII 最小化）、应用组织架构同步（`GET /api/apps/:id/org-sync`，默认凭证自助复用平台组织模块，version 零载荷轮询）
-- 统一认证与 SSO：OIDC Provider（RS256/JWKS/PKCE S256/refresh 轮转/end_session/revoke）、应用上线门禁双点、owner 自助签发、钉钉免密登录
-- MCP 部署服务：草稿→验证→灰度→全量、版本不可变、一键回滚、令牌网关（权限组/Tool 粒度/只读约束）、熔断、P95 监控
-- Skill 市场：提交→静态扫描（恶意代码/密钥泄露自动驳回）→两级审批（允许同一人依次完成 domain 与 security 两级二次审批）→版本化上架，Ed25519 契约验签，安装包可直传 NAS
-- Agent 本体与 AI 应用本体：注册颁发机器凭证、on-behalf-of 令牌链、编排拓扑一图穿透、PV/UV/DAU 指标（主动上报 + 公开访客埋点 beacon）；自治分级（A0-A3）与 A2A 点名调用端点
-- 流程编排（flow-core）：TF 编排 + 步骤状态机、模板库 + contextPack、SLA 与进度、甘特时间轴（`/api/flow/*`，`flow.*` 事件入总线与面板 SSE 扇出）
-- 数据要素域：数据集登记、四维质量分、血缘反向追溯、指标字典口径仲裁
-- 场景治理与协作：IAM 场景级授权（sceneCode，deny→allow→fail-closed）、审计证据锚点登记反查与场景维度时间线、通知中心持久化（since 增量 + 已读游标）
-- 执行中枢（plugin-exec-hub）：目标对齐（exec:goals 父目标树 + 指标三件套 → projects → issues，goalAncestry 写时物化）、30s 心跳循环（唤醒队列幂等键 + 治理前置链 + 待办三源拉取 + 健康度五档）、issue 执行锁 CAS（纯函数决策 64 组合穷举 + 僵尸锁回收）、例行调度（interval / 5 段 cron / webhook 路径即凭证）、exec_wakeup 四工具与五联动护栏（预算硬停 / 权限校验 / 审计留痕 / 密级注记 / P0 审批门禁）；Agent 组织化（orgRole/rank/managerId）与主体预算超额联动冻结 + L4 解冻审批
-- 数字员工域（plugin-workforce）：员工档案与任用版本状态机（任用）、目标认领与执行租约确认（认领）、短期工作授权 permit（权限点 workforce.read/write/admin/invoke/accept）、四网关受控调用账本（受控调用，与资源原授权链两层取交集）、交付-真人验收闭环（交付验收）；分工口径——目标/任务/run 归执行中枢，员工/任用/交付归本域
-- 平台工程加固：契约面 output.schema 强校验、审批执行能力令牌防冒充、事件总线持久化与重试/死信、平台自更新 pin/签名/回滚、连接器 ODD 声明块与 TOCTOU 执行侧快照校验、P95 尾延迟质量闸门与故障注入演练；入参校验收口（审批 decision/告警规则/应用指标/skill-storage 枚举）；Ed25519 签名基建平台级抽升与发布清单验签（防篡改）
-- 用量计量：schema v1 幂等管道（死信重放/消费幂等）、零价快照价格簿、三方对账、能力漂移检测、成本穿透报表（单位 DAU 成本）；事件保留策略默认 730 天（`USAGE_RETENTION_DAYS`，0=永久，附清除运维口）
-- FinOps 报告 v1（CFO 视图）：成本穿透（部门×模型交叉矩阵 + 上月环比 + Top 消耗主体）、空转检测 v1（近似口径、页面显式标注需人工复核）、「财务视图」SPA 页（#/finops）与一键 CSV 导出（Excel 友好 UTF-8 BOM）
-- 模型接入网关：OpenAI 兼容真实转发（模型未配置 endpoint 时拒绝调用，不生成假 completion），实测 input/output tokens 计量；渠道治理（分级路由 / 渠道组降级链 / 预算熔断 / TTFT 遥测诚实缺列）
-- 审计与治理：四类审计日志、告警规则引擎、越权计数告警、L4 强制审批（上线/下线/下架/吊销，单人通过即执行、结果回写）；审批深化（高风险二次确认 fail-closed、公司级终审、SLA 看板）；HTTP 全响应安全头默认开启（nosniff/SAMEORIGIN/Referrer-Policy）
-- 连接器纳管：open-connector sidecar 作 SaaS 数据面（1,000+ Provider 目录、OAuth 代理、凭证保险库），平台侧双层授权镜像与计量对账
-- NAS 资产纳管与数据权限：经 Synology 文件 MCP 网关操作（不直连 DSM 私有 API）、mcpServers JSON 一键纳管、组织位置 + 角色层级 RBAC 判定引擎（默认 deny、全程留痕）；文件所有权跟踪（上传登记/重命名改写/删除移除，数据权限判定接入所有者维度）；下载链接 HMAC 签名化（1h/24h/7d/30d/永久档位，取流三关：签名→吊销→权限复核，独立长期密钥可吊销）
-- 平台即 MCP Server：`POST /mcp`（Streamable HTTP JSON 形态），40+ 运维工具对 ZCode/Claude/Cursor 等任意 MCP 客户端开放，复用 Bearer 令牌与工具级权限点
-- 远程 dsh 接入与自更新：接入码 enroll（哈希存储/一次性/TTL/失败锁定）、运维工具远程代理；平台自更新（上游版本检查→控制台一键升级，dry-run + 审计）
+## 对接运行实例
 
-## 快速开始
+- 独立实例默认地址为 `http://127.0.0.1:7300`；`GET /api/health` 可检查健康状态。
+- `GET /api/openapi.json` 提供当前实例的 REST 描述；受保护接口需要获授权的凭据。
+- `POST /mcp` 是平台运维工具的 MCP 接口，工具发现结果受调用方权限约束。`POST /mcp/services/:slug` 是面向具体 MCP 服务的另一接口。
+- dsh 挂载配置使用 `/rq` 前缀；具体地址、能力及授权以目标实例为准。工具和接口数量可能随版本及调用方权限变化。
 
-- 环境要求：Node ≥ 22.6（原生 TypeScript 运行，无需构建步骤）
-- DSH 挂载安装（bundle 一条命令装齐 25 插件条目，数据面挂 /rq 前缀）：`dsh plugin --profile web add github:01men/ybkkasi`（安装源自 01men/ybkk-AIOS 迁移至本仓，2026-10-14）
-- 独立进程（无需 DSH）：`npm install && npm start`（默认 http://127.0.0.1:7300，首次启动执行基线初始化：内置角色 + 根组织 + 平台管理员）
-- 演示模式：`DEMO_SEED=1 npm start`（注入演示组织树/账号/MCP/Skill/Agent/应用与 28 天历史数据）
-- 质量门：`npm run selftest` 端到端自测全绿（数量以本次运行为准）+ `npm run lint:manifests` 插件清单五面 YAML 校验
-- CLI：`node cli/dshctl.mjs --output json|table`（MCP/Skill/Agent/应用/NAS/凭证/审批全树命令）
+## 操作边界
 
-## 文档
-
-- [README](https://github.com/01men/ybkkasi#readme)：产品全景、插件架构与能力对照
-- [企业部署与接入](https://github.com/01men/ybkkasi/blob/main/docs/deploy-enterprise.md)：部署 runbook 与 dsh 运行时接入
-- [App SSO 接入指南](https://github.com/01men/ybkkasi/blob/main/docs/app-sso-integration.md)：企业 AI 应用身份纳管全流程
-- [用量报表契约（J4）](https://github.com/01men/ybkkasi/blob/main/docs/contract-j4-usage-report.md)：部门/Agent/Skill tokens 三维聚合月报与 CSV 导出
-- [连接器集成](https://github.com/01men/ybkkasi/blob/main/docs/connector-integration.md)：open-connector sidecar 部署拓扑与故障排查
-- [NAS 数据权限](https://github.com/01men/ybkkasi/blob/main/docs/nas-authz.md)：组织位置 + 角色层级 RBAC 设计与灰度
-- [M0 发布说明](https://github.com/01men/ybkkasi/blob/main/docs/internal/release-notes-2026-09-09-m0.md)：当前商业模式口径与契约变更清单
-- [M1-1 契约冻结 v1 发布说明](https://github.com/01men/ybkkasi/blob/main/docs/internal/release-notes-2026-09-11-optimization.md)：J1 面板技能/Agent 点名直调、J2 统一入口分诊、J3 会话直通契约与安全/数据治理加固
-- [IAW 缺口批次发布说明](https://github.com/01men/ybkkasi/blob/main/docs/internal/release-notes-2026-09-11-iaw-batch.md)：flow-core 流程编排、数据要素域、模型渠道治理、Agent 自治与 A2A、场景级授权
-- [季度系统性测试报告](https://github.com/01men/ybkkasi/blob/main/docs/internal/qa-report-20260912-overview.md)：安全/计量/编排/市场四组详录与全链路、早高峰并发演练结论（2026-09-12）
-- [QA 优化批次交付说明](https://github.com/01men/ybkkasi/blob/main/docs/internal/release-notes-2026-09-13-qa-fixes.md)：15 项安全与正确性修复、验证结论与防复发（2026-09-13）
-- [M2 迭代发布说明](https://github.com/01men/ybkkasi/blob/main/docs/internal/release-notes-2026-09-16-m2.md)：FinOps 报告 v1、首启体验产品化、技术债收尾与契约变更登记（2026-09-16）
-
-## 国际化文档（International Docs，2026-10-15 起）
-
-面向美/欧/印/非/澳/日/新市场的官方多语言文档，唯一出处 docs/i18n/（治理：docs/i18n/README.md，术语契约：docs/i18n/GLOSSARY.md）。运行时界面自 2026-10-16 起内置三语切换（zh-CN 默认 / en-US / ja-JP）；文档译稿中 UI 位置带中文原文括注，协议层 ASCII 键不改写，中文原文为权威版本。
-
-- English（Tier 1 全量版 9 份，en-US 基线；覆盖美/澳/新/印商务/非洲英语区/欧洲商务）：https://github.com/01men/ybkkasi/tree/main/docs/i18n/en （README.md 产品全景 · product-introduction.md 产品介绍 · getting-started.md 快速开始 · dsh-ecosystem.md DSH 生态 · user-guide.md 功能使用指南 · deploy-enterprise.md 企业部署 · app-sso-integration.md App SSO 接入 · usage-reporting.md 用量报表 · release-notes-summary.md 发布史摘要）
-- 日本語（Tier 1 全量版 9 份，与英文版同集）：https://github.com/01men/ybkkasi/tree/main/docs/i18n/ja
-- Tier 2 产品一页纸：Deutsch docs/i18n/de/product-overview.md · Français docs/i18n/fr/product-overview.md · Español docs/i18n/es/product-overview.md · Português docs/i18n/pt/product-overview.md · हिन्दी docs/i18n/hi/product-overview.md
-
-## 边界与口径
-
-- 商业模式为按「团队 + 领域资产」定价（行业图谱包/场景包等，制造业客户可走私有化交付项目制）；平台对外只呈现用量与内部成本穿透（价格簿零价快照 charge 恒 0 + 内部采购成本参考），钱包/充值/分账等结算语义已整体下线封存
-- 生产部署默认基线初始化（零演示数据）；演示数据仅 `DEMO_SEED=1` 显式注入，请勿在生产启用
-- 全部文件操作经 MCP 文件网关并按真实用户身份（X-On-Behalf-User）留痕；测试内 stub 均为进程内真实 HTTP 服务，不降级为 mock
-- 运行时表现层多语言（2026-10-16 起）：UI/CLI/通知与审批文案/错误提示支持 简体中文（默认）/ English (US) / 日本語 实时切换——Web 顶栏语言选择器（偏好 localStorage `rq_lang`）、请求级 `?lang=` 与 Accept-Language 协商、CLI `--lang` 旗标或 `DSHCTL_LANG`、安装级 `PLATFORM_LOCALE`、企业定制词条 `I18N_EXTRA_DIR`；词典未覆盖文案优雅降级中文，默认 zh-CN 输出与历史版本逐字节一致；协议层 ASCII 键不改写（事件名/权限点/错误原因码/API 信封字段/环境变量名/浏览器存储键，逐键中文释义见 docs/协议键中文对照总表.md）。文档层自 2026-10-15 起提供官方多语言版（docs/i18n/，英文与日文全量 + 德/法/西/葡/印地概览），中文原文为权威版本，术语契约见 docs/i18n/GLOSSARY.md
-
-（最近更新：2026-10-16 · 功能层全球化批次——运行时表现层内置三语切换（zh-CN 默认/en-US/ja-JP）：新增 packages/platform-i18n 内核（中文原文为键的词典、AsyncLocalStorage 请求级 locale、?lang=/rq_lang/Accept-Language/PLATFORM_LOCALE 协商、I18N_EXTRA_DIR 企业覆盖层、/locales/:locale 合并端点）、控制台/面板顶栏语言切换器与 DOM 级翻译引擎、CLI dshctl --lang/DSHCTL_LANG、约 2,700 处 t() 接入与约 4,800 词条×2 语言（en/ja 术语对齐 docs/i18n/GLOSSARY.md）；默认 zh-CN 输出逐字节不变，协议层 ASCII 键不改写，新增协议键已登记协议键对照表。此前：2026-10-15 · 数字员工二期 W 批次整体交付——MCP 工具可信风险登记流程（V11 根治）、REST/Panel 接入面等价收敛、usage 代报白名单、workforce.admin 运维面、灰度交付包（六门验证：lint 全绿 · selftest ≥1380 · drill ≥37，详见批次提交）。更新日期：2026-10-16）
+- 先通过只读接口确认目标、状态和权限；进行写入、删除、发布、升级等操作前，取得相应授权并遵循实例的审批要求。
+- CLI 的 `--dry-run` 不适用于所有命令。只有明确提供预演能力的操作才可依赖该参数；不确定时不要执行变更。
+- 将令牌、口令、密钥和一次性接入码视为敏感信息，不要写入公开文档、日志或回复。
+- `DEMO_MODE` 会公开实例的只读数据面，只能用于隔离的演示数据。默认存储面向单进程，不要让多个进程共享同一数据目录。
+- 数字员工是协作主体；平台中部分实现仍通过资源登记机制管理 Agent 的生命周期。

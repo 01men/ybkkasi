@@ -38,6 +38,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: CLI dry-run safety tests
+        run: npm run test:cli
       - name: Manifest lint (manifests ↔ implementation)
         run: npm run lint:manifests
       - name: Boot-order lint (依赖先于使用)

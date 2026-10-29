@@ -17,11 +17,10 @@ As of the 2026-10-16 release, the runtime interface — Console, Panel, Portal, 
 | Shape | Processes | Description | Best for |
 |---|---|---|---|
 | A. Standalone host (default) | `node src/main.ts` | One process provides the REST gateway + Console SPA + a bridge of 41 operations tools (including 4 access-management tools) | Minimal production form; human operation via the Console |
-| B. Standalone host + dsh runtime | Shape A process + `dsh web --patch cordis.yml` | The dsh plugin tree exposes all operations tools to models; Agents can operate the platform in natural language. The two processes **share the same `data/` directory**. Form A (standalone host) is the default, SLA-committed form; this form (full dsh runtime) is **experimental** | Enterprises that want Agent-driven operations |
+| B. dsh runtime mount | `dsh web --patch <overlay>` | The configuration mounts the platform under `/rq`; this experimental form must be verified with isolated data | Agent-driven operations |
 | C. Remote dsh access | Host (A) + `dsh plugin add` on a remote computer | The remote computer installs the platform from the plugin marketplace and applies for a machine credential from the host with a **one-time access code**; all operations tools are proxied remotely to the host for execution (no source code, no shared `data/` needed) | Multiple sites / multiple operators managing the same platform with dsh |
 
-> Key fact: `cordis.yml` does **not** mount the console plugin — the Console SPA and REST are always served by the standalone host process; the dsh side only mounts business plugins (`provideToolRuntime: false`, using dsh's native ToolRuntime).
-> Therefore **shape B also requires shape A to be completed first**.
+> `cordis.yml` includes the console and dsh bridge and disables the independent HTTP listener, with `/rq` as the intended dsh entry. Do not run two processes against the same data directory.
 
 Environment requirements: Node ≥ 22.6 (runs TypeScript natively, no build step); data is persisted in the directory given by `--data` (JSON collections + SQLite `txnstore.db`).
 
@@ -121,18 +120,11 @@ Operations essentials:
 
 ## 3. dsh runtime onboarding (shape B — enabling Agent operations)
 
-Prerequisite: a usable checkout of deepseek-harness (`pnpm dsh web`).
+This integration is experimental: verify it with an isolated data directory. For an installed dsh runtime, use `dsh plugin --profile web add github:01men/ybkkasi`.
 
-```bash
-# 1. Generate the onboarding overlay (replace <PROJECT_ROOT> with this repository's absolute path)
-sed 's|<PROJECT_ROOT>|/opt/ops-platform|g' cordis.yml > /tmp/ops-overlay.yml
+For a source checkout, use the [Chinese source instructions](../../deploy-enterprise.md#三dsh-运行时接入形态-b启用-agent-运维) to generate an overlay with a `file://` repository URL and ensure the project and host use the same cordis instance. Validate the `/rq` console and available tools. Never run two processes against the same data directory.
 
-# 2. Start inside the deepseek-harness checkout (shares data/ with the standalone host; both processes online)
-pnpm dsh web --patch /tmp/ops-overlay.yml
-```
-
-Agent operations credentials (environment variables): `DSHCTL_URL` (default `http://127.0.0.1:7300`), `DSHCTL_USER` / `DSHCTL_PASS` (use an ops-class account; do not keep admin resident), or `DSHCTL_TOKEN`.
-For routine operations, just have the Agent read `skills/dsh-ops-admin/SKILL.md` (the loop: diagnose → collect evidence → dry-run rehearsal → execute → verify; L4 high-risk operations automatically go through an approval ticket).
+For operations, read `skills/dsh-ops-admin/SKILL.md` and follow the actual authorization and approval rules.
 
 ---
 
@@ -215,14 +207,14 @@ listen port: <7300>; admin password: <ADMIN_PASSWORD strong password>; attach ds
    c. GET /api/overview (Bearer token) returns 200;
    d. npm run selftest passes in full; npm run lint:manifests passes with zero errors (pass count as of the latest run).
 6. (Optional, only if "attach dsh" = yes) generate the overlay per section 3 of docs/deploy-enterprise.md and
-   start with pnpm dsh web --patch; verify both processes share the same data/.
+   start with pnpm dsh web --patch; validate /rq with isolated data and never share a data directory between processes.
 7. Report: commit hash, service address, whether the admin first login succeeded, selftest results, and how the
    initial password was delivered (never paste it in plaintext into public channels).
 
 [GUARDRAILS]
 - Every high-risk operation (offline/revoke/delete) must go through a platform approval ticket with an audit
   trail; no bypassing.
-- Read-only commands may run freely; rehearse with --dry-run before any change.
+- Read-only commands may run freely; use --dry-run only for commands that explicitly support it. Do not assume it prevents writes for other commands.
 - After deployment, change the admin initial password immediately and create enterprise-owned accounts
   (see skills/dsh-ops-iam).
 ```

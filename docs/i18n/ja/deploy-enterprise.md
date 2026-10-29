@@ -16,10 +16,10 @@ DeepSeek Harness（dsh）を基盤に本リポジトリ（YuanBingKe · エン�
 | 形態 | プロセス | 説明 | 適用 |
 |---|---|---|---|
 | A. 独立ホスト（既定） | `node src/main.ts` | 1 プロセスで REST ゲートウェイ＋コンソール SPA＋運用ツールブリッジ 41 本（接続管理ツール 4 本を含む）を提供 | 企業本番の最小形態。コンソールでの手動運用 |
-| B. 独立ホスト＋dsh ランタイム | A のプロセス＋`dsh web --patch cordis.yml` | dsh 側のプラグインツリーが全運用ツールをモデルに露出し、Agent が自然言語でプラットフォームを運用可能。両プロセスは**同一の `data/` ディレクトリを共有** | Agent 主導の運用が必要な企業 |
+| B. dsh ランタイムへのマウント | `dsh web --patch <overlay>` | プラットフォームを `/rq` にマウントする実験的な形態。分離したデータで検証 | Agent 主導の運用 |
 | C. リモート dsh 接続 | ホスト（A）＋遠隔 PC で `dsh plugin add` | 遠隔 PC がプラグイン市場から本プラットフォームをインストールし、**一回限りの接続コード**でホストにマシンクレデンシャルを申請。運用ツールはすべてホストへリモートプロキシ（ソース不要・data 共有不要） | 拠点間・複数人で dsh 経由の共同運用 |
 
-> 重要な事実：`cordis.yml` は console プラグインをマウントしません — コンソール SPA と REST は常に独立ホストプロセスが提供します。dsh 側は業務プラグインのみをマウントします（`provideToolRuntime: false` で dsh のネイティブ ToolRuntime を使用）。したがって**形態 B も必ず形態 A を先に完了させてください**。
+> `cordis.yml` は console と dsh bridge を含み、独立 HTTP リスナーを無効にして `/rq` へのマウントを意図しています。複数プロセスで同一データディレクトリを使用しないでください。
 
 環境要件：Node ≥ 22.6（ネイティブ TypeScript 実行、ビルド不要）。データは `--data` で指定したディレクトリに永続化されます（JSON コレクション＋SQLite `txnstore.db`）。
 
@@ -133,19 +133,11 @@ Restart=always
 
 ## 3. dsh ランタイム接続（形態 B · Agent 運用の有効化）
 
-前提：deepseek-harness のソース検出が使用可能であること（`pnpm dsh web`）。
+この接続形態は実験的です。分離したデータで検証してください。dsh がインストール済みの場合は `dsh plugin --profile web add github:01men/ybkkasi` を使用します。
 
-```bash
-# 1. 接続オーバーレイを生成（<PROJECT_ROOT> を本リポジトリの絶対パスに置換）
-sed 's|<PROJECT_ROOT>|/opt/ops-platform|g' cordis.yml > /tmp/ops-overlay.yml
+ソースからマウントする場合は、[中国語原典](../../deploy-enterprise.md#三dsh-运行时接入形态-b启用-agent-运维)を参照し、`file://` 形式の URL を使う overlay を生成して、ホストとプラグインが同一の cordis インスタンスを使うことを確認します。`/rq` と利用可能なツールを検証し、複数プロセスでデータディレクトリを共有しないでください。
 
-# 2. deepseek-harness 検出内で起動（独立ホストと data/ を共有し、両プロセスが同時にオンライン）
-pnpm dsh web --patch /tmp/ops-overlay.yml
-```
-
-Agent 運用のクレデンシャル（環境変数）：`DSHCTL_URL`（既定 `http://127.0.0.1:7300`）、`DSHCTL_USER` ／ `DSHCTL_PASS`（ops 系アカウントを推奨。admin の常時使用は避けてください）、または `DSHCTL_TOKEN`。日常運用では Agent に中文原典 `skills/dsh-ops-admin/SKILL.md` を読ませるだけで十分です（診断 → 取証 → dry-run 予行演習 → 実行 → 検証のクローズドループ。L4 の高危操作は自動的に承認チケット経由）。
-
-**ソース検出モードのハード要件**（両方必須）：①`cordis.yml` の `<PROJECT_ROOT>` を `file:///` 形式の絶対パス URL に置換すること（Windows の裸ドライブレターパスは ESM で `ERR_UNSUPPORTED_ESM_URL_SCHEME` になります）。②`node_modules/@deepseek-ai/cordis` を dsh ソースツリーの `vendor/cordis` への junction にすること（プラグインとホストが**同一の cordis インスタンス**をロードする保証。二重インスタンスになるとサービスチェーン全体が `pending` で固まります）。また**インストールモード**では `@deepseek-ai/cordis` を `dependencies` に入れてはいけません（`devDependencies` のみ。pnpm が hoist すると第二の cordis インスタンスが解決され、サービスチェーンが全滅します）。
+運用手順は `skills/dsh-ops-admin/SKILL.md` を参照し、実際の権限と承認規則に従ってください。
 
 ---
 
@@ -226,12 +218,12 @@ DSHCTL_URL=http://宿主IP:7300 DSHCTL_USER=admin DSHCTL_PASS=*** \
    c. GET /api/overview（Bearer token）返回 200；
    d. npm run selftest 全部通过；npm run lint:manifests 70/70 通过。
 6.（可选，仅当"接入 dsh"=是）按仓库 docs/deploy-enterprise.md 第三节生成 overlay 并以
-   pnpm dsh web --patch 启动，验证两进程共享同一 data/。
+   pnpm dsh web --patch 启动，在隔离数据目录中验证 /rq；不得让两个进程同时共享 data/。
 7. 回报：commit hash、服务地址、admin 首登是否成功、自测结果、初始口令交付方式（不得明文贴在公开渠道）。
 
 【护栏】
 - 一切高危操作（下线/吊销/删除）必须走平台审批单并留痕，不得绕过；
-- 只读命令可自由执行；任何变更前先 --dry-run 预演；
+- 只读命令可自由执行；仅对明确支持预演的命令使用 --dry-run，其他命令不得假设该参数能阻止写入；
 - 部署完成后建议立即改掉 admin 初始口令并创建企业自有账号（参考 skills/dsh-ops-iam）。
 ```
 

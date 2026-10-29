@@ -9,7 +9,7 @@
  *
  * 全局约定（方案 §4.2）：
  *   --output json|table   机器可读优先，默认 table
- *   --dry-run             变更类命令支持预演
+ *   --dry-run             仅支持预演的命令可变更预览；其他写请求拒绝执行
  *   --yes                 非交互模式（供 Agent 调用）
  *   错误码统一且带修复建议
  *
@@ -63,7 +63,9 @@ function consumeLeadingGlobals() {
 consumeLeadingGlobals()
 
 const OUTPUT = GLOBALS.output !== undefined ? GLOBALS.output : flag('output', 'table')
-const DRY_RUN = truthyFlag('dry-run') || GLOBALS['dry-run'] === true
+const leadingDryRun = GLOBALS['dry-run']
+const DRY_RUN = truthyFlag('dry-run') || (leadingDryRun !== undefined && leadingDryRun !== false &&
+  !['false', '0', 'no', 'off'].includes(String(leadingDryRun).trim().toLowerCase()))
 const ASSUME_YES = truthyFlag('yes') || truthyFlag('confirm') || GLOBALS.yes === true || GLOBALS.confirm === true
 // --url：CLI 旗标优先于 DSHCTL_URL 环境变量（前置后置均可）
 {
@@ -119,6 +121,16 @@ function t(zh, params) {
 let token = process.env.DSHCTL_TOKEN ?? ''
 
 async function call(method, path, body) {
+  // 默认拒绝预演模式下的写请求；只放行服务端明确实现 dryRun 的接口和认证登录。
+  // 防止调用者误以为所有命令都支持 --dry-run，实际却执行了变更。
+  const previewEndpoint = method === 'POST' && body?.dryRun === true && (
+    /^\/api\/mcp\/services\/[^/]+\/deploy$/.test(path) ||
+    path === '/api/connector/execute' || path === '/api/update/apply'
+  )
+  const isLogin = method === 'POST' && path === '/api/auth/login'
+  if (DRY_RUN && !['GET', 'HEAD'].includes(method) && !previewEndpoint && !isLogin) {
+    fail(t('该操作不支持 --dry-run，已阻止写入请求：{method} {path}', { method, path }))
+  }
   const headers = { 'content-type': 'application/json' }
   if (token) headers.authorization = `Bearer ${token}`
   const response = await fetch(`${BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -374,7 +386,7 @@ const COMMANDS = {
         '',
         '全局选项：',
         '  --output json|table    输出格式（默认 table，机器消费建议 json）',
-        '  --dry-run              变更预演（MCP 部署等支持影响面预览）',
+        '  --dry-run              支持预演的操作查看影响面；其他写入会被拒绝',
         '  --yes                  跳过交互确认（供 Agent 非交互调用）',
         '  --url <base>           平台地址（默认 http://127.0.0.1:7300）',
         '  --token <token>        平台令牌（优先于 DSHCTL_TOKEN）',
@@ -411,6 +423,7 @@ const COMMANDS = {
       }
 
       if (action === 'init') {
+        if (DRY_RUN) fail(t('plugin init 不支持 --dry-run，已阻止创建本地文件'))
         const id = argOf('--id')
         if (!id || !/^[a-z0-9]+(\.[a-z0-9-]+){1,3}$/.test(id)) fail(t('用法：dshctl plugin init --id=<com.vendor.name> [--dir=./my-plugin]'))
         const dir = argOf('--dir') ?? `./plugin-${id.split('.').pop()}`
@@ -1154,7 +1167,7 @@ const COMMANDS = {
         if (sub === 'delete') {
           const id = argv[2]
           if (!id) fail(t('用法：connector connections delete <id> --yes （仍被权限组引用时可加 --force 解除引用并镜像令牌）'))
-          if (!ASSUME_YES && !DRY_RUN) fail(t('删除连接需要确认：请携带 --yes'))
+          if (!ASSUME_YES) fail(t('删除连接需要确认：请携带 --yes'))
           const data = await call('DELETE', `/api/connector/connections/${id}`, flag('force') ? { force: true } : {})
           console.log('\n' + t('✔ 连接已删除{groups}', {
             groups: Array.isArray(data.releasedGroups) && data.releasedGroups.length > 0
