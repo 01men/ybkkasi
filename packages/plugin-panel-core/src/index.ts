@@ -751,7 +751,7 @@ export function apply(ctx: Context, config: PanelConfig = {}) {
 
   guarded('POST', '/api/panel/:dept/tasks', 'panel.task.write', (exchange) => {
     const dept = deptOf(exchange)
-    const input = body<{ title?: string; detail?: string; lane?: string; assigneeName?: string; assigneeType?: string; sceneCode?: string }>(exchange)
+    const input = body<{ title?: string; detail?: string; lane?: string; assigneeName?: string; assigneeType?: string; sceneCode?: string; execIssueId?: string; goalId?: string; evidenceRefs?: string[]; reworkOf?: string }>(exchange)
     if (!input.title?.trim()) throw new Error('任务标题必填')
     if (input.lane !== undefined && !TASK_LANES.includes(input.lane as TaskLane)) throw new Error(`非法泳道：${input.lane}`)
     // A-01：任务挂场景时按场景策略裁决创建动作（deny/fail-closed → 403），无策略维持放行
@@ -764,6 +764,11 @@ export function apply(ctx: Context, config: PanelConfig = {}) {
       ...(input.assigneeType === 'agent' ? { assigneeType: 'agent' as const } : {}),
       ...(input.assigneeName ? { assigneeName: input.assigneeName } : {}),
       ...(input.sceneCode ? { sceneCode: input.sceneCode } : {}),
+      // 执行中枢血缘（DSH issue#3 修订）：携带即投影 exec-hub 权威，缺席/不存在诚实 400
+      ...(input.execIssueId?.trim() ? { execIssueId: input.execIssueId.trim() } : {}),
+      ...(input.goalId?.trim() ? { goalId: input.goalId.trim() } : {}),
+      ...(Array.isArray(input.evidenceRefs) && input.evidenceRefs.length ? { evidenceRefs: input.evidenceRefs.map(String) } : {}),
+      ...(input.reworkOf?.trim() ? { reworkOf: input.reworkOf.trim() } : {}),
       createdBy: info.userId ?? info.principalId,
     })
     return { task }
@@ -774,6 +779,25 @@ export function apply(ctx: Context, config: PanelConfig = {}) {
     if (!lane || !TASK_LANES.includes(lane as TaskLane)) throw new Error(`非法泳道：${lane}`)
     const info = caller(exchange)
     return { task: panel.transitionTask(String(exchange.params.id), lane as TaskLane, info.userId ?? info.principalId) }
+  })
+
+  // -- 执行中枢投影（DSH issue#3/#4 修订，2026-10-29） -----------------------------------------
+  // 面板不复制权威状态：目标/任务读透 exec-hub，泳道迁移与验收结论镜像回写（唯一任务事实源）。
+
+  /** 部门目标投影：目标（metric 基线/目标值）+ 任务（goalAncestry 血缘/执行锁）+ 面板关联任务 ID。 */
+  guarded('GET', '/api/panel/:dept/goals', 'panel.read', (exchange) => {
+    const dept = deptOf(exchange)
+    const projection = panel.deptGoalsProjection(dept)
+    if (!projection) return degraded(exchange, '执行中枢')
+    return projection
+  })
+
+  /** 验收裁决：签认关闭（accepted）/ 打回返工（rework）；有 exec 血缘时镜像回写 exec-hub。 */
+  guarded('POST', '/api/panel/tasks/:id/verdict', 'panel.task.write', (exchange) => {
+    const input = body<{ verdict?: string; opinion?: string }>(exchange)
+    if (input.verdict !== 'accepted' && input.verdict !== 'rework') throw new Error("verdict 必填且只能是 'accepted'（签认关闭）或 'rework'（打回返工）")
+    const info = caller(exchange)
+    return { task: panel.taskVerdict(String(exchange.params.id), input.verdict, { actorId: info.userId ?? info.principalId, ...(input.opinion ? { opinion: input.opinion } : {}) }) }
   })
 
   // -- 部门知识 ------------------------------------------------------------------

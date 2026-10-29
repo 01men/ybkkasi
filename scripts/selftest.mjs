@@ -6298,6 +6298,53 @@ try {
     const badLane = await api('POST', `/api/panel/tasks/${taskCreated.data.task.id}/transition`, { token: panelAdmin, body: { lane: 'archived' } })
     check('面板：非法泳道被拒', !badLane.ok)
 
+    // -- 执行中枢投影（DSH issue#3/#4 修订，2026-10-29）：面板=exec-hub 投影，不复制权威状态 ----
+    // 目标读透 / 泳道迁移镜像 / 验收裁决回写（唯一任务事实源红线）
+    const execGoal = await api('POST', '/api/exec/goals', { token: panelAdmin, body: { title: '自测目标：面板投影连通', metric: '一次装机合格率', metricBaseline: 88, metricTarget: 95, metricUnit: '%' } })
+    const execIssue = await api('POST', '/api/exec/issues', { token: panelAdmin, body: { title: '自测执行任务：M-2207 缺口复勘投影', priority: 'P1' } })
+    check('面板投影前置：执行中枢目标/任务就绪', execGoal.ok && execIssue.ok, JSON.stringify({ goal: execGoal.error, issue: execIssue.error }))
+    const linkedTask = await api('POST', '/api/panel/mfg/tasks', { token: panelAdmin, body: { title: '自测投影任务（血缘 exec）', lane: 'todo', execIssueId: execIssue.data.id, goalId: execGoal.data.id, evidenceRefs: ['audit:selftest-evidence-1'] } })
+    check('面板投影：任务携带执行中枢血缘创建（execIssueId 命中 exec:issues）',
+      linkedTask.ok && linkedTask.data.task.execIssueId === execIssue.data.id && linkedTask.data.task.goalId === execGoal.data.id
+      && Array.isArray(linkedTask.data.task.evidenceRefs), JSON.stringify(linkedTask.error ?? linkedTask.data?.task))
+    const linkedBogus = await api('POST', '/api/panel/mfg/tasks', { token: panelAdmin, body: { title: '血缘不存在应被拒', execIssueId: 'exec-no-such-issue' } })
+    check('面板投影：execIssueId 不存在诚实 400（不复制权威状态）', linkedBogus.status === 400, JSON.stringify(linkedBogus.error))
+    const goalsProj = await api('GET', '/api/panel/mfg/goals', { token: panelAdmin })
+    const projGoal = (goalsProj.data?.goals ?? []).find((goal) => goal.id === execGoal.data.id)
+    const projIssue = (goalsProj.data?.issues ?? []).find((issue) => issue.id === execIssue.data.id)
+    check('面板投影：goals 读透 exec-hub（目标 metric 基线/目标值 + 任务血缘 + 面板关联 ID）',
+      goalsProj.ok && Boolean(projGoal) && projGoal.metricTarget === 95 && Boolean(projIssue)
+      && (projIssue.panelTaskIds ?? []).includes(linkedTask.data.task.id)
+      && Array.isArray(projIssue.goalAncestry), JSON.stringify({ goals: goalsProj.data?.goals?.length, issues: goalsProj.data?.issues?.length }))
+    const mirrorMove = await api('POST', `/api/panel/tasks/${linkedTask.data.task.id}/transition`, { token: panelAdmin, body: { lane: 'doing' } })
+    const issueAfterMove = (await api('GET', '/api/exec/issues', { token: panelAdmin })).data.issues.find((issue) => issue.id === execIssue.data.id)
+    check('面板投影：泳道迁移镜像回写 exec-hub（doing → in_progress，唯一事实源）',
+      mirrorMove.ok && issueAfterMove?.status === 'in_progress', JSON.stringify({ mirror: mirrorMove.ok, exec: issueAfterMove?.status }))
+    // exec 状态机 in_progress→done 不直达：先推进面板泳道到 review（镜像 exec review），再签认关闭
+    const mirrorReview = await api('POST', `/api/panel/tasks/${linkedTask.data.task.id}/transition`, { token: panelAdmin, body: { lane: 'review' } })
+    const issueAtReview = (await api('GET', '/api/exec/issues', { token: panelAdmin })).data.issues.find((issue) => issue.id === execIssue.data.id)
+    check('面板投影：泳道迁移镜像 review（exec 同步待审）', mirrorReview.ok && issueAtReview?.status === 'review', JSON.stringify(issueAtReview?.status))
+    const verdictOk = await api('POST', `/api/panel/tasks/${linkedTask.data.task.id}/verdict`, { token: panelAdmin, body: { verdict: 'accepted', opinion: '自测签认：证据齐全' } })
+    const issueAfterVerdict = (await api('GET', '/api/exec/issues', { token: panelAdmin })).data.issues.find((issue) => issue.id === execIssue.data.id)
+    check('面板投影：签认关闭镜像回写（task.verdict=accepted + exec → done）',
+      verdictOk.ok && verdictOk.data.task.verdict === 'accepted' && issueAfterVerdict?.status === 'done',
+      JSON.stringify({ verdict: verdictOk.error ?? verdictOk.data?.task?.verdict, exec: issueAfterVerdict?.status }))
+    const verdictReplay = await api('POST', `/api/panel/tasks/${linkedTask.data.task.id}/verdict`, { token: panelAdmin, body: { verdict: 'rework' } })
+    check('面板投影：重复裁决被拒（结论不可变更，对账走 audit）', verdictReplay.status === 400 && /不可重复裁决/.test(verdictReplay.error?.message ?? ''), JSON.stringify(verdictReplay.error))
+    const reworkIssue = await api('POST', '/api/exec/issues', { token: panelAdmin, body: { title: '自测返工任务：验收打回重开', priority: 'P2' } })
+    const reworkTask = await api('POST', '/api/panel/mfg/tasks', { token: panelAdmin, body: { title: '自测返工投影任务', execIssueId: reworkIssue.data.id } })
+    await api('POST', `/api/panel/tasks/${reworkTask.data.task.id}/transition`, { token: panelAdmin, body: { lane: 'review' } })
+    await api('POST', `/api/panel/tasks/${reworkTask.data.task.id}/transition`, { token: panelAdmin, body: { lane: 'doing' } })
+    const verdictRework = await api('POST', `/api/panel/tasks/${reworkTask.data.task.id}/verdict`, { token: panelAdmin, body: { verdict: 'rework', opinion: '自测打回：口径需修正' } })
+    const issueAfterRework = (await api('GET', '/api/exec/issues', { token: panelAdmin })).data.issues.find((issue) => issue.id === reworkIssue.data.id)
+    check('面板投影：打回返工镜像回写（exec 任务重开 in_progress）',
+      verdictRework.ok && verdictRework.data.task.verdict === 'rework' && issueAfterRework?.status === 'in_progress',
+      JSON.stringify({ verdict: verdictRework.error ?? verdictRework.data?.task?.verdict, exec: issueAfterRework?.status }))
+    // 投影自测实体清理（exec-hub 节的目标树清空断言依赖；先删任务再删目标）
+    await api('DELETE', `/api/exec/issues/${reworkIssue.data.id}`, { token: panelAdmin })
+    await api('DELETE', `/api/exec/issues/${execIssue.data.id}`, { token: panelAdmin })
+    await api('DELETE', `/api/exec/goals/${execGoal.data.id}`, { token: panelAdmin })
+
     // -- 部门知识 ---------------------------------------------------------------
     const artCreated = await api('POST', '/api/panel/mfg/artifacts', { token: panelAdmin, body: { kind: 'diagnosis', title: '自测诊断卡', content: '四清单框架自测沉淀' } })
     const artList = await api('GET', '/api/panel/mfg/artifacts', { token: panelAdmin })

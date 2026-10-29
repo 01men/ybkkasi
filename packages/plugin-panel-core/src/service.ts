@@ -155,6 +155,20 @@ export interface TaskRecord extends RecordBase {
   sceneCode?: string
   messageId?: string
   createdBy: string
+  /** ── 执行中枢血缘（DSH issue#3 additive，2026-10-29）：面板=执行中枢投影，不复制权威状态 ── */
+  /** 关联的 exec-hub 任务（exec:issues.id）；携带即「面板泳道迁移镜像回写 exec-hub」。 */
+  execIssueId?: string
+  /** 血缘根目标（exec:goals.id，随 execIssueId 冗余下发免二次反查）。 */
+  goalId?: string
+  /** 证据包引用（NAS/审批/审计产物 URI 数组，验收对账用）。 */
+  evidenceRefs?: string[]
+  /** 验收结论：accepted=签认关闭 / rework=打回返工（面板签认动作落点，镜像回写 exec-hub）。 */
+  verdict?: 'accepted' | 'rework'
+  verdictBy?: string
+  verdictAt?: string
+  verdictOpinion?: string
+  /** 返工血缘（本任务由哪个任务打回产生）。 */
+  reworkOf?: string
 }
 
 export interface ArtifactRecord extends RecordBase {
@@ -1081,8 +1095,20 @@ export class PanelService extends Service {
     } catch { /* 审计面独立降级 */ }
   }
 
-  createTask(input: { dept: string; title: string; detail?: string; lane?: TaskLane; assigneeType?: 'human' | 'agent'; assigneeName?: string; sceneCode?: string; createdBy: string }): TaskRecord {
+  createTask(input: {
+    dept: string; title: string; detail?: string; lane?: TaskLane
+    assigneeType?: 'human' | 'agent'; assigneeName?: string; sceneCode?: string; createdBy: string
+    execIssueId?: string; goalId?: string; evidenceRefs?: string[]; reworkOf?: string
+  }): TaskRecord {
     this.dept(input.dept)
+    // 执行中枢血缘（DSH issue#3 修订，2026-10-29）：面板=执行中枢投影——携带 execIssueId 时
+    // 必须能在 exec:issues 命中（唯一任务事实源红线），exec-hub 缺席（01门演示态）则诚实拒绝。
+    if (input.execIssueId) {
+      const hub = this.execHub()
+      if (!hub) throw new Error('执行中枢未接入（01门演示态）——携带 execIssueId 的任务需要宿主执行中枢')
+      if (!hub.issues().get(input.execIssueId)) throw new Error(`执行中枢任务不存在：${input.execIssueId}`)
+    }
+    if (input.reworkOf && !this.tasks().get(input.reworkOf)) throw new Error(`返工来源任务不存在：${input.reworkOf}`)
     const record = this.tasks().insert({
       id: newId('ptask'), dept: input.dept, title: input.title,
       ...(input.detail ? { detail: input.detail } : {}),
@@ -1090,16 +1116,30 @@ export class PanelService extends Service {
       assigneeType: input.assigneeType ?? 'human',
       ...(input.assigneeName ? { assigneeName: input.assigneeName } : {}),
       ...(input.sceneCode ? { sceneCode: input.sceneCode } : {}),
+      ...(input.execIssueId ? { execIssueId: input.execIssueId } : {}),
+      ...(input.goalId ? { goalId: input.goalId } : {}),
+      ...(input.evidenceRefs?.length ? { evidenceRefs: input.evidenceRefs } : {}),
+      ...(input.reworkOf ? { reworkOf: input.reworkOf } : {}),
       createdBy: input.createdBy,
     })
     this.auditSafe({
       type: 'change', actorType: input.createdBy.startsWith('agent:') ? 'machine' : 'human',
       actorId: input.createdBy, actorName: input.createdBy,
       action: 'panel.task.create', resourceType: 'panel_task', resourceId: record.id, resourceName: input.title,
-      result: 'ok', detail: `泳道 ${input.lane ?? 'todo'}${input.assigneeName ? `，指派 ${input.assigneeName}` : ''}`,
+      result: 'ok', detail: `泳道 ${input.lane ?? 'todo'}${input.assigneeName ? `，指派 ${input.assigneeName}` : ''}${input.execIssueId ? `，血缘 exec:${input.execIssueId}` : ''}`,
       ...(input.sceneCode ? { sceneCode: input.sceneCode } : {}),
     })
     return record
+  }
+
+  /** exec-hub 软读（执行中枢投影）：缺席（01门演示态）→ undefined，端点级诚实降级。 */
+  private execHub(): any | undefined {
+    return this.soft('execHub')
+  }
+
+  /** 面板泳道 → exec-hub 任务状态镜像（todo/doing/review/done ↔ todo/in_progress/review/done）。 */
+  private laneToIssueStatus(lane: TaskLane): 'todo' | 'in_progress' | 'review' | 'done' {
+    return lane === 'doing' ? 'in_progress' : lane
   }
 
   transitionTask(taskId: string, lane: TaskLane, actorId: string): TaskRecord {
@@ -1107,15 +1147,100 @@ export class PanelService extends Service {
     if (!task) throw new Error(`任务不存在：${taskId}`)
     if (!TASK_LANES.includes(lane)) throw new Error(`非法泳道：${lane}`)
     const updated = this.tasks().update(taskId, { lane })
+    // 泳道迁移镜像回写 exec-hub（唯一任务事实源；best-effort + 审计如实留痕，不阻塞本地流转）
+    let mirror = ''
+    if (task.execIssueId) {
+      const hub = this.execHub()
+      if (!hub) mirror = '；exec-hub 缺席，仅本地流转'
+      else {
+        try {
+          hub.transitionIssue(task.execIssueId, this.laneToIssueStatus(lane), `panel:${actorId}`)
+          mirror = `；镜像 exec:${task.execIssueId} → ${this.laneToIssueStatus(lane)}`
+        } catch (error) {
+          mirror = `；镜像失败：${error instanceof Error ? error.message : String(error)}`
+        }
+      }
+    }
     this.ctx.platformBus.emit(PlatformEvents.PanelTaskUpdated, { taskId, dept: task.dept, lane, actorId, title: task.title })
     this.auditSafe({
       type: 'change', actorType: actorId.startsWith('agent:') ? 'machine' : 'human',
       actorId, actorName: actorId,
       action: 'panel.task.transition', resourceType: 'panel_task', resourceId: taskId, resourceName: task.title,
-      result: 'ok', detail: `${task.lane} → ${lane}`,
+      result: 'ok', detail: `${task.lane} → ${lane}${mirror}`,
       ...(task.sceneCode ? { sceneCode: task.sceneCode } : {}),
     })
     return updated
+  }
+
+  /**
+   * 验收裁决（DSH issue#4 修订，2026-10-29）：签认关闭（accepted）/ 打回返工（rework）。
+   * 结论落面板任务 + 镜像回写 exec-hub（accepted→done；rework→in_progress 重开返工）；
+   * 同一任务不可重复裁决；镜像失败如实留痕不阻塞结论（对账靠 audit detail）。
+   */
+  taskVerdict(taskId: string, verdict: 'accepted' | 'rework', input: { actorId: string; opinion?: string }): TaskRecord {
+    const task = this.tasks().get(taskId)
+    if (!task) throw new Error(`任务不存在：${taskId}`)
+    if (task.verdict) throw new Error(`任务已有验收结论（${task.verdict === 'accepted' ? '签认' : '返工'}），不可重复裁决`)
+    const updated = this.tasks().update(taskId, {
+      verdict,
+      verdictBy: input.actorId,
+      verdictAt: new Date().toISOString(),
+      ...(input.opinion ? { verdictOpinion: input.opinion } : {}),
+    })
+    let mirror = 'exec-hub 缺席，仅本地落结论'
+    const hub = task.execIssueId ? this.execHub() : undefined
+    if (hub && task.execIssueId) {
+      const target = verdict === 'accepted' ? 'done' : 'in_progress'
+      try {
+        hub.transitionIssue(task.execIssueId, target, `panel:${input.actorId}`)
+        mirror = `镜像 exec:${task.execIssueId} → ${target}`
+      } catch (error) {
+        mirror = `镜像失败：${error instanceof Error ? error.message : String(error)}`
+      }
+    }
+    this.ctx.platformBus.emit(PlatformEvents.PanelTaskUpdated, {
+      taskId, dept: task.dept, lane: updated.lane, actorId: input.actorId, title: task.title,
+      verdict, ...(task.execIssueId ? { execIssueId: task.execIssueId } : {}),
+    })
+    this.auditSafe({
+      type: 'change', actorType: input.actorId.startsWith('agent:') ? 'machine' : 'human',
+      actorId: input.actorId, actorName: input.actorId,
+      action: 'panel.task.verdict', resourceType: 'panel_task', resourceId: taskId, resourceName: task.title,
+      result: 'ok',
+      detail: `验收结论 ${verdict === 'accepted' ? '签认关闭' : '打回返工'}${input.opinion ? `（${input.opinion}）` : ''}；${mirror}`,
+      ...(task.sceneCode ? { sceneCode: task.sceneCode } : {}),
+    })
+    return updated
+  }
+
+  /**
+   * 部门目标投影（DSH issue#4 修订，2026-10-29）：读透 exec-hub（不复制权威状态）——
+   * 目标（含 metric 基线/目标值）+ 任务（含血缘 goalAncestry/执行锁）+ 面板侧关联任务 ID。
+   * 范围：部门绑定组织 → 该组织子树；未绑定 → 全量（与部门范围权限同口径）。
+   * exec-hub 缺席 → null（调用方 503 DEGRADED 诚实降级）。
+   */
+  deptGoalsProjection(dept: DeptConfigRecord): { goals: unknown[]; issues: unknown[] } | null {
+    const hub = this.execHub()
+    if (!hub) return null
+    const iam = this.soft('iam')
+    const orgScoped = dept.orgId && iam
+      ? (orgId: string): boolean => this.orgSubtreeContains(dept.orgId!, orgId)
+      : (): boolean => true
+    const panelTaskByIssue = new Map<string, string[]>()
+    for (const task of this.tasks().find((item) => item.dept === dept.id)) {
+      if (!task.execIssueId) continue
+      panelTaskByIssue.set(task.execIssueId, [...(panelTaskByIssue.get(task.execIssueId) ?? []), task.id])
+    }
+    const goals = hub.goals().all()
+      .filter((goal: { orgId: string }) => orgScoped(goal.orgId))
+      .map((goal: Record<string, unknown>) => ({ ...goal }))
+    const issues = hub.issues().all()
+      .filter((issue: { orgId: string }) => orgScoped(issue.orgId))
+      .map((issue: Record<string, unknown>) => ({
+        ...issue,
+        panelTaskIds: panelTaskByIssue.get(String(issue.id)) ?? [],
+      }))
+    return { goals, issues }
   }
 
   // -- 场景诊断（会话 × 图谱联动） -------------------------------------------------

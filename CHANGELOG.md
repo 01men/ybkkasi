@@ -3,6 +3,28 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · 执行中枢投影批次：面板任务血缘/验收裁决/目标读透（DeptAI-UI-DSH issue#3/#4 修订，2026-10-29）
+
+落仓库反馈两_open issue 的最小修订集——面板=执行中枢投影，不复制权威状态（唯一任务事实源红线）：
+
+- **任务血缘 additive（#3）**：`panel:tasks` 新增 `execIssueId / goalId / evidenceRefs[] /
+  verdict / verdictBy / verdictAt / verdictOpinion / reworkOf` 字段；创建任务携带
+  `execIssueId` 时必须能在 `exec:issues` 命中（不存在诚实 400，exec-hub 缺席 01门演示态
+  亦诚实拒绝），血缘只能来自权威面，不再塞 detail 纯文本。
+- **泳道迁移镜像回写（#3）**：`transitionTask` 对携带血缘的任务镜像 exec-hub 状态机
+  （doing→in_progress 等）；镜像失败如实落审计 detail 不阻塞本地流转——对账面可查。
+- **验收裁决（#4）**：新端点 `POST /api/panel/tasks/:id/verdict`（panel.task.write）——
+  `accepted` 签认关闭（镜像 exec → done）/ `rework` 打回返工（镜像 exec → in_progress 重开）；
+  同一任务不可重复裁决；结论+意见落任务与审计，`panel.task.updated` 事件随帧广播。
+- **目标读透（#4）**：新端点 `GET /api/panel/:dept/goals`（panel.read）——exec-hub
+  goals/issues 按部门绑定组织子树投影下发（目标含 metric 基线/目标值、任务含
+  goalAncestry 血缘与面板关联 ID）；exec-hub 缺席 503 DEGRADED 诚实降级。
+- **前台面**：IAW 执行空间新增「目标投影」视图（目标卡含进度条 + 权威任务表含血缘链
+  `goalAncestry` 反解与验收动作）；任务四泳道卡片携带执行血缘 `⛓ exec` 徽标与
+  签认/打回结论徽标。
+- 已知边界（后续批次）：高风险动作的面板内审批闸口、kill switch/暂停派单/人工接管
+  （issue#4 建议第 3/4 条）未在本批落地。
+
 ## [Unreleased] · 面板架构统一：底座侧部门面板整体收编为 DeptAI-UI-DSH 面板轨实现（2026-10-29）
 
 维护者拍板「当前项目的部门面板全部砍掉，统一使用 01men/DeptAI-UI-DSH 的面板架构」。
