@@ -18,6 +18,8 @@
     "packages",
     "src",
     "README.md",
+    "README.agent.md",
+    "docs/i18n",
     "LICENSE",
     "skills",
     "cli",

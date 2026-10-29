@@ -5,6 +5,8 @@
 ## 阅读入口
 
 - [README](https://github.com/01men/ybkkasi/blob/main/README.md)：产品定位、快速体验、接入方式及运行边界。
+- [Agent 视图](https://github.com/01men/ybkkasi/blob/main/README.agent.md)：自动化调用方所需的最小事实——接入点、操作边界、权限与计量语义、失败语义。
+- [English](https://github.com/01men/ybkkasi/blob/main/docs/i18n/en/README.md)：英文产品视图；机器可读版见 [en/README.agent.md](https://github.com/01men/ybkkasi/blob/main/docs/i18n/en/README.agent.md)。
 - [部署与接入指南](https://github.com/01men/ybkkasi/blob/main/docs/deploy-enterprise.md)：独立部署、dsh 挂载和远程接入。
 - [架构说明](https://github.com/01men/ybkkasi/blob/main/docs/ARCHITECTURE.md)：插件体系与服务边界。
 - [运维 Skill 索引](https://github.com/01men/ybkkasi/blob/main/skills/dsh-ops-admin/SKILL.md)：按领域查找具体操作手册。仓库内的 Skill 文件可以直接读取；如需 dsh 自动发现，请从源码将所需目录复制到 `~/.dsh/skills/` 或项目的 `.dsh/skills/`，先检查同名文件。

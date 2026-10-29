@@ -1,6 +1,12 @@
 > **日本語版** — 機械翻訳支援＋i18n PM による統一校正。**中文原文が正式版です（齟齬時は中文が優先）。**
 > 原典: `README.md`（リポジトリルート、補助原典 `llms.txt`）· 原典基準日: 2026-10-15 · 用語集: [GLOSSARY.md](../GLOSSARY.md) · ガバナンス: [README.md](../README.md)
 
+<p><a href="../../../README.md">简体中文</a> · <a href="../en/README.md">English</a> · <strong>日本語</strong> · <a href="../../../README.agent.md">Agent</a></p>
+
+> **`stale: true`** — 本稿の原典基準日は 2026-10-15。原典 `README.md` は 2026-10-29 に再構成され、
+> 数値固定を廃止（実行時取得へ）し、Agent ビュー（`README.agent.md`）を新設しました。
+> 本稿は次回校正まで旧構成のまま残ります。**最新情報は中文原文・[English](../en/README.md)・[Agent](../../../README.agent.md) を参照してください。**
+
 # YuanBingKe（ybkk-AIOS）· エンタープライズ AI リソース管理プラットフォーム（国際版・日本語）
 
 YuanBingKe（製品の中国語名: 元冰可）は、**DeepSeek Harness（dsh）の「すべてはプラグイン」アーキテクチャ**上に実装された、

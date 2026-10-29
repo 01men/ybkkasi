@@ -3,6 +3,27 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · README 三视图：中文 / English / Agent（2026-10-29）
+
+- **README 拆成三种视图**，共用同一套事实，面向不同读者：
+  - 根 [README.md](README.md)（简体中文，默认）、[docs/i18n/en/README.md](docs/i18n/en/README.md)（English）
+    为产品视图，结构对等：定位 → 界面证据 → 快速开始 → 架构 → 接入 → Agent 入口 → 运行边界 → 文档索引。
+  - 新增 [README.agent.md](README.agent.md) 与 [docs/i18n/en/README.agent.md](docs/i18n/en/README.agent.md) 为
+    Agent 视图官方入口：接入点、操作边界、身份与权限模型、计量与成本、失败语义，面向 MCP 客户端 /
+    dsh Agent / CI 脚本。每页顶部有视图切换。
+- **英文版按现中文版重写**：原 `docs/i18n/en/README.md` 为 2026-10-15 基线（386 行），与本轮精简后的
+  中文版已脱节（旧插件树全景、M0 合规长章、过期计数）。新版对齐现行口径 —— 25 个插件清单 /
+  9 份运维 Skill / Node ≥ 22.6 / `DEMO_MODE` 与 `DEMO_SEED` 语义。
+- **易变数字不再写进 README**：工具数、路由数、权限点、断言数一律以目标实例运行时为准
+  （`/api/openapi.json`、`/mcp`），文档只说明「会随版本与调用方权限变化」——避免再次出现文档与
+  实测不一致。
+- **真实界面截图为证据**：产品视图引用仓库内演示实例截图（数字员工 / MCP 服务 / 审批审计），
+  并标注为演示数据；不引入外部素材、不使用装饰性图形。
+- 日文版标 `stale: true` 并加视图导航：原典基准日 2026-10-15，待下轮校正；指向中文、英文与
+  Agent 视图作为最新口径。
+- 联动：`llms.txt` 阅读入口补 Agent 视图与英文版；npm `files` 增补 `README.agent.md` 与
+  `docs/i18n`（离线部署不再缺件）；`docs/i18n/README.md` 目录结构登记新页。
+
 ## [Unreleased] · 协作主通道组织兜底与计量 fail-fast（issue #17，2026-10-29）
 
 - **面板三处模型调用组织兜底链**（频道点名 / 工具面 askAgent / 技能直调）：调用方用户组织 →

@@ -47,6 +47,7 @@ docs/i18n/
 ├── GLOSSARY.md            # 术语契约 + 风格基线 + ASCII 保留清单
 ├── en/                    # Tier 1 英文全量版
 │   ├── README.md                    # 产品全景（国际版，对应根 README）
+│   ├── README.agent.md              # Agent 视图（国际版，对应根 README.agent.md）
 │   ├── product-introduction.md      # 产品介绍 / 定位一页书
 │   ├── getting-started.md           # 快速开始 + 演示模式
 │   ├── dsh-ecosystem.md             # DSH 生态介绍（一切皆插件 / 插件市场 / 宿主桥）

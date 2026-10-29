@@ -14,6 +14,10 @@
 </p>
 
 <p align="center">
+  <strong>简体中文</strong> · <a href="docs/i18n/en/README.md">English</a> · <a href="README.agent.md">Agent</a>
+</p>
+
+<p align="center">
   <a href="https://demo.ybkkasi.com/"><strong>在线体验</strong></a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#接入-dsh">接入 dsh</a> ·
@@ -31,6 +35,14 @@
 - **能力管理**：集中管理 MCP 服务、Skill、模型渠道、应用及连接器，支持资源生命周期和授权。
 - **企业治理**：以组织、身份和权限约束访问，结合审批、审计和用量记录追踪操作。
 - **灵活接入**：独立运行控制台与 API，也可通过 dsh 插件、MCP 和命令行接入。
+
+## 界面
+
+以下截图来自本仓库的演示实例，数据为演示数据：
+
+| 数字员工 | MCP 服务 | 审批与审计 |
+| --- | --- | --- |
+| [![数字员工列表：健康度、所属组织与最近调用](packages/plugin-console/public/launch/img/23-agents.jpg)](https://demo.ybkkasi.com/) | [![MCP 服务：发布状态、工具清单与健康检查](packages/plugin-console/public/launch/img/24-mcps.jpg)](https://demo.ybkkasi.com/) | [![审批中心：L4 生命周期审批与审计记录](packages/plugin-console/public/launch/img/26-approvals.jpg)](https://demo.ybkkasi.com/) |
 
 ## 快速开始
 
@@ -55,6 +67,12 @@ npm start
 
 独立实例默认不注入演示数据。首次启动凭据、持久化、备份和企业部署配置见[部署指南](docs/deploy-enterprise.md)。
 
+## 它是怎么搭起来的
+
+实例本身是一棵 cordis 插件树，与 dsh 使用同一个插件框架。每个业务域是一个独立插件包，自行声明依赖、权限点和事件，可以单独启停；跨插件协作只经由事件总线和扩展点，插件之间不直接读写彼此的数据。仓库包含 25 个插件清单与 9 份领域运维 Skill。
+
+这意味着治理能力不是加在平台外层的补丁，而是每个域自身的一部分：组织、身份、权限、计量、审计各自有归属插件，也各自对调用方负责。
+
 ## 接入 dsh
 
 项目提供 dsh `web` profile 的插件包；仓库声明的兼容范围为 `>=0.1.0-rc.7 <0.2.0`。dsh 挂载仍属实验性接入，请先在隔离环境验证所用版本。
@@ -69,6 +87,7 @@ dsh plugin --profile web add github:01men/ybkkasi
 
 | 入口 | 用途 |
 | --- | --- |
+| [Agent 视图](README.agent.md) | 给自动化调用方的接入事实与安全边界 |
 | [llms.txt](llms.txt) | 项目概要、Agent 操作边界与文档索引 |
 | [运维 Skill 索引](skills/dsh-ops-admin/SKILL.md) | 按领域查找运维手册；可直接读取或安装到 dsh 的 Skill 目录 |
 | `POST /mcp` | 平台运维工具的 MCP 接口；工具列表按调用方权限过滤 |
@@ -76,6 +95,8 @@ dsh plugin --profile web add github:01men/ybkkasi
 | [命令行工具](cli/dshctl.mjs) | 平台运维 CLI，支持 `--output json` |
 
 以上路径以独立实例为例；dsh 挂载形态使用 `/rq` 前缀。访问受保护接口时请使用获得授权的凭据。CLI 的 `--dry-run` 仅对明确支持预演的操作有效；其他写入会被拒绝。
+
+接口与工具数量随版本和调用方权限变化，不在本文档中固定——以目标实例的 `/api/openapi.json` 与 `/mcp` 返回为准。
 
 ## 运行边界
 
@@ -85,6 +106,6 @@ dsh plugin --profile web add github:01men/ybkkasi
 
 ## 文档与社区
 
-[架构说明](docs/ARCHITECTURE.md) · [企业部署](docs/deploy-enterprise.md) · [更新记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [English](docs/i18n/en/README.md) · [日本語](docs/i18n/ja/README.md)
+[架构说明](docs/ARCHITECTURE.md) · [企业部署](docs/deploy-enterprise.md) · [更新记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [i18n 治理](docs/i18n/README.md) · [English](docs/i18n/en/README.md) · [日本語](docs/i18n/ja/README.md) · [Agent](README.agent.md)
 
 本项目采用 [MIT License](LICENSE)。
