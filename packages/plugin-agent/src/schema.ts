@@ -25,11 +25,9 @@ export const AGENT_TYPE_SPEC: ResourceTypeSpec = {
       { key: 'avatar', label: '头像', type: 'string', group: 'basic', defaultValue: '🤖', hint: '一个 emoji 即可' },
       { key: 'category', label: '业务分类', type: 'enum', group: 'basic', defaultValue: '其他', options: CATEGORY_OPTIONS, hint: '各资产板块统一口径（财务/行政/人事/销售/运营/战略/生产/研发/质量/制造/其他）；列表页按此筛选' },
       { key: 'tags', label: '标签', type: 'tags', group: 'basic', defaultValue: [] },
-      { key: 'model', label: '底层模型', type: 'enum', group: 'tech', required: true, options: [
-        { value: 'deepseek-chat', label: 'DeepSeek Chat', hint: '通用对话' },
-        { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner', hint: '深度推理' },
-        { value: 'deepseek-coder', label: 'DeepSeek Coder', hint: '代码任务' },
-      ] },
+      // 模型目录单一事实源（issue #8）：不再维护静态枚举——可选值 = 模型网关目录（modelgw:models），
+      // 登记/编辑时校验存在性，上线门禁复核；控制台表单从目录动态取选项。目录中不存在的 slug 一律 400。
+      { key: 'model', label: '底层模型', type: 'string', group: 'tech', required: true, placeholder: '模型目录中的 slug，如 deepseek-chat', hint: '取值 = 模型网关目录（GET /api/modelgw/models）已登记的 slug；未登记的模型在保存时被拒绝' },
       { key: 'entryUrl', label: '交互界面地址', type: 'url', group: 'tech', placeholder: 'https://…', hint: 'Agent 面向用户的真实交互入口；接入后由 Agent 凭自身凭证提报（接入义务），控制台据此提供直达入口' },
       { key: 'skills', label: '关联 Skill', type: 'tags', group: 'tech', defaultValue: [], hint: '从市场安装后自动回填' },
       { key: 'mcpPermGroupIds', label: 'MCP 权限组', type: 'tags', group: 'tech', defaultValue: [], hint: '授予该 Agent 的工具访问范围' },

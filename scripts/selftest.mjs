@@ -672,6 +672,13 @@ try {
   section('平台健康与登录')
   const health = await api('GET', '/api/health')
   check('健康检查', health.ok)
+  // #13（2026-10-29）：健康端点暴露面板契约——版本 + 能力清单（实时推导）+ 已配置部门，
+  // 前台（DeptAI-UI-DSH）按此对齐宿主支持面，版本组合偏差 fail-visible 而非静默 404
+  check('健康端点暴露面板契约（contract.panel.version/capabilities/depts）',
+    health.ok && Number.isFinite(health.data.contract?.panel?.version)
+    && Array.isArray(health.data.contract?.panel?.capabilities) && health.data.contract.panel.capabilities.length > 0
+    && Array.isArray(health.data.contract?.panel?.depts),
+    JSON.stringify(health.data?.contract))
 
   const noAuth = await api('GET', '/api/overview')
   check('无令牌访问被拒绝（401）', noAuth.status === 401)
@@ -1890,6 +1897,24 @@ try {
   check('模型网关事件零价快照（charge=0 / cost=8）', modelGwEvent.ok && modelGwEvent.data.items[0].pricing.charge_cents === 0 && modelGwEvent.data.items[0].pricing.cost_cents === 8, JSON.stringify(modelGwEvent.data?.items?.[0]?.pricing))
   const billingRechargeGone = await api('POST', '/api/billing/recharge', { token: admin, body: {} })
   check('充值端点已随 M0-2 下线（404）', billingRechargeGone.status === 404)
+
+  // #14（2026-10-29）：input/output 双米组合计价——模型目录登记输入费率，usage 写入时按行计价求和
+  const modelRegIo = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'ds-stub-io', displayName: '双米计价验证', provider: 'deepseek', endpoint: `http://127.0.0.1:${modelPort}/v1`, apiKey: 'stub-key', costCentsPerKTokens: 5, inputCostCentsPerKTokens: 50 } })
+  const modelInvokeIo = await api('POST', '/api/modelgw/invoke', { token: admin, body: { model: 'ds-stub-io', messages: [{ role: 'user', content: '双米计价' }], orgId: tenantOrg.data.id } })
+  check('#14：input/output 组合计价（output 1500×5分/千=8 + input 120×50分/千=6 → 14 分）',
+    modelRegIo.ok && modelInvokeIo.ok && modelInvokeIo.data.costCents === 14, JSON.stringify(modelInvokeIo.data ?? modelInvokeIo.error))
+  const modelIoPricing = (await api('GET', '/api/usage/events?resource=model:ds-stub-io', { token: admin })).data.items[0].pricing
+  check('#14：快照留痕组合计价行（rate.line_items 双行，费率非零取整为 0 仍算 priced）',
+    Array.isArray(modelIoPricing.rate?.line_items) && modelIoPricing.rate.line_items.length === 2 && modelIoPricing.cost_cents === 14,
+    JSON.stringify(modelIoPricing))
+  const summaryNotPriced = await api('GET', '/api/usage/summary?window=today', { token: admin })
+  check('#14：summary 暴露未定价覆盖率（not_priced_events；零费率事件不再与「真零成本」混读）',
+    summaryNotPriced.ok && Number.isFinite(summaryNotPriced.data.not_priced_events),
+    JSON.stringify(summaryNotPriced.data?.not_priced_events))
+  const costRowsCoverage = await api('GET', '/api/audit/cost?groupBy=agent', { token: admin })
+  check('#14：成本报表携带 priced/notPriced 覆盖率（门禁判断「成本是否可归集」）',
+    costRowsCoverage.ok && costRowsCoverage.data.rows.length >= 1 && costRowsCoverage.data.rows.every((row) => Number.isFinite(row.priced) && Number.isFinite(row.notPriced)),
+    JSON.stringify(costRowsCoverage.data?.rows?.[0]))
   modelStub.close()
 
   // ================================================================ 第 6 步：OIDC Provider（浏览器授权流 / 协议合规）
@@ -1905,6 +1930,16 @@ try {
     && Boolean(disco.revocation_endpoint) && Boolean(disco.end_session_endpoint))
   const jwks = jsonBody(await rawReq('GET', '/.well-known/jwks.json'))
   check('JWKS 数组化公钥（kid/kty/n）', Array.isArray(jwks.keys) && jwks.keys[0].kty === 'RSA' && jwks.keys[0].kid.length === 16 && Boolean(jwks.keys[0].n))
+
+  // #15（2026-10-29）：issuer 按请求 Host/X-Forwarded-* 派生（OIDC_ISSUER 显式声明仍最高优先）——
+  // 公网域名反代部署时 discovery/签发/校验自动对齐，远程 SSO 开箱可用（此前恒回落环回地址）
+  const discoForwarded = jsonBody(await rawReq('GET', '/.well-known/openid-configuration', { headers: { host: 'ybkkasi.example', 'x-forwarded-proto': 'https' } }))
+  check('#15：discovery issuer 按请求 Host/X-Forwarded-Proto 派生（公网域名部署语义）',
+    discoForwarded.issuer === 'https://ybkkasi.example' && discoForwarded.authorization_endpoint === 'https://ybkkasi.example/oauth/authorize',
+    JSON.stringify(discoForwarded.issuer))
+  check('#15：同请求面自洽——默认环回请求 issuer 落在本机（discovery/签发/校验同源）',
+    disco.issuer === `http://127.0.0.1:${PORT}`,
+    JSON.stringify(disco.issuer))
 
   const oidcClient = await api('POST', '/api/authn/oidc/clients', { token: admin, body: { name: '外部 CRM 应用', redirectUris: ['https://crm.partner.example/cb'], consentRequired: false } })
   check('登记 OIDC 客户端（secret 一次性返回）', oidcClient.ok && oidcClient.data.clientId.startsWith('oc-') && oidcClient.data.clientSecret.startsWith('ocs'))
@@ -2836,6 +2871,31 @@ try {
   check('QA-04 回归：被拒后原描述原样保留（空值未落库）',
     descSurvived.ok && descSurvived.data.attrs.description !== '' && descSurvived.data.attrs.description !== undefined,
     JSON.stringify(descSurvived.data?.attrs?.description))
+
+  // —— issue #8 回归：Agent 模型目录单一事实源（登记 / PATCH fail-fast + 上线门禁）——
+  // 块内自备 stub 模型：无论所在实例目录状态（演示种子/基线空目录）断言都自洽
+  const mdlKnown = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'selftest-mdl-known', displayName: '自测已知模型', provider: 'stub', endpoint: 'http://127.0.0.1:9/v1', apiKey: 'stub-key', costCentsPerKTokens: 0, status: 'online' } })
+  check('#8 前置：登记已知 stub 模型（目录非空，校验生效前提）', mdlKnown.ok, JSON.stringify(mdlKnown.error))
+  const modelUnknownCreate = await api('POST', '/api/agents', { token: ops, body: { name: '自测未知模型机器人', attrs: { description: '模型目录校验自测', model: 'deepseek-nothave', riskLevel: 'low' } } })
+  check('#8：登记模型不在目录 → 400（错误含「模型目录」与可用 slugs 提示）',
+    modelUnknownCreate.status === 400 && /模型目录/.test(modelUnknownCreate.error?.message ?? ''), JSON.stringify(modelUnknownCreate.error))
+  const modelUnknownPatch = await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { model: 'deepseek-nothave' } } })
+  check('#8：PATCH 模型不在目录 → 400（存量值不动）',
+    modelUnknownPatch.status === 400 && /模型目录/.test(modelUnknownPatch.error?.message ?? ''), JSON.stringify(modelUnknownPatch.error))
+  const modelKnownPatch = await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { model: 'selftest-mdl-known' } } })
+  check('#8：PATCH 模型在目录 → 200', modelKnownPatch.ok && modelKnownPatch.data.attrs.model === 'selftest-mdl-known', JSON.stringify(modelKnownPatch.error))
+  await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { model: 'deepseek-chat' } } })
+  const gateModel = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'selftest-tmp-mdl', displayName: '自测临时模型', provider: 'stub', endpoint: 'http://127.0.0.1:9/v1', apiKey: 'stub-key', costCentsPerKTokens: 0, status: 'online' } })
+  check('#8 前置：登记临时模型', gateModel.ok, JSON.stringify(gateModel.error))
+  const gateAgent = await api('POST', '/api/agents', { token: ops, body: { name: '自测上线门禁机器人', attrs: { description: '上线门禁模型校验自测', model: 'selftest-tmp-mdl', riskLevel: 'low', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://gate.example.com/chat' } } })
+  check('#8 前置：模型在目录时登记/补全治理属性成功', gateAgent.ok, JSON.stringify(gateAgent.error))
+  await api('POST', `/api/agents/${gateAgent.data.agent.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
+  const gateModelDel = await api('DELETE', `/api/modelgw/models/${gateModel.data.id}`, { token: admin })
+  check('#8 前置：目录条目删除', gateModelDel.ok, JSON.stringify(gateModelDel.error))
+  const gateOnline = await api('POST', `/api/agents/${gateAgent.data.agent.id}/transition`, { token: ops, body: { action: 'online' } })
+  check('#8：上线门禁 fail-fast（模型已从目录删除 → 400 模型目录，不再「上线成功、派发才失败」）',
+    gateOnline.status === 400 && /模型目录/.test(gateOnline.error?.message ?? ''), JSON.stringify(gateOnline.error))
+
   const trial = await api('POST', `/api/agents/${selfAgent.id}/transition`, { token: admin, body: { action: 'submit_trial' } })
   check('进入试运行', trial.ok && trial.data.status === 'trial')
 
@@ -4131,6 +4191,32 @@ try {
   // 机器令牌走工具桥（远程工具代理的同一条宿主路径）
   const machineTool = await api('POST', '/api/tools/execute', { token: machineToken, body: { name: 'agent_list', args: {} } })
   check('机器令牌经工具桥执行 agent_list', machineTool.ok && machineTool.data.isError === false && machineTool.data.value.total >= 5)
+
+  // —— issue #9 回归：executor 模板（远程 dsh/Agent 作为执行方：exec.write 任务认领不再 403）——
+  const executorCode = await api('POST', '/api/connect/codes', { token: admin, body: { template: 'executor', ttlMinutes: 10, remark: 'selftest-executor' } })
+  check('#9：executor 模板接入码可签发', executorCode.ok && executorCode.data.template === 'executor', JSON.stringify(executorCode.error))
+  const executorEnroll = await api('POST', '/api/connect/enroll', { body: { enrollmentCode: executorCode.data.code, clientName: 'selftest-executor-dsh', meta: { hostname: 'selftest-executor-pc', platform: 'test' } } })
+  check('#9：executor 模板 enroll 成功（模板回显 executor）',
+    executorEnroll.ok && executorEnroll.data.template === 'executor', JSON.stringify(executorEnroll.error ?? {}))
+  const executorLogin = await api('POST', '/api/auth/client-credentials', { body: { clientId: executorEnroll.data.clientId, clientSecret: executorEnroll.data.clientSecret } })
+  check('#9：executor 机器凭证换牌', executorLogin.ok, JSON.stringify(executorLogin.error))
+  const executorToken = executorLogin.data?.token ?? ''
+  const executorClaim = await api('POST', '/api/tools/execute', { token: executorToken, body: { name: 'exec_claim', args: { issueId: 'selftest-none' } } })
+  check('#9：executor 令牌调 exec_claim 不再 403（权限面放行，业务层「任务不存在」才是预期失败）',
+    executorClaim.status !== 403 && !/exec\.write/.test(JSON.stringify(executorClaim.error ?? {}))
+      && (executorClaim.data?.isError === true || /任务不存在/.test(JSON.stringify(executorClaim.data ?? ''))),
+    JSON.stringify({ status: executorClaim.status, error: executorClaim.error, data: executorClaim.data }))
+  const executorClients = await api('GET', '/api/connect/clients', { token: admin })
+  const executorClient = executorClients.data.clients.find((c) => c.clientId === executorEnroll.data.clientId)
+  check('#9：executor 客户端生效权限含 exec.write/exec.read 且非全量（不含账号凭证管理）',
+    executorClient && executorClient.scopes.includes('exec.write') && executorClient.scopes.includes('exec.read') && !executorClient.scopes.includes('*')
+      && !executorClient.scopes.includes('iam.user.write') && !executorClient.scopes.includes('iam.credential.write'),
+    JSON.stringify(executorClient?.scopes ?? executorClients.error))
+  await api('POST', `/api/connect/clients/${executorEnroll.data.clientId}/disable`, { token: admin, body: { reason: 'selftest executor 验证完成' } })
+  const operatorClaim = await api('POST', '/api/tools/execute', { token: machineToken, body: { name: 'exec_claim', args: { issueId: 'selftest-none' } } })
+  check('#9 对照：operator 模板无 exec.write（exec_claim 仍被 403 权限拒绝，边界不放宽）',
+    operatorClaim.status === 403 || /exec\.write/.test(JSON.stringify(operatorClaim.error ?? operatorClaim.data ?? {})),
+    JSON.stringify({ status: operatorClaim.status, error: operatorClaim.error }))
 
   // 客户端心跳主动推送（宿主侧接入资产存活监测）
   const hb = await api('POST', '/api/connect/heartbeat', { token: machineToken, body: { tools: 42, version: 'v22.14.0', uptimeSec: 600 } })
@@ -6827,10 +6913,12 @@ try {
     offBehavior()
 
     // -- OIDC 授权码通道（start 302 → PKCE；callback 坏 state 拒绝） -----------------
+    // #15（2026-10-29）：302 目标按请求 Host 派生 issuer（浏览器实际入口地址 simOrigin + /rq 前缀），
+    // 不再取进程配置的无参 issuer（本段 mountCtx httpServer port=0，无参值不再是合法对外地址）
     const oidcStart = await fetch(`${simOrigin}/auth/oidc/start`, { redirect: 'manual' })
     const oidcLocation = oidcStart.headers.get('location') ?? ''
     check('/auth/oidc/start 302 平台授权页（client_id + PKCE S256 + state）',
-      oidcStart.status === 302 && oidcLocation.startsWith(`${mountCtx.oidc.issuer()}/oauth/authorize`)
+      oidcStart.status === 302 && oidcLocation.startsWith(`${simOrigin}/rq/oauth/authorize`)
       && oidcLocation.includes('client_id=oc-selftest-bridge') && oidcLocation.includes('code_challenge_method=S256') && oidcLocation.includes('state='),
       `${oidcStart.status} ${oidcLocation}`)
     const oidcCallbackBad = await fetch(`${simOrigin}/auth/oidc/callback?code=x&state=bogus`, { redirect: 'manual' })
@@ -7297,6 +7385,20 @@ try {
     const exProject = await api('POST', '/api/exec/projects', { token: admin, body: { goalId: exChild.data.id, name: '自测项目：视觉质检', repos: ['https://example.com/qc.git'] } })
     check('E4：项目挂目标（repos 落库）', exProject.ok && exProject.data.goalId === exChild.data.id && exProject.data.repos.length === 1)
 
+    // -- #16（2026-10-29）组织血缘：缺省继承 / 显式空串拒绝 / ?orgId= 过滤 ------------------
+    const exOrgId = exGoal.data.orgId
+    check('#16：目标缺省创建必带组织归属（principal→血缘→根组织继承链，不再空串落库）',
+      typeof exOrgId === 'string' && exOrgId !== '', JSON.stringify(exOrgId))
+    const exEmptyOrg = await api('POST', '/api/exec/goals', { token: admin, body: { title: '自测目标：空组织应拒绝', orgId: '' } })
+    check('#16：显式空 orgId 一律 400（空串不再是合法归属）', exEmptyOrg.status === 400, JSON.stringify(exEmptyOrg.error ?? {}).slice(0, 120))
+    const exIssueNoOrg = await api('POST', '/api/exec/issues', { token: admin, body: { title: '自测任务：无项目无指派（组织兜底）', priority: 'P3' } })
+    check('#16：裸任务缺省创建兜底组织归属', exIssueNoOrg.ok && typeof exIssueNoOrg.data.orgId === 'string' && exIssueNoOrg.data.orgId !== '', JSON.stringify(exIssueNoOrg.data?.orgId))
+    const exIssuesByOrg = await api('GET', `/api/exec/issues?orgId=${encodeURIComponent(exIssueNoOrg.data.orgId)}`, { token: admin })
+    check('#16：任务列表 ?orgId= 过滤命中（组织范围看板数据面）',
+      exIssuesByOrg.ok && exIssuesByOrg.data.issues.some((item) => item.id === exIssueNoOrg.data.id))
+    const exGoalsByOrg = await api('GET', `/api/exec/goals?orgId=${encodeURIComponent(exOrgId)}`, { token: admin })
+    check('#16：目标列表 ?orgId= 过滤命中', exGoalsByOrg.ok && exGoalsByOrg.data.goals.some((item) => item.id === exGoal.data.id))
+
     // -- E2/E3 任务执行锁 + 唤醒派发 --------------------------------------------
     const exAgents = (await api('GET', '/api/agents', { token: admin })).data.agents
     const exAgent = exAgents.find((a) => a.status === 'online' || a.status === 'trial')
@@ -7412,6 +7514,29 @@ try {
       JSON.stringify(exOverview.data?.agentsHealth?.length))
     const exHbAgent = exOverview.data.agentsHealth.find((a) => a.agentId === exAgent.id)
     check('R9：被派发 Agent 有心跳留痕（健康度 healthy/stale）', ['healthy', 'stale'].includes(exHbAgent?.health), JSON.stringify(exHbAgent))
+
+    // -- issue #7 回归：只读主体心跳解耦（exec.read 即可存活，不再被 exec.write 拦成 failed） --
+    const roAgentRes = await api('POST', '/api/agents', { token: admin, body: { name: '自测只读官', attrs: { description: '只读主体心跳解耦自测（评价官/验收官形态：职责分离要求只读）', model: 'deepseek-chat', riskLevel: 'low', trialGroups: ['灰度试点组'] } } })
+    const roAgent = roAgentRes.data.agent
+    const roPrincipalId = (await api('GET', `/api/agents/${roAgent.id}`, { token: admin })).data.credential?.principalId
+    check('#7 前置：只读官注册并取得机器主体', roAgentRes.ok && Boolean(roPrincipalId), JSON.stringify(roAgentRes.error ?? {}))
+    const roStrip = await api('PATCH', `/api/authn/principals/${roPrincipalId}`, { token: admin, body: { scopes: ['exec.read'] } })
+    check('#7 前置：机器主体收敛为只读（仅 exec.read）', roStrip.ok, JSON.stringify(roStrip.error))
+    const roTrial = await api('POST', `/api/agents/${roAgent.id}/transition`, { token: admin, body: { action: 'submit_trial' } })
+    check('#7 前置：只读官进入试运行（运行态参与心跳调度）', roTrial.ok, JSON.stringify(roTrial.error))
+    await api('PATCH', `/api/agents/${roAgent.id}`, { token: admin, body: { attrs: { heartbeatIntervalMinutes: 30 } } })
+    const roTick = await api('POST', '/api/exec/tick', { token: admin })
+    check('#7 前置：tick 入队并处理心跳唤醒', roTick.ok, JSON.stringify(roTick.data ?? roTick.error))
+    const roWake = (await api('GET', '/api/exec/wakes', { token: admin })).data.wakes.find((w) => w.agentId === roAgent.id && w.trigger === 'routine')
+    check('#7：只读主体心跳唤醒以 done 收尾（skipped_no_todo 路径），不再 status=failed',
+      Boolean(roWake) && roWake.status === 'done' && !(roWake.lastError ?? '').includes('exec'), JSON.stringify(roWake ?? {}))
+    // 对照：任务执行路径的 exec.write 收口不动——把只读官设为 P1 任务负责人，唤醒应在联动③b 被拒
+    const roIssue = await api('POST', '/api/exec/issues', { token: admin, body: { projectId: exProject.data.id, title: '自测任务：只读官不应被派发', priority: 'P1', assigneeAgentId: roAgent.id } })
+    await api('POST', '/api/exec/tick', { token: admin })
+    const roIssueWake = (await api('GET', '/api/exec/wakes', { token: admin })).data.wakes.find((w) => w.issueId === roIssue.data.id)
+    check('#7 对照：issue 派发路径仍要求 exec.write（无写权限 → failed，写权限不放宽）',
+      Boolean(roIssueWake) && roIssueWake.status === 'failed' && /exec\.write/.test(roIssueWake.lastError ?? ''), JSON.stringify(roIssueWake ?? {}))
+    await api('POST', `/api/exec/issues/${roIssue.data.id}/transition`, { token: admin, body: { to: 'cancelled' } })
 
     // -- R10 Agent 主体预算：熔断 → 联动冻结 → L4 解冻审批 → 恢复 ----------------
     const exBudget = await api('PUT', '/api/modelgw/budgets', { token: admin, body: { subject: `agent:${exAgent.id}`, dailyLimitCents: 0, action: 'block', freezeAgent: true } })
@@ -7696,17 +7821,17 @@ try {
     const adminCaller = { kind: 'human', principalId: adminPrincipal.id, userId: adminUser.id, name: '平台管理员' }
     const wfOrg = wfCtx.iam.createOrg({ name: `组7闭环自测组织-${Date.now() % 100000}` }, iam.SYSTEM_ACTOR)
     check('闭环夹具：测试组织创建', Boolean(wfOrg?.id))
-    const g7AgentReg = wfCtx.agentRegistry.register({ name: '组7闭环员工Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：数字员工绑定用 Agent', model: 'deepseek-chat', riskLevel: 'low' } })
+    // 测试模型登记须先于 Agent 注册（issue #8：attrs.model 以模型目录为单一事实源，
+    // 本子段为独立裸 Context 实例，目录仅含本段自备模型——Agent 一律用 G7_MODEL_SLUG）
+    const G7_MODEL_SLUG = `g7-loop-model-${Date.now() % 100000}`
+    wfCtx.modelGateway.upsertModel({ slug: G7_MODEL_SLUG, displayName: '组7闭环测试模型', provider: 'stub', endpoint: `http://127.0.0.1:${GH_PORT}/v1`, apiKey: 'sk-g7-selftest', costCentsPerKTokens: 1, status: 'online', dataClassLimit: 'internal' })
+    const g7AgentReg = wfCtx.agentRegistry.register({ name: '组7闭环员工Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：数字员工绑定用 Agent', model: G7_MODEL_SLUG, riskLevel: 'low' } })
     const g7Agent = g7AgentReg.agent
     // 机器 caller（§13.2）：主体来自已验证机器凭证（refType=agent 可反查员工绑定），非请求参数自报
     const g7AgentCaller = { kind: 'machine', principalId: g7AgentReg.credential.principal.id, refType: 'agent', refId: g7Agent.id, name: g7Agent.name }
-    const g7RivalReg = wfCtx.agentRegistry.register({ name: '组7闭环他人Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：撞绑拒绝用 Agent', model: 'deepseek-chat', riskLevel: 'low' } })
+    const g7RivalReg = wfCtx.agentRegistry.register({ name: '组7闭环他人Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：撞绑拒绝用 Agent', model: G7_MODEL_SLUG, riskLevel: 'low' } })
     const g7RivalCaller = { kind: 'machine', principalId: g7RivalReg.credential.principal.id, refType: 'agent', refId: g7RivalReg.agent.id, name: g7RivalReg.agent.name }
     check('闭环夹具：测试 Agent×2 与机器凭证就位（refType=agent）', Boolean(g7Agent?.id && g7AgentReg.credential?.principal?.id && g7RivalReg.credential?.principal?.id))
-
-    // 测试模型登记（model grant 探针的真实核验对象；价格簿随 upsertModel 播种）
-    const G7_MODEL_SLUG = `g7-loop-model-${Date.now() % 100000}`
-    wfCtx.modelGateway.upsertModel({ slug: G7_MODEL_SLUG, displayName: '组7闭环测试模型', provider: 'stub', endpoint: `http://127.0.0.1:${GH_PORT}/v1`, apiKey: 'sk-g7-selftest', costCentsPerKTokens: 1, status: 'online', dataClassLimit: 'internal' })
 
     // -- 员工 / 绑定（2） ---------------------------------------------------------
     let employee = null
@@ -7972,8 +8097,8 @@ try {
 
       // -- W5 运维面（D-③）：status-batch 批量停职 / audit 报表 / 非 admin 令牌 403 ----------------
       try {
-        const w5AgentA = wfCtx.agentRegistry.register({ name: `组7W5批量停职A-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: 'deepseek-chat', riskLevel: 'low' } }).agent
-        const w5AgentB = wfCtx.agentRegistry.register({ name: `组7W5批量停职B-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: 'deepseek-chat', riskLevel: 'low' } }).agent
+        const w5AgentA = wfCtx.agentRegistry.register({ name: `组7W5批量停职A-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: G7_MODEL_SLUG, riskLevel: 'low' } }).agent
+        const w5AgentB = wfCtx.agentRegistry.register({ name: `组7W5批量停职B-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: G7_MODEL_SLUG, riskLevel: 'low' } }).agent
         const w5EmpA = wfCtx.workforceEmployees.create({ name: `组7W5批量停职A-${Date.now() % 100000}`, orgId: wfOrg.id, supervisorUserId: adminUser.id, agentId: w5AgentA.id })
         const w5EmpB = wfCtx.workforceEmployees.create({ name: `组7W5批量停职B-${Date.now() % 100000}`, orgId: wfOrg.id, supervisorUserId: adminUser.id, agentId: w5AgentB.id })
         // 直插 active permit 模拟已签发（批量断言聚焦撤权联动；认领→撤权全闭环已由上方断言覆盖）
@@ -8055,7 +8180,7 @@ try {
         const grayWf = await import('../packages/plugin-workforce/src/index.ts')
         await grayCtx.plugin(grayWf, { dataDir: join(grayDataDir, 'domain'), grayMode: 'allowlist', enabledOrgs: [orgIn.id] })
         const mkGrayEmployee = (org, agentName, empName) => {
-          const reg = grayCtx.agentRegistry.register({ name: agentName, ownerId: gAdminU.id, ownerName: '平台管理员', orgId: org.id, attrs: { description: '组7灰度子段', model: 'deepseek-chat', riskLevel: 'low' } })
+          const reg = grayCtx.agentRegistry.register({ name: agentName, ownerId: gAdminU.id, ownerName: '平台管理员', orgId: org.id, attrs: { description: '组7灰度子段', model: GRAY_MODEL, riskLevel: 'low' } })
           const employee = grayCtx.workforceEmployees.create({ name: empName, displayName: empName, orgId: org.id, supervisorUserId: gAdminU.id, agentId: reg.agent.id, principalId: reg.credential.principal.id, runtime: 'dsh' })
           const caller = { kind: 'machine', principalId: reg.credential.principal.id, refType: 'agent', refId: reg.agent.id, name: reg.agent.name }
           return { reg, employee, caller }
@@ -8352,6 +8477,72 @@ try {
     demoProc.kill('SIGTERM')
     await new Promise((resolve) => setTimeout(resolve, 300))
     await rm(demoDataDir, { recursive: true, force: true }).catch(() => {})
+  }
+
+  // -- issue #10 回归：exec-hub 内置定时器自愈（不手动 tick 也产生心跳唤醒） ----------------
+  // cordis ctx.effect(fn) 语义：fn 注册时立即执行、返回值才是 disposer——此前单层箭头把
+  // tick/firstTick/metricsTimer 当场清掉，重启后调度链路静默失效（2026-10-28 生产实测）。
+  {
+    const TIMER_PORT = (await freePort()) ?? 7329
+    const TIMER_BASE = `http://127.0.0.1:${TIMER_PORT}`
+    const timerDataDir = join(process.cwd(), 'data-selftest-timer')
+    await rm(timerDataDir, { recursive: true, force: true })
+    await mkdir(timerDataDir, { recursive: true })
+    const timerProc = spawn(process.execPath, ['src/main.ts', '--port', String(TIMER_PORT), '--data', timerDataDir], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: {
+        ...process.env,
+        DEMO_SEED: '1',
+        OOMOL_CONNECT_ENCRYPTION_KEY: 'selftest-encryption-key-not-a-secret',
+        DSH_UPDATE_AUTO_CHECK: 'off',
+        EXEC_HUB_TICK_MS: '600',
+        EXEC_HUB_FIRST_TICK_MS: '300',
+      },
+    })
+    let timerBooted = false
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      try {
+        if ((await fetch(`${TIMER_BASE}/api/health`)).ok) { timerBooted = true; break }
+      } catch { /* retry */ }
+    }
+    check('#10：短周期定时器实例启动（EXEC_HUB_TICK_MS=600）', timerBooted)
+    if (timerBooted) {
+      const timerApi = async (method, path, { token, body } = {}) => {
+        const headers = { 'content-type': 'application/json' }
+        if (token) headers.authorization = `Bearer ${token}`
+        const res = await fetch(`${TIMER_BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+        return { status: res.status, json: await res.json().catch(() => null) }
+      }
+      // 健康检查先于演示种子完成即放行：登录与「找运行态 Agent」都轮询等待种子就绪（各 12s 上限）
+      let timerToken = ''
+      for (let i = 0; i < 40 && !timerToken; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const timerLogin = await timerApi('POST', '/api/auth/login', { body: { username: 'admin', password: 'Ybk@2026' } })
+        timerToken = timerLogin.json?.data?.token ?? ''
+      }
+      check('#10：定时器实例管理员登录', Boolean(timerToken))
+      let timerTarget = null
+      for (let i = 0; i < 40 && !timerTarget; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const timerAgents = (await timerApi('GET', '/api/agents', { token: timerToken })).json?.data?.agents ?? []
+        timerTarget = timerAgents.find((a) => a.status === 'online' || a.status === 'trial')
+      }
+      check('#10 前置：存在运行态 Agent 可配置心跳', Boolean(timerTarget))
+      await timerApi('PATCH', `/api/agents/${timerTarget.id}`, { token: timerToken, body: { attrs: { heartbeatIntervalMinutes: 1 } } })
+      // 不手动 tick：等待内置定时器自行产生心跳唤醒（firstTick 300ms + 周期 600ms，给 6s 余量）
+      let timerWake = null
+      for (let i = 0; i < 20 && !timerWake; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const wakes = (await timerApi('GET', '/api/exec/wakes', { token: timerToken })).json?.data?.wakes ?? []
+        timerWake = wakes.find((w) => w.agentId === timerTarget.id && w.trigger === 'routine' && String(w.triggerDetail ?? '').startsWith('heartbeat:'))
+      }
+      check('#10：内置定时器自动入队心跳唤醒（零手动 tick，重启后调度链路不再静默失效）',
+        Boolean(timerWake), JSON.stringify(timerWake ?? (await timerApi('GET', '/api/exec/wakes', { token: timerToken })).json?.data?.wakes?.length))
+    }
+    timerProc.kill('SIGTERM')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await rm(timerDataDir, { recursive: true, force: true }).catch(() => {})
   }
 
   // ================================================================ MCP 治理（W1-T1）：委托令牌与统一 Principal

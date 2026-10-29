@@ -178,6 +178,21 @@ export interface TickResult {
 
 const TICK_MS = Number(process.env.EXEC_HUB_TICK_MS ?? 30_000)
 const FIRST_TICK_MS = Number(process.env.EXEC_HUB_FIRST_TICK_MS ?? Math.min(TICK_MS, 15_000))
+
+/** 定时器只在插件卸载时清理；Cordis effect 的返回值才是 disposer。 */
+export function registerExecTimers(ctx: Pick<Context, 'effect'>, tick: () => void, metrics: () => void, tickMs = TICK_MS, firstMs = FIRST_TICK_MS): void {
+  const tickTimer = setInterval(tick, tickMs)
+  tickTimer.unref?.()
+  const firstTick = setTimeout(tick, firstMs)
+  firstTick.unref?.()
+  const metricsTimer = setInterval(metrics, 3_600_000)
+  metricsTimer.unref?.()
+  ctx.effect(() => () => {
+    clearInterval(tickTimer)
+    clearTimeout(firstTick)
+    clearInterval(metricsTimer)
+  })
+}
 const BATCH_SIZE = Number(process.env.EXEC_HUB_BATCH ?? 50)
 /** 僵尸锁阈值：Paperclip 建议约 2× 心跳周期，缺省 5 分钟。 */
 const LOCK_TIMEOUT_MS = Number(process.env.EXEC_LOCK_TIMEOUT_MS ?? 300_000)
@@ -257,7 +272,8 @@ export class ExecutionHubService extends Service {
     // 纳管提报催办巡检：每小时一轮（R9：metrics-report 超 24h 自动催办）
     const metricsTimer = setInterval(() => { void this.remindOverdueMetrics() }, 3_600_000)
     metricsTimer.unref?.()
-    ctx.effect(() => {
+    // cordis ctx.effect(fn)：fn 在注册时立即执行，返回值才是清理函数——单层箭头会把定时器当场清掉（issue #10）
+    ctx.effect(() => () => {
       clearInterval(tickTimer)
       clearTimeout(firstTick)
       clearInterval(metricsTimer)
@@ -306,6 +322,26 @@ export class ExecutionHubService extends Service {
     return this.ctx.opsStorage.collection<HeartbeatRecord>('exec:heartbeats')
   }
 
+  // -- 组织血缘（#16，2026-10-29） ---------------------------------------------
+
+  /**
+   * 平台首个根组织（无父组织）；组织树未播种时为 undefined——缺省继承链的最后兜底与
+   * 存量空 orgId 迁移（migrateEmptyExecOrgId）都以它为归属依据。
+   */
+  rootOrgId(): string | undefined {
+    return this.ctx.iam.orgs().all().find((org) => !org.parentId)?.id
+  }
+
+  /**
+   * 显式 orgId 入参校验（#16）：空串/空白一律拒绝（防「空串落库 → 组织血缘断链」），
+   * 非空必须命中真实组织；undefined 表示未提供，交给继承链（principal → 血缘 → 根组织）。
+   */
+  private assertOrgInput(orgId: string | undefined): void {
+    if (orgId === undefined) return
+    if (!orgId.trim()) throw new Error(t('orgId 不接受空值：缺省请不传（自动继承组织血缘），显式指定请传非空组织 ID'))
+    if (!this.ctx.iam.orgs().get(orgId)) throw new Error(t('组织不存在：{id}', { id: orgId }))
+  }
+
   // -- 目标（R8） -------------------------------------------------------------
 
   /** 目标链（根→…→本目标）；无父即 [self]；成环/断链防御性截断。 */
@@ -324,6 +360,7 @@ export class ExecutionHubService extends Service {
 
   createGoal(input: Omit<GoalRecord, 'id' | 'createdAt' | 'updatedAt' | 'status'> & { status?: GoalStatus }): GoalRecord {
     if (!input.title?.trim()) throw new Error(t('目标标题必填'))
+    this.assertOrgInput(input.orgId)
     if (input.parentGoalId) {
       const parent = this.goals().get(input.parentGoalId)
       if (!parent) throw new Error(t('父目标不存在：{id}', { id: input.parentGoalId }))
@@ -332,7 +369,8 @@ export class ExecutionHubService extends Service {
     }
     const record = this.goals().insert({
       id: newId('goal'),
-      orgId: input.orgId ?? '',
+      // #16：显式 orgId 已过校验；缺省回落平台根组织（REST 层先按 principal/血缘解析）
+      orgId: input.orgId ?? this.rootOrgId() ?? '',
       title: input.title.trim(),
       ...(input.description ? { description: input.description } : {}),
       ...(input.metric ? { metric: input.metric } : {}),
@@ -380,10 +418,12 @@ export class ExecutionHubService extends Service {
 
   createProject(input: Omit<ProjectRecord, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'repos'> & { repos?: string[]; status?: ProjectStatus }): ProjectRecord {
     if (!input.name?.trim()) throw new Error(t('项目名称必填'))
+    this.assertOrgInput(input.orgId)
     if (input.goalId && !this.goals().get(input.goalId)) throw new Error(t('关联目标不存在：{id}', { id: input.goalId }))
     const record = this.projects().insert({
       id: newId('proj'),
-      orgId: input.orgId ?? '',
+      // #16：缺省沿目标血缘继承，再回落平台根组织
+      orgId: input.orgId ?? this.goals().get(input.goalId ?? '')?.orgId ?? this.rootOrgId() ?? '',
       ...(input.goalId ? { goalId: input.goalId } : {}),
       name: input.name.trim(),
       ...(input.description ? { description: input.description } : {}),
@@ -439,6 +479,7 @@ export class ExecutionHubService extends Service {
     priority?: IssuePriority; dueAt?: string; createdBy: string
   }): IssueRecord {
     if (!input.title?.trim()) throw new Error(t('任务标题必填'))
+    this.assertOrgInput(input.orgId)
     if (input.projectId && !this.projects().get(input.projectId)) throw new Error(t('项目不存在：{id}', { id: input.projectId }))
     if (input.parentId && !this.issues().get(input.parentId)) throw new Error(t('父任务不存在：{id}', { id: input.parentId }))
     for (const blockerId of input.blockerIds ?? []) {
@@ -446,7 +487,8 @@ export class ExecutionHubService extends Service {
     }
     if (input.assigneeAgentId && !this.agentOf(input.assigneeAgentId)) throw new Error(t('负责人 Agent 不存在：{id}', { id: input.assigneeAgentId }))
     const project = input.projectId ? this.projects().get(input.projectId) : undefined
-    const orgId = input.orgId ?? project?.orgId ?? this.agentOf(input.assigneeAgentId ?? '')?.orgId ?? ''
+    // #16：继承链 principal（REST 层已解析进 input.orgId）→ 项目 → Agent → 平台根组织
+    const orgId = input.orgId ?? project?.orgId ?? this.agentOf(input.assigneeAgentId ?? '')?.orgId ?? this.rootOrgId() ?? ''
     const record = this.issues().insert({
       id: newId('iss'),
       orgId,
@@ -1061,19 +1103,20 @@ export class ExecutionHubService extends Service {
     }
     this.wakes().update(wakeId, { budgetCheckPassed: true })
 
-    // 联动③：权限校验（Agent 机器主体须持 exec.write——身份纳管即权限收敛）
+    // 联动③：权限校验（#7 解耦：存活心跳只要求 exec.read——评价官/验收官等只读角色也参与心跳调度；
+    // exec.write 在真正写路径（创建 run / 派发执行）上单独校验，见下方联动③b）
     const scopes = this.agentScopes(agentId)
-    if (scopes === null || !(scopes.includes('exec.write') || scopes.includes('*'))) {
-      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）') })
-      this.recordHeartbeat(agent, 'skipped_permission', 'exec.write 缺失')
+    if (scopes === null || !(scopes.includes('exec.read') || scopes.includes('*'))) {
+      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 机器主体无 exec.read 权限（身份未纳管或权限收敛），存活监测无法成立') })
+      this.recordHeartbeat(agent, 'skipped_permission', 'exec.read 缺失')
       this.auditSafe({
         type: 'authz', actorType: 'machine', actorId: `agent:${agentId}`, actorName: agent.name,
         action: 'exec.wakeup', resourceType: 'issue', resourceId: issue?.id ?? agentId,
         resourceName: issue?.title ?? agent.name, result: 'denied',
-        detail: `机器主体缺少 exec.write（wake=${wakeId}）`,
+        detail: `机器主体缺少 exec.read（wake=${wakeId}）`,
       })
       this.ctx.platformBus.emit('audit.authz.denied', {
-        actorId: agentId, actorName: agent.name, point: 'exec.write', path: `exec:wake:${wakeId}`,
+        actorId: agentId, actorName: agent.name, point: 'exec.read', path: `exec:wake:${wakeId}`,
       })
       return 'failed'
     }
@@ -1083,6 +1126,12 @@ export class ExecutionHubService extends Service {
       const todos = this.collectTodos(agent)
       if (todos.total === 0) {
         this.recordHeartbeat(agent, 'skipped_no_todo')
+        this.wakes().update(wakeId, { status: 'done' })
+        return 'skipped'
+      }
+      // 只读角色有待办：心跳成立（存活），但不派发——非错误收尾，不记 status=failed（#7）
+      if (!(scopes.includes('exec.write') || scopes.includes('*'))) {
+        this.recordHeartbeat(agent, 'skipped_permission', t('{n} 项待办未派发（只读主体，缺 exec.write）', { n: todos.total }))
         this.wakes().update(wakeId, { status: 'done' })
         return 'skipped'
       }
@@ -1096,6 +1145,22 @@ export class ExecutionHubService extends Service {
         resourceName: agent.name, result: 'ok', detail: `run=${run.id} trigger=${wake.trigger} 待办=${todos.total}`,
       })
       return 'woken'
+    }
+
+    // 联动③b：任务执行路径须 exec.write（#7：写权限与存活心跳解耦后，在真正写路径收口）
+    if (!(scopes.includes('exec.write') || scopes.includes('*'))) {
+      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）') })
+      this.recordHeartbeat(agent, 'skipped_permission', 'exec.write 缺失')
+      this.auditSafe({
+        type: 'authz', actorType: 'machine', actorId: `agent:${agentId}`, actorName: agent.name,
+        action: 'exec.wakeup', resourceType: 'issue', resourceId: issue.id,
+        resourceName: issue.title, result: 'denied',
+        detail: `机器主体缺少 exec.write（wake=${wakeId}）`,
+      })
+      this.ctx.platformBus.emit('audit.authz.denied', {
+        actorId: agentId, actorName: agent.name, point: 'exec.write', path: `exec:wake:${wakeId}`,
+      })
+      return 'failed'
     }
 
     // 联动④：审批门禁（P0=高危任务：执行前须 exec.issue.run 审批 executed）
@@ -1320,7 +1385,8 @@ export class ExecutionHubService extends Service {
     const nowMs = Date.now()
     return this.ctx.resourceCore.list('agent').map((agent) => {
       const lastHeartbeat = this.heartbeats().all()
-        .filter((item) => item.agentId === agent.id)
+        // 权限、预算、冻结等拒绝记录不证明有效心跳，不能将失败刷新为健康。
+        .filter((item) => item.agentId === agent.id && (item.outcome === 'woken' || item.outcome === 'skipped_no_todo'))
         .sort((a, b) => b.at.localeCompare(a.at))[0]
       let lastMetrics: { updatedAt: string } | undefined
       try {
@@ -1549,17 +1615,38 @@ export function apply(ctx: Context) {
     } catch { /* 审计面独立降级 */ }
   }
 
+  // #16（2026-10-29）：exec 域组织血缘收口——显式空串 400；缺省继承调用主体组织
+  //（console 鉴权中间件按用户/Agent 归属反查的 unified.orgId），再沿血缘（目标/项目/Agent）
+  // 兜底，最终回落平台根组织；组织树未播种时保持 ''（与 seedExecHub 兜底一致，迁移函数幂等补齐）。
+  const principalOrgId = (exchange: HttpExchange): string => {
+    const unified = (exchange.principal as { unified?: { orgId?: string } } | undefined)?.unified
+    return typeof unified?.orgId === 'string' ? unified.orgId : ''
+  }
+  const resolveOrgId = (exchange: HttpExchange, explicit: string | undefined, lineage: Array<string | undefined> = []): string => {
+    if (explicit !== undefined) {
+      const trimmed = explicit.trim()
+      if (!trimmed) throw new Error(t('orgId 不接受空值：缺省请不传（自动继承组织血缘），显式指定请传非空组织 ID'))
+      if (!ctx.iam.orgs().get(trimmed)) throw new Error(t('组织不存在：{id}', { id: trimmed }))
+      return trimmed
+    }
+    return [principalOrgId(exchange), ...lineage].find((item) => item) ?? hub.rootOrgId() ?? ''
+  }
+
   // -- 总览 / 健康（R9） ------------------------------------------------------
   // 设计适配（2026-10-14）：增量并入工作台驾驶舱聚合（insight/kpis）——既有字段原样保留，
   // 前端旧消费方（exec 页/tools）不受影响；cockpit() 为只读查询方法。
   guarded('GET', '/api/exec/overview', 'exec.read', () => ({ ...hub.overview(), ...hub.cockpit() }))
 
   // -- 目标（R8） ---------------------------------------------------------------
-  guarded('GET', '/api/exec/goals', 'exec.read', () => ({ goals: hub.goals().all() }))
+  guarded('GET', '/api/exec/goals', 'exec.read', (exchange) => {
+    // #16：?orgId= 过滤（组织范围看板/成本归集的数据面）
+    const orgId = exchange.query.get('orgId') ?? ''
+    return { goals: hub.goals().all().filter((item) => !orgId || item.orgId === orgId) }
+  })
 
   guarded('POST', '/api/exec/goals', 'exec.write', (exchange) => {
     const input = body<{ orgId?: string; title: string; description?: string; metric?: string; metricBaseline?: number; metricTarget?: number; metricUnit?: string; ownerUserId?: string; parentGoalId?: string; periodStart?: string; periodEnd?: string }>(exchange)
-    const created = hub.createGoal({ ...input })
+    const created = hub.createGoal({ ...input, orgId: resolveOrgId(exchange, input.orgId) })
     changeLog(exchange, 'exec.goal.create', created.title)
     return created
   })
@@ -1580,20 +1667,25 @@ export function apply(ctx: Context) {
   // -- 项目（E4） -----------------------------------------------------------------
   guarded('GET', '/api/exec/projects', 'exec.read', (exchange) => {
     const issues = hub.issues().all()
+    // #16：?orgId= 过滤
+    const orgId = exchange.query.get('orgId') ?? ''
     return {
-      projects: hub.projects().all().map((project) => {
-        const projectIssues = issues.filter((item) => item.projectId === project.id)
-        return {
-          ...project,
-          issueProgress: { done: projectIssues.filter((item) => item.status === 'done').length, total: projectIssues.length },
-        }
-      }),
+      projects: hub.projects().all()
+        .filter((project) => !orgId || project.orgId === orgId)
+        .map((project) => {
+          const projectIssues = issues.filter((item) => item.projectId === project.id)
+          return {
+            ...project,
+            issueProgress: { done: projectIssues.filter((item) => item.status === 'done').length, total: projectIssues.length },
+          }
+        }),
     }
   })
 
   guarded('POST', '/api/exec/projects', 'exec.write', (exchange) => {
     const input = body<{ orgId?: string; goalId?: string; name: string; description?: string; repos?: string[]; ownerUserId?: string }>(exchange)
-    const created = hub.createProject(input)
+    const goal = input.goalId ? hub.goals().get(input.goalId) : undefined
+    const created = hub.createProject({ ...input, orgId: resolveOrgId(exchange, input.orgId, [goal?.orgId]) })
     changeLog(exchange, 'exec.project.create', created.name)
     return created
   })
@@ -1616,13 +1708,15 @@ export function apply(ctx: Context) {
     const status = exchange.query.get('status') ?? ''
     const agentId = exchange.query.get('agentId') ?? ''
     const projectId = exchange.query.get('projectId') ?? ''
+    const orgId = exchange.query.get('orgId') ?? '' // #16：组织范围过滤
     const agents = ctx.resourceCore.list('agent')
     const projects = hub.projects().all()
     return {
       issues: hub.issues().all()
         .filter((item) => (!status || item.status === status)
           && (!agentId || item.assigneeAgentId === agentId)
-          && (!projectId || item.projectId === projectId))
+          && (!projectId || item.projectId === projectId)
+          && (!orgId || item.orgId === orgId))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .map((item) => ({
           ...item,
@@ -1634,7 +1728,13 @@ export function apply(ctx: Context) {
 
   guarded('POST', '/api/exec/issues', 'exec.write', (exchange) => {
     const input = body<{ orgId?: string; projectId?: string; parentId?: string; blockerIds?: string[]; title: string; detail?: string; assigneeAgentId?: string; assigneeUserId?: string; priority?: IssuePriority; dueAt?: string }>(exchange)
-    const created = hub.createIssue({ ...input, createdBy: actorOf(exchange) })
+    const project = input.projectId ? hub.projects().get(input.projectId) : undefined
+    const assignee = input.assigneeAgentId ? ctx.resourceCore.collection('agent').get(input.assigneeAgentId) : undefined
+    const created = hub.createIssue({
+      ...input,
+      orgId: resolveOrgId(exchange, input.orgId, [project?.orgId, assignee?.orgId]),
+      createdBy: actorOf(exchange),
+    })
     changeLog(exchange, 'exec.issue.create', created.title, `priority=${created.priority}${created.assigneeAgentId ? ' 已派发唤醒' : ''}`)
     return created
   })
@@ -2019,8 +2119,39 @@ export function apply(ctx: Context) {
     }))
   }
 
+  // -- 存量迁移（#16：空 orgId 归根组织，记审计，幂等） --------------------------------
+  migrateEmptyExecOrgId(ctx, hub)
+
   // -- 演示种子（G3：DEMO_SEED 下制造业三部门示例；空库幂等） --------------------------
   seedExecHub(ctx, hub)
+}
+
+/**
+ * #16（2026-10-29）存量迁移：Goal/Project/Issue 的空 orgId 记录归入平台根组织并留审计。
+ * 幂等（只处理空串归属）；组织树未播种时跳过（下次启动补齐）——「空串 = 血缘断链」从此不可再入。
+ */
+function migrateEmptyExecOrgId(ctx: Context, hub: ExecutionHubService): void {
+  const rootOrgId = hub.rootOrgId()
+  if (!rootOrgId) return
+  let migrated = 0
+  const samples: string[] = []
+  for (const [collection, kind] of [[hub.goals(), 'goal'], [hub.projects(), 'project'], [hub.issues(), 'issue']] as const) {
+    for (const record of collection.all().filter((item) => !item.orgId)) {
+      collection.update(record.id, { orgId: rootOrgId })
+      migrated++
+      if (samples.length < 5) samples.push(`${kind}:${record.id}`)
+    }
+  }
+  if (migrated === 0) return
+  try {
+    ctx.audit?.record({
+      type: 'change', actorType: 'system', actorId: 'exec-hub', actorName: t('执行中枢'),
+      action: 'exec.orgid.migrate', resourceType: 'exec', resourceId: rootOrgId,
+      resourceName: t('平台根组织'), result: 'ok',
+      detail: t('存量空 orgId 归根组织（#16）：{count} 条，样例 {samples}', { count: migrated, samples: samples.join(', ') }),
+    })
+  } catch { /* 审计面独立降级 */ }
+  ctx.logger('exec-hub').info(`存量 exec 记录空 orgId 已归根组织（#16）：${migrated} 条（${samples.join(', ')}${samples.length < migrated ? ' 等' : ''}）`)
 }
 
 declare module '@deepseek-ai/cordis' {

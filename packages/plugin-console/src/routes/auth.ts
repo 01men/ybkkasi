@@ -8,6 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { t } from '../../../platform-i18n/src/index.ts'
 import { ProviderAuthError } from '../../../plugin-iam/src/providers.ts'
+import { PANEL_CONTRACT_VERSION } from '../../../plugin-panel-core/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export interface AuthRouteDeps extends ConsoleRouteDeps {
@@ -17,9 +18,40 @@ export interface AuthRouteDeps extends ConsoleRouteDeps {
 
 export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
   const { http, body, caller, requestOrigin } = deps
-  // -- 健康 ---------------------------------------------------------------
+  // -- 健康（含平台契约元信息，#13，2026-10-29） --------------------------------
+  // 底座是契约所有者：/api/health 公开暴露面板契约版本 + 能力清单（从已注册路由实时推导，
+  // 单一事实源 = declaredRoutes）+ 已配置部门。前台（DeptAI-UI-DSH 等）据此对齐宿主支持面，
+  // 版本组合偏差 fail-visible 而非静默 404；apiRoutes 计数与 /api/openapi.json 对账。
   http.register('GET', '/api/health', (exchange) => {
-    exchange.ok({ status: 'ok', time: new Date().toISOString() })
+    const capabilities = new Set<string>()
+    for (const route of ctx.httpServer.declaredRoutes) {
+      const segments = route.path.split('/').filter(Boolean)
+      const panelIdx = segments.indexOf('panel')
+      if (panelIdx < 0) continue
+      // 能力族 = panel 后首个非参数段（/api/panel/:dept/board → board；/api/panel/depts → depts）
+      const family = segments[panelIdx + 1]
+      if (family !== undefined && !family.startsWith(':')) capabilities.add(family)
+      else if (segments[panelIdx + 2] !== undefined && !segments[panelIdx + 2]!.startsWith(':')) capabilities.add(segments[panelIdx + 2]!)
+    }
+    if (ctx.httpServer.declaredRoutes.some((route) => route.path === '/panel')) capabilities.add('spa')
+    // 部门能力：面板域已配置部门（deptConfigs.id，如 mfg）——前台判断部门视图可用性
+    let depts: string[] = []
+    try {
+      depts = ctx.panel.deptConfigs().all().map((item) => item.id).filter(Boolean)
+    } catch { /* 面板域未装配：能力清单照常返回，depts 置空 */ }
+    exchange.ok({
+      status: 'ok',
+      time: new Date().toISOString(),
+      contract: {
+        apiRoutes: ctx.httpServer.declaredRoutes.filter((route) => route.path.startsWith('/api/')).length,
+        panel: {
+          version: PANEL_CONTRACT_VERSION,
+          capabilities: [...capabilities].sort(),
+          // 恒为数组（空库部署也返回 []）：前台按「字段存在即契约 v1」做对齐判断
+          depts: [...new Set(depts)].sort(),
+        },
+      },
+    })
   }, { access: 'public' })
 
   // -- 三方登录可用性（公开：登录页按配置显隐三方登录入口） ----------------------

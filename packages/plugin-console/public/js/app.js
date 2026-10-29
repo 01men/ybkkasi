@@ -8,10 +8,12 @@ import { resolveLanding, isBareLanding, LANDING_PREF_KEY } from './landing.js'
 import { resolvePanels } from './connections.js'
 import { consumeNextSources, exitWithNext } from './next-redirect.js'
 import rqI18n from './i18n.js'
+import { mountThemeSwitcher, replayUiTheme } from './theme.js'
 
 // 平台主题（WP-05/B3）：启动即回放记忆的平台（免闪默认色）。写入方为平台身份下发方
 // （applyPlatformTheme——卡片包域回流后的工作台校准、或部署方预置 heng_ops_platform 键）。
 replayPlatformTheme()
+replayUiTheme()
 
 // 钉钉微应用入口探测（WP-11）：钉钉 webview UA 且无记忆平台时，标记钉钉入口态。
 // 只写独立键 heng_ops_dingtalk，不写 heng_ops_platform——钉钉是入口不是第六平台，不改五平台 data-platform 语义。
@@ -239,6 +241,7 @@ function renderShell(page, params, builder) {
             <kbd>⌘K</kbd>
           </div>
           <div class="topbar-right">
+            <div id="theme-switcher-host"></div>
             ${IS_LOCAL_HOST ? '' : `<button class="badge badge-warn no-dot" id="conn-indicator" title="当前连接远程宿主服务，点击管理连接" style="cursor:pointer;border:0">${icon('server', 13)} ${esc(CONNECTION_NAME)}</button>`}
             <button class="icon-btn" id="btn-refresh" title="刷新数据">${icon('refresh')}</button>
             <div style="position:relative" id="update-host"></div>
@@ -315,6 +318,7 @@ function renderShell(page, params, builder) {
   $('#conn-indicator')?.addEventListener('click', () => { location.hash = '#/connections' })
   $('#cmdk-trigger').onclick = () => openCmdk()
   $('#avatar').onclick = () => openCmdk()
+  mountThemeSwitcher($('#theme-switcher-host'))
 
   // 移动端抽屉导航（≤1024px）：汉堡开合 + 遮罩点击收起；导航项点击已在上方收起
   $('#nav-toggle').onclick = () => document.body.classList.toggle('nav-open')

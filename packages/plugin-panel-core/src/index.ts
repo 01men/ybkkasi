@@ -26,6 +26,13 @@ import { PanelService, TASK_LANES, type TaskLane, type DeptWidget, type DeptKpi,
 import { seedPanel } from './seed/seed.ts'
 import { t } from '../../platform-i18n/src/index.ts'
 
+/**
+ * 面板契约版本（#13，2026-10-29）：面板能力族集合的语义版本——新增能力族/下线路由族时递增。
+ * 底座是契约所有者：/api/health 的 contract.panel 暴露本版本与实时推导的能力清单，
+ * 前台（DeptAI-UI-DSH 等）据此对齐宿主支持面，版本组合偏差 fail-visible 而非静默 404。
+ */
+export const PANEL_CONTRACT_VERSION = 1
+
 export const name = 'panel-core'
 export const inject = [
   'httpServer', 'opsStorage', 'platformBus', 'tools',

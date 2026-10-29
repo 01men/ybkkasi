@@ -209,7 +209,7 @@ export class AuthnService extends Service {
     this.cleanupExpiredTokens()
     this.cleanupTimer = setInterval(() => this.cleanupExpiredTokens(), 3600_000)
     this.cleanupTimer.unref?.() // OPT-P3-02：嵌入/测试形态允许进程自然退出
-    ctx.effect(() => {
+    ctx.effect(() => () => {
       if (this.cleanupTimer) clearInterval(this.cleanupTimer)
     })
     // 事件联动：账号冻结 → 吊销全部令牌；Agent 下线 → 吊销机器凭证

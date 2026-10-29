@@ -14,7 +14,7 @@ import {
 } from '../ui.js'
 import { renderConnections } from './connections.js'
 
-const TEMPLATE_LABEL = { readonly: '只读运维', operator: '运维（读+变更）', full: '全部权限' }
+const TEMPLATE_LABEL = { readonly: '只读运维', operator: '运维（读+变更）', executor: '执行方（读+执行）', full: '全部权限' }
 
 /** Agent 本体一键接入口令：复制给 Agent 的中文一句话任务模板（含必填占位）。 */
 const AGENT_NL_INSTRUCTION = `【任务】按《元冰可平台 · Agent 接入规范》把下面这个 Agent 接入平台 http://192.168.0.7:7300。

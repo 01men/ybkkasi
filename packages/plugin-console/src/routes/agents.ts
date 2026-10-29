@@ -259,7 +259,7 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
   })
 
   /** Agent 详情页 SSO 配置块（不含 secret；含 discovery，供前端与 dsh 免登接入使用）。 */
-  const agentSsoView = (agentId: string) => {
+  const agentSsoView = (agentId: string, exchange: HttpExchange) => {
     const ssoClient = ctx.oidc.clientsForAgent(agentId)[0]
     if (!ssoClient) return null
     const { clientSecretHash: _hash, ...ssoSafe } = ssoClient
@@ -270,10 +270,10 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
       clientType: ssoSafe.clientType ?? 'confidential',
       refAgentName: ctx.resourceCore.get('agent', ssoSafe.refId ?? '')?.name ?? undefined,
       discovery: {
-        issuer: ctx.oidc.issuer(),
-        authorization_endpoint: `${ctx.oidc.issuer()}/oauth/authorize`,
-        token_endpoint: `${ctx.oidc.issuer()}/oauth/token`,
-        userinfo_endpoint: `${ctx.oidc.issuer()}/oauth/userinfo`,
+        issuer: ctx.oidc.issuer(exchange),
+        authorization_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/authorize`,
+        token_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/token`,
+        userinfo_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/userinfo`,
       },
     }
   }
@@ -293,7 +293,7 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
       topology: enrichTopology(ctx.resourceCore.topology('agent', id, 2)),
       impact: ctx.resourceCore.impact('agent', id),
       audit: ctx.audit.query({ resourceType: 'agent', resourceId: id, limit: 30 }).items,
-      sso: agentSsoView(id),
+      sso: agentSsoView(id, exchange),
       ssoEnforceMode: AgentRegistryService.ssoEnforceMode(),
     }
   })
@@ -314,6 +314,8 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
   guarded('PATCH', '/api/agents/:id', 'agent.write', (exchange) => {
     if (!assertAgentOwner(exchange, exchange.params['id']!)) return
     const input = body<{ name?: string; attrs?: Record<string, unknown> }>(exchange)
+    // 模型目录单一事实源（issue #8）：PATCH 提供了 model 时校验目录存在性（未提供不动存量值）
+    if (input.attrs && input.attrs['model'] !== undefined) ctx.agentRegistry.assertModelInCatalog(input.attrs['model'])
     const agent = ctx.resourceCore.update('agent', exchange.params['id']!, input)
     changeLog(exchange, 'agent.update', 'agent', agent.id, agent.name)
     return agent

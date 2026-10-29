@@ -3,6 +3,119 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · 控制台四套可切换主题（PR #11 合并，2026-10-29）
+
+- 控制台新增四套界面主题：**经典原版 / 澄明经营总览 / 星图协作关系 / 夜航治理观察**——驾驶舱内
+  单击切换，其他页面走顶栏切换；选择存浏览器本地，独立于平台身份主题，原有五个工作台视图、
+  路由与演示只读限制不受影响。
+- 星图主题按需加载本地分发的 D3（任务状态 / Token 趋势）与 Cytoscape（目标-项目-任务-数字员工
+  真实关联图，支持拖拽/缩放/节点选择，最多 60 节点，缺权限/无数据/组件失败均有降级），不引前端
+  构建步骤、不走第三方 CDN；依赖附许可文件随包分发。
+- 数据全部来自既有只读接口；关系线表示登记的父子/归属/指派关系，不冒充实际调用。
+- 自带前端单测（theme / theme-integration，jsdom + headless）与 `timer-permission.test.mjs`
+  定时器生命周期回归；合并冲突解决口径：exec-hub/connect/CLI/文档的修复块一律以 main 已落地
+  版本（#7/#9/#10）为准，仅保留主题与测试增量，selftest 1657/1657 全绿。
+
+## [Unreleased] · GitHub 反馈修复批次二（issue #13 / #14 / #15 / #16，2026-10-29）
+
+**#16 exec 域组织血缘断链（goals/projects/issues 空串 orgId 落库）**
+
+- 创建路径收口：显式空串 orgId 一律 400（缺省请不传）；缺省时按继承链自动归属——调用主体组织
+  （console 统一 principal 反查的 `unified.orgId`）→ 血缘（任务沿项目/Agent、项目沿目标）→ 平台根组织。
+  服务层 `assertOrgInput` 双重校验（空串拒绝 + 组织存在性），REST/MCP/内部调用同源生效。
+- 存量迁移：启动时把 exec:goals / exec:projects / exec:issues 的空 orgId 记录归根组织，幂等且留
+  审计（`exec.orgid.migrate`）；组织树未播种时跳过、下次启动补齐。
+- `/api/exec/goals|projects|issues` 增加 `?orgId=` 过滤（组织范围看板/成本/配额的数据面）。
+- selftest：缺省创建必带归属、空串 400、裸任务兜底归属、goals/issues 过滤命中，共 5 断言。
+
+**#15 OIDC discovery issuer 硬编码环回地址（公网域名远程 SSO 不可用）**
+
+- issuer 解析改为三级：`OIDC_ISSUER` 显式声明（多域名/严格部署的固定锚点，最高优先）→ 按请求
+  `X-Forwarded-Proto` + `X-Forwarded-Host`/`Host` 派生（与 console requestOrigin 同口径）→ 回落
+  `http://127.0.0.1:<port>`。公网域名反代部署 discovery/authorize/token/userinfo 端点自动对齐对外
+  origin，远程 SSO 开箱可用（反代需透传转发头，或显式声明 `OIDC_ISSUER`）。
+- 请求上下文贯穿签发与校验面：discovery、completeAuthorization（RFC 9207 iss 回跳）、
+  issueTokenSet（token iss）、userinfo / end_session / revoke（verifyJwt 经 `acceptedIssuers` 同时
+  接受静态与请求派生 issuer）——同请求面自洽，跨域名混用令牌仍被拒（多域名请固定 `OIDC_ISSUER`）。
+- dsh-bridge OIDC 登录通道（/auth/oidc/start|callback）、console 三处 discovery 展示、portal 令牌
+  解析同步改为按请求派生；docs/app-sso-integration.md、deploy-enterprise.md、协议键对照表更新。
+- selftest：转发的 Host/proto 派生 issuer、环回自洽共 2 断言；dsh 挂载段断言改按请求入口地址。
+
+**#14 成本归集恒 0（token 有计量、成本无依据，0 被误读为「零成本」）**
+
+- 模型目录增加 `inputCostCentsPerKTokens`（分/千 tokens）：输入 token 与输出分开计价。modelgw
+  invoke 时点从价格簿读取双费率，以**组合计价行**（`costLineItems`，additive-only）入 usage 事件，
+  成本 = Σ 行计价；快照 `rate.line_items` 原样留痕可复算。价格簿仍是唯一调价面（model:<slug> 与
+  新增 model:<slug>:input 两个条目，upsertModel 自动同步）。
+- 「未知 ≠ 零」语义（fail-closed）：快照新增 `pricing.cost_status`——费率未配/全零费率导致的 0
+  标 `not_priced`；费率在配但量小取整为 0 仍算 priced。`/api/usage/summary` 暴露
+  `not_priced_events`（总/分资源），预算护栏与净效果据此判断「成本是否可归集」。
+- audit 成本报表覆盖率：CostRecord 增 `pricedEvents/notPricedEvents`（additive），消费侧按事件
+  分类累计；`audit_cost_report` 与 `/api/audit/cost` 每行返回 `priced/notPriced`。
+- 修复管理端静默清零：模型保存路由此前 `costCentsPerKTokens ?? 0` 会把未填费率的保存把价格簿
+  清零；改为缺省保留既有值。网关/FinOps 页模型表单补输入成本字段，目录表加输入单价列。
+- selftest：双米组合计价 14 分、快照 line_items 留痕、summary 覆盖率、成本报表 priced/notPriced，
+  共 4 断言。
+
+**#13 /api/health 无面板契约版本（前台宿主版本偏差静默 404）**
+
+- `/api/health` 暴露 `contract.panel`：`version`（panel-core 导出 `PANEL_CONTRACT_VERSION`，
+  能力族语义变化时递增）+ `capabilities`（从 declaredRoutes 实时推导的面板能力族：board/widgets/
+  channels/tasks/stream/scenegraph/spa 等）+ `depts`（已配置部门）+ `apiRoutes` 计数（与
+  /api/openapi.json 对账）。前台（DeptAI-UI-DSH）按能力清单判断宿主支持面，偏差 fail-visible；
+  跨仓 CI 断言（frontend ⊆ host）在前台仓按同一契约消费。
+- selftest：契约三元组（version/capabilities/depts）断言 1 条。
+
+断言总数 1645 → **1657 全绿**（Node 24.21.0 实测；含四个 issue 的行为级回归与 #15 挂载形态断言修正）。
+
+## [Unreleased] · GitHub 反馈修复批次（issue #7 / #8 / #9 / #10，2026-10-29）
+
+**#10 定时器静默失效（cordis ctx.effect 误用，波及全仓库 10 处）**
+
+- cordis 4.0.4 的 `ctx.effect(fn)`：fn 在注册时**立即执行**，返回值才是清理函数。exec-hub 心跳循环
+  此前用单层箭头把 `setInterval`/`setTimeout` 在装配期当场清掉——进程重启后内置 tick 永不运行，
+  routine 唤醒/心跳永不入队，Agent 健康度全部 silent 且无日志报错（生产实测重启 18h 后才发现），
+  唯一可用通道只剩管理员手动 `POST /api/exec/tick`。
+- 同类误用一并修复（同一 bug 类）：plugin-iam 连接器自动同步、plugin-authn 令牌清理 ×2 与
+  OIDC/入场票据清理、plugin-nas 分享链接清理、plugin-a2a 例行巡检、plugin-usage 保留策略、
+  plugin-workforce 台账巡检、platform-core behavior 消费者表清理——全部改为 `ctx.effect(() => () => { … })`
+  返回 disposer 的正确写法。
+- selftest 新增端到端断言：短周期定时器隔离实例（`EXEC_HUB_TICK_MS=600`）**零手动 tick** 亦自动
+  入队心跳唤醒——该缺陷此前完全无测试覆盖（既有断言全用手动 tick 驱动）。
+
+**#7 只读 Agent 心跳被 exec.write 拦死**
+
+- `processWake` 权限解耦：存活心跳只要求 `exec.read`（评价官/验收官等职责分离只读角色照常参与
+  心跳调度），`exec.write` 移到真正写路径收口——无 issue 心跳：无待办 `skipped_no_todo`/done；
+  有待办但只读以 `skipped_permission` 非错误收尾（不再每一拍 `status=failed`）。任务执行路径
+  （issue 派发）仍要求 `exec.write`，边界不放宽；身份未纳管（连 `exec.read` 都没有）保持 failed。
+
+**#8 Agent 模型枚举与模型目录两套口径（单一事实源）**
+
+- `attrs.model` 废除硬编码三值枚举（deepseek-chat/reasoner/coder）：可选值 = 模型网关目录
+  （`modelgw:models`）。登记 / PATCH（提供 model 时）/ 上线门禁三处 fail-fast 校验「目录中存在」，
+  错误即列可用 slugs；目录 online 状态与渠道就绪属运行时事实，由 modelgw invoke 权威 enforce。
+  空目录放行（全新部署引导期不锁死 Agent 登记）；modelgw 未装配时跳过（异常装配降级 legacy）。
+- 目录读取走 `ctx.reflect.get('modelGateway')` 软读——严格注入下直访会被 get trap 硬抛
+  「without inject」（exec_claim 同款坑，1b31af2 的教训复用）。
+- 演示种子补齐 `deepseek-reasoner` / `deepseek-coder` 目录条目（此前 4 个种子 Agent 配了目录外模型，
+  即本 issue 事故形态）；upsertModel 前移到 Agent 注册之前（校验依赖目录先就位）。
+- 控制台注册表单「底层模型」改从 `/api/modelgw/models` 动态取选项（online 在前、offline 标注，
+  拉取失败退回手填）；`agent_register` 工具描述同步指向目录。
+- selftest：登记/PATCH 目录外模型 400（含可用 slugs 提示）、上线门禁 fail-fast（目录条目删除后
+  上线即 400，不再「上线成功、派发才失败」）。
+
+**#9 connect 缺「执行方」接入模板**
+
+- 新增 `executor` 模板：只读 + `exec.write` 任务认领/执行 + `usage.write` 用量自报，不含账号与
+  凭证管理——远程 dsh/Agent 承担任务执行不再被迫二选一（`operator` 无法认领 / `full` 等价管理员 `*`）。
+  `operator` 模板描述同步明确「不含任务执行」。接入码创建校验、connect_code_create 工具枚举、
+  控制台模板表、CLI 帮助、docs/deploy-enterprise.md 模板表五处同步。
+- selftest：executor 模板签发 → enroll → 机器令牌调 `exec_claim` 不再 403（业务层「任务不存在」
+  才是预期失败）、生效权限含 `exec.write`/`exec.read` 且不含账号凭证管理；对照 operator 仍 403。
+
+断言总数 1621 → **1645 全绿**（Node 24.21.0 实测；含 #10 内置定时器隔离实例与 #7/#8/#9 行为级回归）。
+
 ## [Unreleased] · 治理令牌自愈刷新健壮化与告警出口收敛（gov-token / gov-refresh，2026-10-28）
 
 - `scripts/refresh-governance-mcp-tokens.mjs`（治理双身份 MCP 令牌自愈刷新入库，org 自动化

@@ -297,6 +297,7 @@ async function toggleModel(model, onDone) {
     provider: model.provider ?? 'external',
     endpoint: model.endpoint ?? '',
     costCentsPerKTokens: model.costCentsPerKTokens ?? 0,
+    ...(model.inputCostCentsPerKTokens !== undefined ? { inputCostCentsPerKTokens: model.inputCostCentsPerKTokens } : {}),
     status: model.status === 'online' ? 'offline' : 'online',
     ...(model.dataClassLimit ? { dataClassLimit: model.dataClassLimit } : {}),
     ...(typeof model.apiKey === 'string' && model.apiKey.startsWith('env:') ? { apiKey: model.apiKey } : {}),
@@ -332,7 +333,7 @@ function mountModelTable(models, rerender) {
   host.innerHTML = `
     <div class="table-wrap">
       <table class="tbl">
-        <thead><tr><th>slug</th><th>显示名</th><th>provider</th><th>状态</th><th>数据密级</th><th style="text-align:right">成本（分/千tokens）</th><th>endpoint</th><th>操作</th></tr></thead>
+        <thead><tr><th>slug</th><th>显示名</th><th>provider</th><th>状态</th><th>数据密级</th><th style="text-align:right">成本（分/千tokens）</th><th style="text-align:right">输入成本（分/千tokens）</th><th>endpoint</th><th>操作</th></tr></thead>
         <tbody>
           ${models.length ? models.map((m) => `
             <tr data-id="${esc(m.id ?? '')}" data-slug="${esc(m.slug)}">
@@ -342,12 +343,13 @@ function mountModelTable(models, rerender) {
               <td>${m.status === 'online' ? '<span class="badge badge-ok no-dot">在线</span>' : '<span class="badge badge-muted no-dot">离线</span>'}</td>
               <td class="fs-12">${esc(m.dataClassLimit ?? '—')}</td>
               <td class="col-num fs-12" style="text-align:right">${m.costCentsPerKTokens ?? m.cost_cents_per_k_tokens ?? '—'}</td>
+              <td class="col-num fs-12" style="text-align:right">${m.inputCostCentsPerKTokens ?? m.input_cost_cents_per_k_tokens ?? '—'}</td>
               <td class="mono fs-11 text-3 ellipsis" style="max-width:200px" title="${esc(m.endpoint ?? '')}">${esc(m.endpoint ?? '—')}</td>
               <td><div class="flex" style="gap:6px">
                 <button class="btn btn-default btn-sm stop" data-mg-toggle="${esc(m.id ?? m.slug)}" data-next="${m.status === 'online' ? 'offline' : 'online'}">${m.status === 'online' ? '下线' : '上线'}</button>
                 <button class="btn btn-danger-ghost btn-sm stop" data-mg-del="${esc(m.id ?? '')}" data-slug="${esc(m.slug)}">${icon('trash', 12)}</button>
               </div></td>
-            </tr>`).join('') : emptyRow(8, '模型目录为空——登记第一个模型接入统一网关')}
+            </tr>`).join('') : emptyRow(9, '模型目录为空——登记第一个模型接入统一网关')}
         </tbody>
       </table>
     </div>`
@@ -362,6 +364,7 @@ function mountModelTable(models, rerender) {
         provider: record.provider ?? 'external',
         endpoint: record.endpoint ?? '',
         costCentsPerKTokens: record.costCentsPerKTokens ?? 0,
+        ...(record.inputCostCentsPerKTokens !== undefined ? { inputCostCentsPerKTokens: record.inputCostCentsPerKTokens } : {}),
         status: btn.dataset.next,
         ...(record.dataClassLimit ? { dataClassLimit: record.dataClassLimit } : {}),
         ...(typeof record.apiKey === 'string' && record.apiKey.startsWith('env:') ? { apiKey: record.apiKey } : {}),
@@ -402,6 +405,7 @@ function openModelForm(rerender) {
         ${field('endpoint', inputField('endpoint', { placeholder: 'https://api.example.com/v1' }), { full: true })}
         ${field('apiKey', inputField('apiKey', { placeholder: 'env:DEEPSEEK_API_KEY' }), { full: true, hint: '推荐 env:VAR_NAME 形式引用宿主环境变量，避免明文落库' })}
         ${field('成本（分/千tokens）', `<input class="input" type="number" step="any" name="costCentsPerKTokens" placeholder="如 12 = ¥0.12/千tokens">`)}
+        ${field('输入成本（分/千tokens）', `<input class="input" type="number" step="any" name="inputCostCentsPerKTokens" placeholder="如 2 = ¥0.02/千tokens（#14 输入 token 单独计价）">`)}
         ${field('状态', selectField('status', [{ value: 'online', label: '在线' }, { value: 'offline', label: '离线' }]))}
         ${field('数据密级上限', selectField('dataClassLimit', [
           { value: 'public', label: 'public（仅公开数据）' },
@@ -426,6 +430,7 @@ function openModelForm(rerender) {
       dataClassLimit: data.dataClassLimit || undefined,
     }
     if (data.costCentsPerKTokens !== '') payload.costCentsPerKTokens = Number(data.costCentsPerKTokens)
+    if (data.inputCostCentsPerKTokens !== '') payload.inputCostCentsPerKTokens = Number(data.inputCostCentsPerKTokens)
     btn.classList.add('btn-loading')
     try {
       await api.post('/api/modelgw/models', payload)

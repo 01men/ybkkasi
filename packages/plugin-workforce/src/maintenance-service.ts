@@ -66,7 +66,7 @@ export class MaintenanceService extends Service {
       ctx.effect(() => () => clearTimeout(first))
       this.timer = setInterval(() => void this.sweep(), this.intervalMs)
       this.timer.unref?.() // OPT-P3-02：嵌入形态不挂起事件循环（lint-timers 硬门禁）
-      ctx.effect(() => {
+      ctx.effect(() => () => {
         if (this.timer) clearInterval(this.timer)
       })
     } else {
