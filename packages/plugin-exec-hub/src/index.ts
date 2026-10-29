@@ -178,6 +178,21 @@ export interface TickResult {
 
 const TICK_MS = Number(process.env.EXEC_HUB_TICK_MS ?? 30_000)
 const FIRST_TICK_MS = Number(process.env.EXEC_HUB_FIRST_TICK_MS ?? Math.min(TICK_MS, 15_000))
+
+/** 定时器只在插件卸载时清理；Cordis effect 的返回值才是 disposer。 */
+export function registerExecTimers(ctx: Pick<Context, 'effect'>, tick: () => void, metrics: () => void, tickMs = TICK_MS, firstMs = FIRST_TICK_MS): void {
+  const tickTimer = setInterval(tick, tickMs)
+  tickTimer.unref?.()
+  const firstTick = setTimeout(tick, firstMs)
+  firstTick.unref?.()
+  const metricsTimer = setInterval(metrics, 3_600_000)
+  metricsTimer.unref?.()
+  ctx.effect(() => () => {
+    clearInterval(tickTimer)
+    clearTimeout(firstTick)
+    clearInterval(metricsTimer)
+  })
+}
 const BATCH_SIZE = Number(process.env.EXEC_HUB_BATCH ?? 50)
 /** 僵尸锁阈值：Paperclip 建议约 2× 心跳周期，缺省 5 分钟。 */
 const LOCK_TIMEOUT_MS = Number(process.env.EXEC_LOCK_TIMEOUT_MS ?? 300_000)
@@ -249,19 +264,7 @@ export class ExecutionHubService extends Service {
     })
 
     if (process.env.EXEC_HUB_OFF === 'off') return
-    // 心跳循环（lint-timers：unref + effect 清理双保险）
-    const tickTimer = setInterval(() => { void this.safeTick() }, TICK_MS)
-    tickTimer.unref?.()
-    const firstTick = setTimeout(() => { void this.safeTick() }, FIRST_TICK_MS)
-    firstTick.unref?.()
-    // 纳管提报催办巡检：每小时一轮（R9：metrics-report 超 24h 自动催办）
-    const metricsTimer = setInterval(() => { void this.remindOverdueMetrics() }, 3_600_000)
-    metricsTimer.unref?.()
-    ctx.effect(() => {
-      clearInterval(tickTimer)
-      clearTimeout(firstTick)
-      clearInterval(metricsTimer)
-    })
+    registerExecTimers(ctx, () => { void this.safeTick() }, () => { void this.remindOverdueMetrics() })
   }
 
   private async safeTick(): Promise<void> {
@@ -1063,6 +1066,19 @@ export class ExecutionHubService extends Service {
 
     // 联动③：权限校验（Agent 机器主体须持 exec.write——身份纳管即权限收敛）
     const scopes = this.agentScopes(agentId)
+    // 例行存活检查可由只读员工完成；只有发起执行时才需要 exec.write。
+    // 不对非心跳请求或未纳管主体放宽，且有待办时绝不替无写权限的主体创建 run。
+    if (!issue && wake.trigger === 'routine' && wake.triggerDetail?.startsWith('heartbeat:') && scopes?.includes('exec.read') && !scopes.includes('exec.write') && !scopes.includes('*')) {
+      const todos = this.collectTodos(agent)
+      if (todos.total === 0) {
+        this.recordHeartbeat(agent, 'skipped_no_todo')
+        this.wakes().update(wakeId, { status: 'done' })
+      } else {
+        this.recordHeartbeat(agent, 'skipped_permission', '存在待办但缺少 exec.write')
+        this.wakes().update(wakeId, { status: 'done', lastError: t('存在待办但 Agent 机器主体无 exec.write，未派发执行') })
+      }
+      return 'skipped'
+    }
     if (scopes === null || !(scopes.includes('exec.write') || scopes.includes('*'))) {
       this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）') })
       this.recordHeartbeat(agent, 'skipped_permission', 'exec.write 缺失')
@@ -1320,7 +1336,8 @@ export class ExecutionHubService extends Service {
     const nowMs = Date.now()
     return this.ctx.resourceCore.list('agent').map((agent) => {
       const lastHeartbeat = this.heartbeats().all()
-        .filter((item) => item.agentId === agent.id)
+        // 权限、预算、冻结等拒绝记录不证明有效心跳，不能将失败刷新为健康。
+        .filter((item) => item.agentId === agent.id && (item.outcome === 'woken' || item.outcome === 'skipped_no_todo'))
         .sort((a, b) => b.at.localeCompare(a.at))[0]
       let lastMetrics: { updatedAt: string } | undefined
       try {
