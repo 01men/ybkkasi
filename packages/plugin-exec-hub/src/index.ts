@@ -178,6 +178,21 @@ export interface TickResult {
 
 const TICK_MS = Number(process.env.EXEC_HUB_TICK_MS ?? 30_000)
 const FIRST_TICK_MS = Number(process.env.EXEC_HUB_FIRST_TICK_MS ?? Math.min(TICK_MS, 15_000))
+
+/** 定时器只在插件卸载时清理；Cordis effect 的返回值才是 disposer。 */
+export function registerExecTimers(ctx: Pick<Context, 'effect'>, tick: () => void, metrics: () => void, tickMs = TICK_MS, firstMs = FIRST_TICK_MS): void {
+  const tickTimer = setInterval(tick, tickMs)
+  tickTimer.unref?.()
+  const firstTick = setTimeout(tick, firstMs)
+  firstTick.unref?.()
+  const metricsTimer = setInterval(metrics, 3_600_000)
+  metricsTimer.unref?.()
+  ctx.effect(() => () => {
+    clearInterval(tickTimer)
+    clearTimeout(firstTick)
+    clearInterval(metricsTimer)
+  })
+}
 const BATCH_SIZE = Number(process.env.EXEC_HUB_BATCH ?? 50)
 /** 僵尸锁阈值：Paperclip 建议约 2× 心跳周期，缺省 5 分钟。 */
 const LOCK_TIMEOUT_MS = Number(process.env.EXEC_LOCK_TIMEOUT_MS ?? 300_000)
@@ -1370,7 +1385,8 @@ export class ExecutionHubService extends Service {
     const nowMs = Date.now()
     return this.ctx.resourceCore.list('agent').map((agent) => {
       const lastHeartbeat = this.heartbeats().all()
-        .filter((item) => item.agentId === agent.id)
+        // 权限、预算、冻结等拒绝记录不证明有效心跳，不能将失败刷新为健康。
+        .filter((item) => item.agentId === agent.id && (item.outcome === 'woken' || item.outcome === 'skipped_no_todo'))
         .sort((a, b) => b.at.localeCompare(a.at))[0]
       let lastMetrics: { updatedAt: string } | undefined
       try {

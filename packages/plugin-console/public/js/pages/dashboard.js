@@ -11,6 +11,8 @@ import {
 } from '../ui.js'
 import { errorBarHtml } from '../errors.js'
 import rqI18n from '../i18n.js'
+import { mountThemeLens } from '../theme-lens.js'
+import { mountThemeQuickSwitcher } from '../theme.js'
 
 const TABS = [
   { key: 'cockpit', label: '经营驾驶舱' },
@@ -74,6 +76,7 @@ export async function renderDashboard(content, params, ctx) {
         ${session.can('agent.read') ? `<button class="btn btn-default" id="dash-goto-agents">${icon('bot', 14)}查看 Agent</button>` : ''}
         ${session.can('approval.read') ? `<button class="btn btn-primary" id="dash-goto-approve">${icon('checkSquare', 14)}处理审批</button>` : ''}`,
     })}
+    ${tab === 'cockpit' ? '<div id="theme-quick-switcher"></div><div id="theme-lens"></div>' : ''}
     <div id="dash-binding-banner"></div>
     <div class="flex mb-14" style="gap:10px;align-items:center;flex-wrap:wrap">
       <div id="dash-tabs"></div>
@@ -95,6 +98,10 @@ export async function renderDashboard(content, params, ctx) {
   $('#dash-goto-conflicts')?.addEventListener('click', () => { location.hash = '#/iam?tab=conflicts' })
 
   void mountBindingBanner()
+  if (tab === 'cockpit') {
+    mountThemeQuickSwitcher($('#theme-quick-switcher'))
+    mountThemeLens($('#theme-lens'), d)
+  }
 
   const body = $('#dash-tab-body')
   if (tab === 'goals') await renderGoalsTab(body)

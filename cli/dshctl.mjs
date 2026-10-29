@@ -1681,7 +1681,7 @@ const COMMANDS = {
         ok(t('客户端已禁用（联动吊销全部令牌）：{id}', { id: data.id }))
         return
       }
-      fail(t('用法：connect code [--template=readonly|operator|full] [--ttl=15] [--remark=] | codes | clients | disable <clientId> --reason='))
+      fail(t('用法：connect code [--template=readonly|executor|operator|full] [--ttl=15] [--remark=] | codes | clients | disable <clientId> --reason='))
     },
   },
   tool: {

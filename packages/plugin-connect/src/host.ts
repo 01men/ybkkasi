@@ -72,6 +72,8 @@ export function connectTemplates(): Array<Omit<TemplateSpec, 'scopes'>> {
 
 export function templateScopes(template: TemplateName): string[] {
   if (template === 'full') return ['*']
+  // 工具桥需要 console.login；该权限也隐含 console.read（概览只读）。
+  if (template === 'executor') return ['console.login', 'exec.read', 'exec.write']
   const readPoints = PermissionCatalog.filter((item) => item.point.endsWith('.read') || item.point === 'console.login').map((item) => item.point)
   if (template === 'readonly') return readPoints
   if (template === 'executor') return [...new Set([...readPoints, 'exec.write', 'usage.write'])]
