@@ -142,7 +142,7 @@ Restart=always
   `iam.connector.write`）；既有 `PUT/POST /api/iam/connectors/:param[/test|/sync]` 中 `:param`
   先按实例 id 解析、失败按 provider 取第一条（enabled 优先），旧调用零改动兼容。配置字段新增
   `name`（主体显示名，登录入口/列表按此区分）与 `targetOrgId`（同步树根挂载部门，空=平台根）。
-  OIDC 对外声明 `OIDC_ISSUER` 环境变量；OIDC 私钥生产建议迁 KMS。
+  OIDC issuer 未声明 `OIDC_ISSUER` 时按请求 Host/X-Forwarded-* 头派生（反代需透传转发头，或显式声明固定锚点，#15）；OIDC 私钥生产建议迁 KMS。
 - **内网/限流环境**：更新检查走 GitHub API（未认证限额 60 次/时/IP，可设 `GITHUB_TOKEN` 提额）；
   私有镜像用 `DSH_UPDATE_API_BASE` / `DSH_UPDATE_RAW_BASE` 环境变量覆盖。
 - **资金边界**：支付/对公/开票通道为手工过渡态，接入前请阅读 README「三A 资金红线」。

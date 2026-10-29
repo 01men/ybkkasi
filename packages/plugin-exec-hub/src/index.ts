@@ -307,6 +307,26 @@ export class ExecutionHubService extends Service {
     return this.ctx.opsStorage.collection<HeartbeatRecord>('exec:heartbeats')
   }
 
+  // -- 组织血缘（#16，2026-10-29） ---------------------------------------------
+
+  /**
+   * 平台首个根组织（无父组织）；组织树未播种时为 undefined——缺省继承链的最后兜底与
+   * 存量空 orgId 迁移（migrateEmptyExecOrgId）都以它为归属依据。
+   */
+  rootOrgId(): string | undefined {
+    return this.ctx.iam.orgs().all().find((org) => !org.parentId)?.id
+  }
+
+  /**
+   * 显式 orgId 入参校验（#16）：空串/空白一律拒绝（防「空串落库 → 组织血缘断链」），
+   * 非空必须命中真实组织；undefined 表示未提供，交给继承链（principal → 血缘 → 根组织）。
+   */
+  private assertOrgInput(orgId: string | undefined): void {
+    if (orgId === undefined) return
+    if (!orgId.trim()) throw new Error(t('orgId 不接受空值：缺省请不传（自动继承组织血缘），显式指定请传非空组织 ID'))
+    if (!this.ctx.iam.orgs().get(orgId)) throw new Error(t('组织不存在：{id}', { id: orgId }))
+  }
+
   // -- 目标（R8） -------------------------------------------------------------
 
   /** 目标链（根→…→本目标）；无父即 [self]；成环/断链防御性截断。 */
@@ -325,6 +345,7 @@ export class ExecutionHubService extends Service {
 
   createGoal(input: Omit<GoalRecord, 'id' | 'createdAt' | 'updatedAt' | 'status'> & { status?: GoalStatus }): GoalRecord {
     if (!input.title?.trim()) throw new Error(t('目标标题必填'))
+    this.assertOrgInput(input.orgId)
     if (input.parentGoalId) {
       const parent = this.goals().get(input.parentGoalId)
       if (!parent) throw new Error(t('父目标不存在：{id}', { id: input.parentGoalId }))
@@ -333,7 +354,8 @@ export class ExecutionHubService extends Service {
     }
     const record = this.goals().insert({
       id: newId('goal'),
-      orgId: input.orgId ?? '',
+      // #16：显式 orgId 已过校验；缺省回落平台根组织（REST 层先按 principal/血缘解析）
+      orgId: input.orgId ?? this.rootOrgId() ?? '',
       title: input.title.trim(),
       ...(input.description ? { description: input.description } : {}),
       ...(input.metric ? { metric: input.metric } : {}),
@@ -381,10 +403,12 @@ export class ExecutionHubService extends Service {
 
   createProject(input: Omit<ProjectRecord, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'repos'> & { repos?: string[]; status?: ProjectStatus }): ProjectRecord {
     if (!input.name?.trim()) throw new Error(t('项目名称必填'))
+    this.assertOrgInput(input.orgId)
     if (input.goalId && !this.goals().get(input.goalId)) throw new Error(t('关联目标不存在：{id}', { id: input.goalId }))
     const record = this.projects().insert({
       id: newId('proj'),
-      orgId: input.orgId ?? '',
+      // #16：缺省沿目标血缘继承，再回落平台根组织
+      orgId: input.orgId ?? this.goals().get(input.goalId ?? '')?.orgId ?? this.rootOrgId() ?? '',
       ...(input.goalId ? { goalId: input.goalId } : {}),
       name: input.name.trim(),
       ...(input.description ? { description: input.description } : {}),
@@ -440,6 +464,7 @@ export class ExecutionHubService extends Service {
     priority?: IssuePriority; dueAt?: string; createdBy: string
   }): IssueRecord {
     if (!input.title?.trim()) throw new Error(t('任务标题必填'))
+    this.assertOrgInput(input.orgId)
     if (input.projectId && !this.projects().get(input.projectId)) throw new Error(t('项目不存在：{id}', { id: input.projectId }))
     if (input.parentId && !this.issues().get(input.parentId)) throw new Error(t('父任务不存在：{id}', { id: input.parentId }))
     for (const blockerId of input.blockerIds ?? []) {
@@ -447,7 +472,8 @@ export class ExecutionHubService extends Service {
     }
     if (input.assigneeAgentId && !this.agentOf(input.assigneeAgentId)) throw new Error(t('负责人 Agent 不存在：{id}', { id: input.assigneeAgentId }))
     const project = input.projectId ? this.projects().get(input.projectId) : undefined
-    const orgId = input.orgId ?? project?.orgId ?? this.agentOf(input.assigneeAgentId ?? '')?.orgId ?? ''
+    // #16：继承链 principal（REST 层已解析进 input.orgId）→ 项目 → Agent → 平台根组织
+    const orgId = input.orgId ?? project?.orgId ?? this.agentOf(input.assigneeAgentId ?? '')?.orgId ?? this.rootOrgId() ?? ''
     const record = this.issues().insert({
       id: newId('iss'),
       orgId,
@@ -1573,17 +1599,38 @@ export function apply(ctx: Context) {
     } catch { /* 审计面独立降级 */ }
   }
 
+  // #16（2026-10-29）：exec 域组织血缘收口——显式空串 400；缺省继承调用主体组织
+  //（console 鉴权中间件按用户/Agent 归属反查的 unified.orgId），再沿血缘（目标/项目/Agent）
+  // 兜底，最终回落平台根组织；组织树未播种时保持 ''（与 seedExecHub 兜底一致，迁移函数幂等补齐）。
+  const principalOrgId = (exchange: HttpExchange): string => {
+    const unified = (exchange.principal as { unified?: { orgId?: string } } | undefined)?.unified
+    return typeof unified?.orgId === 'string' ? unified.orgId : ''
+  }
+  const resolveOrgId = (exchange: HttpExchange, explicit: string | undefined, lineage: Array<string | undefined> = []): string => {
+    if (explicit !== undefined) {
+      const trimmed = explicit.trim()
+      if (!trimmed) throw new Error(t('orgId 不接受空值：缺省请不传（自动继承组织血缘），显式指定请传非空组织 ID'))
+      if (!ctx.iam.orgs().get(trimmed)) throw new Error(t('组织不存在：{id}', { id: trimmed }))
+      return trimmed
+    }
+    return [principalOrgId(exchange), ...lineage].find((item) => item) ?? hub.rootOrgId() ?? ''
+  }
+
   // -- 总览 / 健康（R9） ------------------------------------------------------
   // 设计适配（2026-10-14）：增量并入工作台驾驶舱聚合（insight/kpis）——既有字段原样保留，
   // 前端旧消费方（exec 页/tools）不受影响；cockpit() 为只读查询方法。
   guarded('GET', '/api/exec/overview', 'exec.read', () => ({ ...hub.overview(), ...hub.cockpit() }))
 
   // -- 目标（R8） ---------------------------------------------------------------
-  guarded('GET', '/api/exec/goals', 'exec.read', () => ({ goals: hub.goals().all() }))
+  guarded('GET', '/api/exec/goals', 'exec.read', (exchange) => {
+    // #16：?orgId= 过滤（组织范围看板/成本归集的数据面）
+    const orgId = exchange.query.get('orgId') ?? ''
+    return { goals: hub.goals().all().filter((item) => !orgId || item.orgId === orgId) }
+  })
 
   guarded('POST', '/api/exec/goals', 'exec.write', (exchange) => {
     const input = body<{ orgId?: string; title: string; description?: string; metric?: string; metricBaseline?: number; metricTarget?: number; metricUnit?: string; ownerUserId?: string; parentGoalId?: string; periodStart?: string; periodEnd?: string }>(exchange)
-    const created = hub.createGoal({ ...input })
+    const created = hub.createGoal({ ...input, orgId: resolveOrgId(exchange, input.orgId) })
     changeLog(exchange, 'exec.goal.create', created.title)
     return created
   })
@@ -1604,20 +1651,25 @@ export function apply(ctx: Context) {
   // -- 项目（E4） -----------------------------------------------------------------
   guarded('GET', '/api/exec/projects', 'exec.read', (exchange) => {
     const issues = hub.issues().all()
+    // #16：?orgId= 过滤
+    const orgId = exchange.query.get('orgId') ?? ''
     return {
-      projects: hub.projects().all().map((project) => {
-        const projectIssues = issues.filter((item) => item.projectId === project.id)
-        return {
-          ...project,
-          issueProgress: { done: projectIssues.filter((item) => item.status === 'done').length, total: projectIssues.length },
-        }
-      }),
+      projects: hub.projects().all()
+        .filter((project) => !orgId || project.orgId === orgId)
+        .map((project) => {
+          const projectIssues = issues.filter((item) => item.projectId === project.id)
+          return {
+            ...project,
+            issueProgress: { done: projectIssues.filter((item) => item.status === 'done').length, total: projectIssues.length },
+          }
+        }),
     }
   })
 
   guarded('POST', '/api/exec/projects', 'exec.write', (exchange) => {
     const input = body<{ orgId?: string; goalId?: string; name: string; description?: string; repos?: string[]; ownerUserId?: string }>(exchange)
-    const created = hub.createProject(input)
+    const goal = input.goalId ? hub.goals().get(input.goalId) : undefined
+    const created = hub.createProject({ ...input, orgId: resolveOrgId(exchange, input.orgId, [goal?.orgId]) })
     changeLog(exchange, 'exec.project.create', created.name)
     return created
   })
@@ -1640,13 +1692,15 @@ export function apply(ctx: Context) {
     const status = exchange.query.get('status') ?? ''
     const agentId = exchange.query.get('agentId') ?? ''
     const projectId = exchange.query.get('projectId') ?? ''
+    const orgId = exchange.query.get('orgId') ?? '' // #16：组织范围过滤
     const agents = ctx.resourceCore.list('agent')
     const projects = hub.projects().all()
     return {
       issues: hub.issues().all()
         .filter((item) => (!status || item.status === status)
           && (!agentId || item.assigneeAgentId === agentId)
-          && (!projectId || item.projectId === projectId))
+          && (!projectId || item.projectId === projectId)
+          && (!orgId || item.orgId === orgId))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .map((item) => ({
           ...item,
@@ -1658,7 +1712,13 @@ export function apply(ctx: Context) {
 
   guarded('POST', '/api/exec/issues', 'exec.write', (exchange) => {
     const input = body<{ orgId?: string; projectId?: string; parentId?: string; blockerIds?: string[]; title: string; detail?: string; assigneeAgentId?: string; assigneeUserId?: string; priority?: IssuePriority; dueAt?: string }>(exchange)
-    const created = hub.createIssue({ ...input, createdBy: actorOf(exchange) })
+    const project = input.projectId ? hub.projects().get(input.projectId) : undefined
+    const assignee = input.assigneeAgentId ? ctx.resourceCore.collection('agent').get(input.assigneeAgentId) : undefined
+    const created = hub.createIssue({
+      ...input,
+      orgId: resolveOrgId(exchange, input.orgId, [project?.orgId, assignee?.orgId]),
+      createdBy: actorOf(exchange),
+    })
     changeLog(exchange, 'exec.issue.create', created.title, `priority=${created.priority}${created.assigneeAgentId ? ' 已派发唤醒' : ''}`)
     return created
   })
@@ -2043,8 +2103,39 @@ export function apply(ctx: Context) {
     }))
   }
 
+  // -- 存量迁移（#16：空 orgId 归根组织，记审计，幂等） --------------------------------
+  migrateEmptyExecOrgId(ctx, hub)
+
   // -- 演示种子（G3：DEMO_SEED 下制造业三部门示例；空库幂等） --------------------------
   seedExecHub(ctx, hub)
+}
+
+/**
+ * #16（2026-10-29）存量迁移：Goal/Project/Issue 的空 orgId 记录归入平台根组织并留审计。
+ * 幂等（只处理空串归属）；组织树未播种时跳过（下次启动补齐）——「空串 = 血缘断链」从此不可再入。
+ */
+function migrateEmptyExecOrgId(ctx: Context, hub: ExecutionHubService): void {
+  const rootOrgId = hub.rootOrgId()
+  if (!rootOrgId) return
+  let migrated = 0
+  const samples: string[] = []
+  for (const [collection, kind] of [[hub.goals(), 'goal'], [hub.projects(), 'project'], [hub.issues(), 'issue']] as const) {
+    for (const record of collection.all().filter((item) => !item.orgId)) {
+      collection.update(record.id, { orgId: rootOrgId })
+      migrated++
+      if (samples.length < 5) samples.push(`${kind}:${record.id}`)
+    }
+  }
+  if (migrated === 0) return
+  try {
+    ctx.audit?.record({
+      type: 'change', actorType: 'system', actorId: 'exec-hub', actorName: t('执行中枢'),
+      action: 'exec.orgid.migrate', resourceType: 'exec', resourceId: rootOrgId,
+      resourceName: t('平台根组织'), result: 'ok',
+      detail: t('存量空 orgId 归根组织（#16）：{count} 条，样例 {samples}', { count: migrated, samples: samples.join(', ') }),
+    })
+  } catch { /* 审计面独立降级 */ }
+  ctx.logger('exec-hub').info(`存量 exec 记录空 orgId 已归根组织（#16）：${migrated} 条（${samples.join(', ')}${samples.length < migrated ? ' 等' : ''}）`)
 }
 
 declare module '@deepseek-ai/cordis' {

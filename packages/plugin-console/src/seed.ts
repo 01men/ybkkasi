@@ -378,11 +378,11 @@ async function seedDemo(ctx: Context): Promise<void> {
 
   // -- 模型路由台账（先于 Agent 注册：attrs.model 校验以模型目录为单一事实源，issue #8） ------
   // 演示形态 offline 待接入——诚实降级不伪装可调用，但内部采购成本参考费率照配（成本穿透口径）；
-  // upsertModel 同时播种价格簿 model:<slug>，计量事件才有计价规则
-  ctx.modelGateway.upsertModel({ slug: 'deepseek-chat', displayName: 'DeepSeek Chat（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 8, status: 'offline' })
-  ctx.modelGateway.upsertModel({ slug: 'qwen-plus', displayName: 'Qwen Plus（待接入）', provider: 'qwen', endpoint: '', apiKey: '', costCentsPerKTokens: 12, status: 'offline' })
-  ctx.modelGateway.upsertModel({ slug: 'deepseek-reasoner', displayName: 'DeepSeek Reasoner（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 16, status: 'offline' })
-  ctx.modelGateway.upsertModel({ slug: 'deepseek-coder', displayName: 'DeepSeek Coder（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 8, status: 'offline' })
+  // upsertModel 同时播种价格簿 model:<slug> 与 model:<slug>:input（#14 双米计价），计量事件才有计价规则
+  ctx.modelGateway.upsertModel({ slug: 'deepseek-chat', displayName: 'DeepSeek Chat（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 8, inputCostCentsPerKTokens: 2, status: 'offline' })
+  ctx.modelGateway.upsertModel({ slug: 'qwen-plus', displayName: 'Qwen Plus（待接入）', provider: 'qwen', endpoint: '', apiKey: '', costCentsPerKTokens: 12, inputCostCentsPerKTokens: 3, status: 'offline' })
+  ctx.modelGateway.upsertModel({ slug: 'deepseek-reasoner', displayName: 'DeepSeek Reasoner（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 16, inputCostCentsPerKTokens: 4, status: 'offline' })
+  ctx.modelGateway.upsertModel({ slug: 'deepseek-coder', displayName: 'DeepSeek Coder（待接入）', provider: 'deepseek', endpoint: '', apiKey: '', costCentsPerKTokens: 8, inputCostCentsPerKTokens: 2, status: 'offline' })
 
   // -- Agent --------------------------------------------------------------
   const mkAgent = (input: Parameters<typeof ctx.agentRegistry.register>[0]) => {

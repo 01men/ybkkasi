@@ -54,6 +54,19 @@ export interface UsageMeter {
   unit: string
 }
 
+/**
+ * 组合计价行（#14，2026-10-29，additive-only）：一次事件按多个计量键分别计价再求和
+ * （模型 token 双米计价：input_tokens × 输入费率 + output_tokens × 输出费率）。
+ * 仅平台内部可信生产方（modelgw）使用；费率仍取自价格簿（modelgw 在调用时点读取），
+ * 快照 rate.line_items 原样留痕，对账/审计可复算。
+ */
+export interface UsageCostLineItem {
+  meter_key: string
+  value: number
+  cost_cents_per_unit: number
+  units_per_step: number
+}
+
 /** 价格快照（计费时点冻结，历史可复算）。 */
 export interface UsagePricingSnapshot {
   currency: string
@@ -61,8 +74,13 @@ export interface UsagePricingSnapshot {
   charge_cents: number
   /** 本事件平台成本（口径：L1 采购成本）。 */
   cost_cents: number
-  /** 计价明细快照（费率 + 计量键），分账/审计复算依据。 */
-  rate: { pattern: string; meter_key: string; list_cents_per_unit: number; cost_cents_per_unit: number; units_per_step: number; tax_rate: number; nonbillable?: boolean }
+  /**
+   * 成本语义标注（#14 additive）：'not_priced' = 费率未配置/全零费率导致的 0——
+   * 「未知」不与「真零成本」混读；缺省 = priced（含费率非零但量小取整为 0 的诚实零）。
+   */
+  cost_status?: 'priced' | 'not_priced'
+  /** 计价明细快照（费率 + 计量键），分账/审计复算依据；组合计价行 additive（#14）。 */
+  rate: { pattern: string; meter_key: string; list_cents_per_unit: number; cost_cents_per_unit: number; units_per_step: number; tax_rate: number; nonbillable?: boolean; line_items?: UsageCostLineItem[] }
 }
 
 /** usage.recorded v1 事件（只追加，禁改版；扩展仅允许新增可选字段）。 */
@@ -110,6 +128,12 @@ export interface UsageRecordInput {
    * 事件按 charge_cents=0 + rate.nonbillable=true 入账（反馈/知识等观测事件不污染计费口径）。
    */
   nonbillable?: boolean
+  /**
+   * 组合计价行（#14 additive，可选）：提供时事件成本 = 各行 (value/step)×rate 之和——
+   * 模型 token 双米计价（input/output 分别计价）的唯一入口；费率由生产方从价格簿读取后传入，
+   * 快照 rate.line_items 原样留痕。缺省走价格簿单米计价（历史行为不变）。
+   */
+  costLineItems?: UsageCostLineItem[]
 }
 
 /**
@@ -273,7 +297,24 @@ export class UsageService extends Service {
       throw new Error(t('非计费事件只允许命中零费率价格簿规则：资源 {resource} 命中 {pattern}（非零费率），请去掉 nonbillable 或先调零费率', { resource: input.resource, pattern: price.pattern }))
     }
     // 零费率规则产出的即非计费事件（统一零价快照口径）：charge_cents=0 + rate.nonbillable=true
-    const nonbillable = input.nonbillable === true || (price.list_cents_per_unit === 0 && price.cost_cents_per_unit === 0)
+    // #14：组合计价行在场时，非计费判定看各行费率（价格簿单米口径只是主键示意，不再独裁）
+    const lineItems = (input.costLineItems ?? []).map((item) => {
+      for (const [field, value, min] of [
+        ['value', item.value, 0], ['cost_cents_per_unit', item.cost_cents_per_unit, 0], ['units_per_step', item.units_per_step, 1],
+      ] as Array<[string, number, number]>) {
+        if (!Number.isFinite(value) || value < min) {
+          throw new Error(t('组合计价行字段 {field} 必须为有限数值且 ≥{min}，收到：{value}', { field, min, value: String(value) }))
+        }
+      }
+      if (!input.meters.some((meter) => meter.key === item.meter_key)) {
+        throw new Error(t('组合计价行引用了事件未携带的计量键：{key}（事件携带 [{received}]）', { key: item.meter_key, received: input.meters.map((m) => m.key).join(', ') }))
+      }
+      return { ...item }
+    })
+    const nonbillable = input.nonbillable === true
+      || (lineItems.length > 0
+        ? price.list_cents_per_unit === 0 && lineItems.every((item) => item.cost_cents_per_unit === 0)
+        : price.list_cents_per_unit === 0 && price.cost_cents_per_unit === 0)
     // 硬校验：事件必须携带价格簿计价键（宁可拒绝不可静默 0 计费——
     // 价格簿对调用方不可见（usage.admin），错误信息直接携带期望键供自纠）
     if (!input.meters.some((item) => item.key === price.meter_key)) {
@@ -295,7 +336,10 @@ export class UsageService extends Service {
       ? price.units_per_step
       : this.warnDirtyData(`pricebook:${price.pattern}:step`, t('价格簿 {pattern} 的 units_per_step={value} 为非法数值（须为正数），本次计价按 0 处理；请尽快修正价格簿（REL-11）', { pattern: price.pattern, value: String(price.units_per_step) }))
     const charge = step > 0 ? Math.round((meter.value / step) * listRate) : 0
-    const cost = step > 0 ? Math.round((meter.value / step) * costRate) : 0
+    // #14：组合计价行在场 → 成本 = Σ 行计价（input/output 双米）；否则走价格簿单米（历史口径不变）
+    const cost = lineItems.length > 0
+      ? lineItems.reduce((sum, item) => sum + Math.round((item.value / item.units_per_step) * item.cost_cents_per_unit), 0)
+      : (step > 0 ? Math.round((meter.value / step) * costRate) : 0)
     const event: UsageEvent = {
       schema: USAGE_SCHEMA,
       schema_version: USAGE_SCHEMA_VERSION,
@@ -317,6 +361,8 @@ export class UsageService extends Service {
         currency: price.currency,
         charge_cents: charge,
         cost_cents: cost,
+        // #14：not_priced 标注「费率未配置/全零导致的 0」——下游不得把未知读成零成本
+        ...(cost === 0 && nonbillable ? { cost_status: 'not_priced' as const } : {}),
         rate: {
           pattern: price.pattern,
           meter_key: price.meter_key,
@@ -326,6 +372,7 @@ export class UsageService extends Service {
           units_per_step: step,
           tax_rate: price.tax_rate,
           ...(nonbillable ? { nonbillable: true } : {}),
+          ...(lineItems.length > 0 ? { line_items: lineItems } : {}),
         },
       },
     }
@@ -612,13 +659,16 @@ export class UsageService extends Service {
     // 裸关联子查询只对组内某一行求值，tokens 因此只统计到每组任意一条事件（J4 报表小 176 倍）。
     // SUM((SELECT …)) 语义 = 逐行求子查询值再求和，与 json_each JOIN 口径一致且三维自洽。
     const tokensExpr = "COALESCE(SUM((SELECT SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)) FROM json_each(e.meters_json) m WHERE json_extract(m.value, '$.key') LIKE '%tokens%')), 0)"
-    const byResource = this.ctx.txnStore.sql<{ resource: string; events: number; tokens: number; cost_cents: number; charge_cents: number }>(
+    // #14：not_priced = cost 为 0 且（零费率快照 或 显式 not_priced 标注）——「未知」与「真零成本」读侧分开
+    const notPricedExpr = "COALESCE(SUM(CASE WHEN CAST(json_extract(e.pricing_json, '$.cost_cents') AS INTEGER) = 0 AND (json_extract(e.pricing_json, '$.rate.nonbillable') = 1 OR json_extract(e.pricing_json, '$.cost_status') = 'not_priced') THEN 1 ELSE 0 END), 0)"
+    const byResource = this.ctx.txnStore.sql<{ resource: string; events: number; tokens: number; cost_cents: number; charge_cents: number; not_priced_events: number }>(
       `SELECT e.resource AS resource, COUNT(*) AS events, ${tokensExpr} AS tokens,` +
       " COALESCE(SUM(CAST(json_extract(e.pricing_json, '$.cost_cents') AS INTEGER)), 0) AS cost_cents," +
-      " COALESCE(SUM(CAST(json_extract(e.pricing_json, '$.charge_cents') AS INTEGER)), 0) AS charge_cents" +
+      " COALESCE(SUM(CAST(json_extract(e.pricing_json, '$.charge_cents') AS INTEGER)), 0) AS charge_cents," +
+      ` ${notPricedExpr} AS not_priced_events` +
       ` FROM usage_events e${where} GROUP BY e.resource ORDER BY cost_cents DESC, events DESC`,
       params,
-    ).map((row) => ({ resource: row.resource, events: Number(row.events), tokens: Number(row.tokens), cost_cents: Number(row.cost_cents), charge_cents: Number(row.charge_cents) }))
+    ).map((row) => ({ resource: row.resource, events: Number(row.events), tokens: Number(row.tokens), cost_cents: Number(row.cost_cents), charge_cents: Number(row.charge_cents), not_priced_events: Number(row.not_priced_events) }))
     const tokenSplit = (key: string): number => Number((this.ctx.txnStore.sql<{ n: number }>(
       "SELECT COALESCE(SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)), 0) AS n FROM usage_events e, json_each(e.meters_json) m" +
       ` WHERE json_extract(m.value, '$.key') = ?${whereAnd}`,
@@ -632,6 +682,8 @@ export class UsageService extends Service {
       charge_cents: byResource.reduce((sum, row) => sum + row.charge_cents, 0),
       input_tokens: tokenSplit('input_tokens'),
       output_tokens: tokenSplit('output_tokens'),
+      // #14：成本覆盖率（priced = events − not_priced），门禁据此判断「成本是否可归集」
+      not_priced_events: byResource.reduce((sum, row) => sum + row.not_priced_events, 0),
       byResource,
     }
   }
@@ -999,6 +1051,18 @@ export class UsageService extends Service {
     return this.priceBook().insert({ id: newId('rate'), ...entry })
   }
 
+  /**
+   * 价格簿只读查询（#14，供可信生产方在调用时点取费率组装组合计价行；未登记返回 undefined 不抛）。
+   * 匹配口径与 record() 内部 priceOf 一致：精确 → 前缀通配。
+   */
+  priceOfResource(resource: string): PriceBookEntry | undefined {
+    try {
+      return this.priceOf(resource)
+    } catch {
+      return undefined
+    }
+  }
+
   private priceOf(resource: string): PriceBookEntry {
     const book = this.priceBook().all()
     const exact = book.find((item) => item.pattern === resource)
@@ -1222,7 +1286,12 @@ export interface UsageSummary {
   charge_cents: number
   input_tokens: number
   output_tokens: number
-  byResource: Array<{ resource: string; events: number; tokens: number; cost_cents: number; charge_cents: number }>
+  /**
+   * 未定价事件数（#14 additive）：cost_cents=0 且由「费率未配置/全零费率」导致——
+   * 覆盖率口径：priced_events = events − not_priced_events；0 成本 ≠ 无消耗。
+   */
+  not_priced_events: number
+  byResource: Array<{ resource: string; events: number; tokens: number; cost_cents: number; charge_cents: number; not_priced_events: number }>
 }
 
 interface ReportRow {

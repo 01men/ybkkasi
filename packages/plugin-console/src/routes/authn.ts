@@ -196,16 +196,16 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
   })
 
   // OIDC 客户端管理（模式 B：外部应用以平台为 IdP；管理员全局兜底面）
-  guarded('GET', '/api/authn/oidc/clients', 'authn.oidc.read', () => ({
+  guarded('GET', '/api/authn/oidc/clients', 'authn.oidc.read', (exchange) => ({
     clients: ctx.oidc.listClients().map((client) => ({
       ...client,
       status: client.status ?? 'active',
       clientType: client.clientType ?? 'confidential',
       discovery: {
-        issuer: ctx.oidc.issuer(),
-        authorization_endpoint: `${ctx.oidc.issuer()}/oauth/authorize`,
-        token_endpoint: `${ctx.oidc.issuer()}/oauth/token`,
-        userinfo_endpoint: `${ctx.oidc.issuer()}/oauth/userinfo`,
+        issuer: ctx.oidc.issuer(exchange),
+        authorization_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/authorize`,
+        token_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/token`,
+        userinfo_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/userinfo`,
       },
     })),
   }))
@@ -259,5 +259,5 @@ export function registerAuthnRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
     return { rotated: true, kid: result.kid, graceHours: result.graceHours }
   })
 
-  guarded('GET', '/api/authn/oidc/discovery', 'authn.principal.read', () => ctx.oidc.discovery())
+  guarded('GET', '/api/authn/oidc/discovery', 'authn.principal.read', (exchange) => ctx.oidc.discovery(exchange))
 }

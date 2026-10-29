@@ -95,10 +95,10 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
           clientType: ssoSafe.clientType ?? 'confidential',
           refAppName: ctx.resourceCore.get('app', ssoSafe.refId ?? '')?.name ?? undefined,
           discovery: {
-            issuer: ctx.oidc.issuer(),
-            authorization_endpoint: `${ctx.oidc.issuer()}/oauth/authorize`,
-            token_endpoint: `${ctx.oidc.issuer()}/oauth/token`,
-            userinfo_endpoint: `${ctx.oidc.issuer()}/oauth/userinfo`,
+            issuer: ctx.oidc.issuer(exchange),
+            authorization_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/authorize`,
+            token_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/token`,
+            userinfo_endpoint: `${ctx.oidc.issuer(exchange)}/oauth/userinfo`,
           },
         }
         : null,

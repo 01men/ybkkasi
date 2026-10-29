@@ -672,6 +672,13 @@ try {
   section('平台健康与登录')
   const health = await api('GET', '/api/health')
   check('健康检查', health.ok)
+  // #13（2026-10-29）：健康端点暴露面板契约——版本 + 能力清单（实时推导）+ 已配置部门，
+  // 前台（DeptAI-UI-DSH）按此对齐宿主支持面，版本组合偏差 fail-visible 而非静默 404
+  check('健康端点暴露面板契约（contract.panel.version/capabilities/depts）',
+    health.ok && Number.isFinite(health.data.contract?.panel?.version)
+    && Array.isArray(health.data.contract?.panel?.capabilities) && health.data.contract.panel.capabilities.length > 0
+    && Array.isArray(health.data.contract?.panel?.depts),
+    JSON.stringify(health.data?.contract))
 
   const noAuth = await api('GET', '/api/overview')
   check('无令牌访问被拒绝（401）', noAuth.status === 401)
@@ -1890,6 +1897,24 @@ try {
   check('模型网关事件零价快照（charge=0 / cost=8）', modelGwEvent.ok && modelGwEvent.data.items[0].pricing.charge_cents === 0 && modelGwEvent.data.items[0].pricing.cost_cents === 8, JSON.stringify(modelGwEvent.data?.items?.[0]?.pricing))
   const billingRechargeGone = await api('POST', '/api/billing/recharge', { token: admin, body: {} })
   check('充值端点已随 M0-2 下线（404）', billingRechargeGone.status === 404)
+
+  // #14（2026-10-29）：input/output 双米组合计价——模型目录登记输入费率，usage 写入时按行计价求和
+  const modelRegIo = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'ds-stub-io', displayName: '双米计价验证', provider: 'deepseek', endpoint: `http://127.0.0.1:${modelPort}/v1`, apiKey: 'stub-key', costCentsPerKTokens: 5, inputCostCentsPerKTokens: 50 } })
+  const modelInvokeIo = await api('POST', '/api/modelgw/invoke', { token: admin, body: { model: 'ds-stub-io', messages: [{ role: 'user', content: '双米计价' }], orgId: tenantOrg.data.id } })
+  check('#14：input/output 组合计价（output 1500×5分/千=8 + input 120×50分/千=6 → 14 分）',
+    modelRegIo.ok && modelInvokeIo.ok && modelInvokeIo.data.costCents === 14, JSON.stringify(modelInvokeIo.data ?? modelInvokeIo.error))
+  const modelIoPricing = (await api('GET', '/api/usage/events?resource=model:ds-stub-io', { token: admin })).data.items[0].pricing
+  check('#14：快照留痕组合计价行（rate.line_items 双行，费率非零取整为 0 仍算 priced）',
+    Array.isArray(modelIoPricing.rate?.line_items) && modelIoPricing.rate.line_items.length === 2 && modelIoPricing.cost_cents === 14,
+    JSON.stringify(modelIoPricing))
+  const summaryNotPriced = await api('GET', '/api/usage/summary?window=today', { token: admin })
+  check('#14：summary 暴露未定价覆盖率（not_priced_events；零费率事件不再与「真零成本」混读）',
+    summaryNotPriced.ok && Number.isFinite(summaryNotPriced.data.not_priced_events),
+    JSON.stringify(summaryNotPriced.data?.not_priced_events))
+  const costRowsCoverage = await api('GET', '/api/audit/cost?groupBy=agent', { token: admin })
+  check('#14：成本报表携带 priced/notPriced 覆盖率（门禁判断「成本是否可归集」）',
+    costRowsCoverage.ok && costRowsCoverage.data.rows.length >= 1 && costRowsCoverage.data.rows.every((row) => Number.isFinite(row.priced) && Number.isFinite(row.notPriced)),
+    JSON.stringify(costRowsCoverage.data?.rows?.[0]))
   modelStub.close()
 
   // ================================================================ 第 6 步：OIDC Provider（浏览器授权流 / 协议合规）
@@ -1905,6 +1930,16 @@ try {
     && Boolean(disco.revocation_endpoint) && Boolean(disco.end_session_endpoint))
   const jwks = jsonBody(await rawReq('GET', '/.well-known/jwks.json'))
   check('JWKS 数组化公钥（kid/kty/n）', Array.isArray(jwks.keys) && jwks.keys[0].kty === 'RSA' && jwks.keys[0].kid.length === 16 && Boolean(jwks.keys[0].n))
+
+  // #15（2026-10-29）：issuer 按请求 Host/X-Forwarded-* 派生（OIDC_ISSUER 显式声明仍最高优先）——
+  // 公网域名反代部署时 discovery/签发/校验自动对齐，远程 SSO 开箱可用（此前恒回落环回地址）
+  const discoForwarded = jsonBody(await rawReq('GET', '/.well-known/openid-configuration', { headers: { host: 'ybkkasi.example', 'x-forwarded-proto': 'https' } }))
+  check('#15：discovery issuer 按请求 Host/X-Forwarded-Proto 派生（公网域名部署语义）',
+    discoForwarded.issuer === 'https://ybkkasi.example' && discoForwarded.authorization_endpoint === 'https://ybkkasi.example/oauth/authorize',
+    JSON.stringify(discoForwarded.issuer))
+  check('#15：同请求面自洽——默认环回请求 issuer 落在本机（discovery/签发/校验同源）',
+    disco.issuer === `http://127.0.0.1:${PORT}`,
+    JSON.stringify(disco.issuer))
 
   const oidcClient = await api('POST', '/api/authn/oidc/clients', { token: admin, body: { name: '外部 CRM 应用', redirectUris: ['https://crm.partner.example/cb'], consentRequired: false } })
   check('登记 OIDC 客户端（secret 一次性返回）', oidcClient.ok && oidcClient.data.clientId.startsWith('oc-') && oidcClient.data.clientSecret.startsWith('ocs'))
@@ -6878,10 +6913,12 @@ try {
     offBehavior()
 
     // -- OIDC 授权码通道（start 302 → PKCE；callback 坏 state 拒绝） -----------------
+    // #15（2026-10-29）：302 目标按请求 Host 派生 issuer（浏览器实际入口地址 simOrigin + /rq 前缀），
+    // 不再取进程配置的无参 issuer（本段 mountCtx httpServer port=0，无参值不再是合法对外地址）
     const oidcStart = await fetch(`${simOrigin}/auth/oidc/start`, { redirect: 'manual' })
     const oidcLocation = oidcStart.headers.get('location') ?? ''
     check('/auth/oidc/start 302 平台授权页（client_id + PKCE S256 + state）',
-      oidcStart.status === 302 && oidcLocation.startsWith(`${mountCtx.oidc.issuer()}/oauth/authorize`)
+      oidcStart.status === 302 && oidcLocation.startsWith(`${simOrigin}/rq/oauth/authorize`)
       && oidcLocation.includes('client_id=oc-selftest-bridge') && oidcLocation.includes('code_challenge_method=S256') && oidcLocation.includes('state='),
       `${oidcStart.status} ${oidcLocation}`)
     const oidcCallbackBad = await fetch(`${simOrigin}/auth/oidc/callback?code=x&state=bogus`, { redirect: 'manual' })
@@ -7347,6 +7384,20 @@ try {
     check('R8：目标父链成环被拒', exCyclePatch.status === 400 && /成环/.test(exCyclePatch.error?.message ?? ''), JSON.stringify(exCyclePatch.error ?? {}).slice(0, 120))
     const exProject = await api('POST', '/api/exec/projects', { token: admin, body: { goalId: exChild.data.id, name: '自测项目：视觉质检', repos: ['https://example.com/qc.git'] } })
     check('E4：项目挂目标（repos 落库）', exProject.ok && exProject.data.goalId === exChild.data.id && exProject.data.repos.length === 1)
+
+    // -- #16（2026-10-29）组织血缘：缺省继承 / 显式空串拒绝 / ?orgId= 过滤 ------------------
+    const exOrgId = exGoal.data.orgId
+    check('#16：目标缺省创建必带组织归属（principal→血缘→根组织继承链，不再空串落库）',
+      typeof exOrgId === 'string' && exOrgId !== '', JSON.stringify(exOrgId))
+    const exEmptyOrg = await api('POST', '/api/exec/goals', { token: admin, body: { title: '自测目标：空组织应拒绝', orgId: '' } })
+    check('#16：显式空 orgId 一律 400（空串不再是合法归属）', exEmptyOrg.status === 400, JSON.stringify(exEmptyOrg.error ?? {}).slice(0, 120))
+    const exIssueNoOrg = await api('POST', '/api/exec/issues', { token: admin, body: { title: '自测任务：无项目无指派（组织兜底）', priority: 'P3' } })
+    check('#16：裸任务缺省创建兜底组织归属', exIssueNoOrg.ok && typeof exIssueNoOrg.data.orgId === 'string' && exIssueNoOrg.data.orgId !== '', JSON.stringify(exIssueNoOrg.data?.orgId))
+    const exIssuesByOrg = await api('GET', `/api/exec/issues?orgId=${encodeURIComponent(exIssueNoOrg.data.orgId)}`, { token: admin })
+    check('#16：任务列表 ?orgId= 过滤命中（组织范围看板数据面）',
+      exIssuesByOrg.ok && exIssuesByOrg.data.issues.some((item) => item.id === exIssueNoOrg.data.id))
+    const exGoalsByOrg = await api('GET', `/api/exec/goals?orgId=${encodeURIComponent(exOrgId)}`, { token: admin })
+    check('#16：目标列表 ?orgId= 过滤命中', exGoalsByOrg.ok && exGoalsByOrg.data.goals.some((item) => item.id === exGoal.data.id))
 
     // -- E2/E3 任务执行锁 + 唤醒派发 --------------------------------------------
     const exAgents = (await api('GET', '/api/agents', { token: admin })).data.agents
