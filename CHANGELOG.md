@@ -3,6 +3,16 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · 协作主通道组织兜底与计量 fail-fast（issue #17，2026-10-29）
+
+- **面板三处模型调用组织兜底链**（频道点名 / 工具面 askAgent / 技能直调）：调用方用户组织 →
+  部门绑定组织（R11）→ 平台根组织，`orgSource` 随审计留痕——机器主体 / 外部工具通道没有用户
+  归属时不再拿空串打到计量校验上。
+- **modelgw fail-fast**：`invokeTracked` 入口先校验 `orgId`，空串在调用上游**之前**拒绝——
+  杜绝「模型已应答、token 已消耗，计量落账才抛『usage 事件 org 必填』」的先花钱后报错
+  （该形态同时导致该次成本未入账，污染 #14 的成本口径）。
+- selftest：modelgw 空 org 拒绝、机器主体点名 Agent 成功、panel:* 计量入账。
+
 ## [Unreleased] · README 整改与 CLI 预演安全（PR #12 合并，2026-10-29）
 
 - **README 重写**：突出数字员工协作、可信治理、真实界面与最短接入路径，移除重复介绍、
