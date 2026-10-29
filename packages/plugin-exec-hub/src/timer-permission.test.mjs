@@ -22,7 +22,7 @@ function fixture(scopes, total = 0, wakePatch = {}) {
   const hub = Object.create(ExecutionHubService.prototype)
   const wake = { id: 'w', agentId: 'a', trigger: 'routine', triggerDetail: 'heartbeat:30m', ...wakePatch }
   const agent = { id: 'a', name: '评价官', status: 'online', attrs: { heartbeatIntervalMinutes: 30 } }
-  let heartbeat
+  let heartbeat, heartbeatDetail
   const collection = { get: () => wake, update: (_id, patch) => Object.assign(wake, patch) }
   hub.wakes = () => collection
   hub.issues = () => ({ get: () => wake.issueId ? { id: wake.issueId, title: '任务', status: 'todo' } : undefined })
@@ -31,10 +31,11 @@ function fixture(scopes, total = 0, wakePatch = {}) {
   hub.checkAgentBudget = () => ({ blocked: false })
   hub.agentScopes = () => scopes
   hub.collectTodos = () => ({ total })
-  hub.recordHeartbeat = (_agent, outcome) => { heartbeat = outcome }
+  hub.recordHeartbeat = (_agent, outcome, detail) => { heartbeat = outcome; heartbeatDetail = detail }
+  hub.createRun = () => { assert.fail('只读主体不得派发执行 run') }
   hub.auditSafe = () => {}
   Object.defineProperty(hub, 'ctx', { value: { platformBus: { emit() {} } }, configurable: true })
-  return { hub, wake, getHeartbeat: () => heartbeat }
+  return { hub, wake, getHeartbeat: () => heartbeat, getHeartbeatDetail: () => heartbeatDetail }
 }
 
 test('只读心跳无待办时正常结束；有待办时不得创建 run #7', () => {
@@ -46,14 +47,17 @@ test('只读心跳无待办时正常结束；有待办时不得创建 run #7', (
   assert.equal(pending.hub.processWake('w'), 'skipped')
   assert.equal(pending.wake.status, 'done')
   assert.equal(pending.getHeartbeat(), 'skipped_permission')
-  assert.match(pending.wake.lastError, /未派发/)
+  assert.match(pending.getHeartbeatDetail(), /未派发/)
 })
 
 test('身份未纳管或任务派发仍须写权限 #7', () => {
-  for (const item of [fixture(null), fixture(['exec.read'], 0, { issueId: 'i' }), fixture(['exec.read'], 0, { trigger: 'api' })]) {
+  for (const item of [fixture(null), fixture(['exec.read'], 0, { issueId: 'i' })]) {
     assert.equal(item.hub.processWake('w'), 'failed')
     assert.equal(item.wake.status, 'failed')
   }
+  const noTodos = fixture(['exec.read'], 0, { trigger: 'api' })
+  assert.equal(noTodos.hub.processWake('w'), 'skipped')
+  assert.equal(noTodos.wake.status, 'done')
 })
 
 test('权限拒绝记录不应使健康状态变绿 #7', () => {

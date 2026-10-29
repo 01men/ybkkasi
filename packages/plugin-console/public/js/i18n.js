@@ -181,10 +181,17 @@ function buildSelect(className) {
 
 /** 顶栏挂载（每 400ms 重试至多 25 次，覆盖 SPA 异步渲染；失败退化右下角浮球）。 */
 function mountSwitcher(attempt = 0) {
-  if (document.getElementById('rq-lang-switcher')) return
+  const host = document.querySelector('.topbar-right') || document.querySelector('.ice-lang-host')
+  const existing = document.getElementById('rq-lang-switcher')
+  if (existing) {
+    if (host && existing.parentElement !== host) {
+      existing.className = 'rq-lang-select'
+      host.insertBefore(existing, host.firstChild)
+    }
+    return
+  }
   const select = buildSelect('rq-lang-select')
   select.id = 'rq-lang-switcher'
-  const host = document.querySelector('.topbar-right')
   if (host) {
     host.insertBefore(select, host.firstChild)
     return
@@ -214,7 +221,7 @@ async function boot() {
   else document.addEventListener('DOMContentLoaded', mount, { once: true })
 }
 
-const api = { t, get lang() { return state.locale }, setLang(value) { try { localStorage.setItem(PREF_KEY, value) } catch {} window.location.reload() }, supported: SUPPORTED, names: NATIVE_NAMES }
+const api = { t, get lang() { return state.locale }, setLang(value) { try { localStorage.setItem(PREF_KEY, value) } catch {} window.location.reload() }, mountSwitcher() { mountSwitcher(25) }, supported: SUPPORTED, names: NATIVE_NAMES }
 window.rqI18n = api
 boot()
 export default api
