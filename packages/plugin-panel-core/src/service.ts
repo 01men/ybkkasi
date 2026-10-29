@@ -883,9 +883,10 @@ export class PanelService extends Service {
   ): Promise<{ ok: true; reply: string; model: string; skill: { name: string; version: string }; skillLoad?: PanelSkillLoad } | { ok: false; reason: string }> {
     const name = skillName.trim()
     if (!name) return { ok: false, reason: t('技能名为空（用 /技能名 或 panel_skill_invoke 点名）') }
-    // #17：组织兜底链（caller→根组织；技能直调无部门上下文）
+    // #17：根组织只用于计量归属；没有用户组织的机器主体不能因此获得根组织技能可见性。
     const { orgId } = this.resolveOrgId(options.userId)
-    const invokeable = this.listInvokeableSkills(orgId || undefined)
+    const viewerOrg = this.callerOrgId(options.userId)
+    const invokeable = this.listInvokeableSkills(viewerOrg || undefined)
     // 按名全名匹配优先，slug 兜底（技能名常含中文与空格，通用 regex 兜不了）
     const skill = invokeable.find((item) => item.name === name) ?? invokeable.find((item) => item.slug === name)
     if (!skill) {

@@ -58,7 +58,7 @@ test('演示态真实接口、主题切换和工作台导航', async () => {
   await waitFor(() => document.querySelector('#ui-theme-switcher') && document.querySelector('#dash-tabs button'), '工作台首屏')
   assert.match(document.querySelector('#demo-banner').textContent, /演示模式.*只读/)
   assert.equal(document.querySelectorAll('#dash-tabs button').length, 5)
-  assert.equal(document.querySelector('#ui-theme-switcher').options.length, 4)
+  assert.equal(document.querySelector('#ui-theme-switcher').options.length, 5)
 
   const changeTheme = (name) => { const el = document.querySelector('#ui-theme-switcher'); el.value = name; el.dispatchEvent(new window.Event('change', { bubbles: true })) }
   changeTheme('clear')
@@ -77,6 +77,22 @@ test('演示态真实接口、主题切换和工作台导航', async () => {
   changeTheme('night')
   await waitFor(() => document.querySelector('.lens-night'), '治理观察')
   assert.equal(localStorage.getItem('ybk_console_ui_theme'), 'night')
+
+  changeTheme('crystal')
+  await waitFor(() => document.querySelector('.lens-crystal #lens-status-chart svg'), '冰晶真实任务图')
+  assert.ok(document.querySelector('.crystal-shortcuts a[href="#/mcp"]'))
+  assert.ok(document.querySelector('.crystal-shortcuts a[href="#/connectors"]'))
+  location.hash = '#/home'
+  await waitFor(() => document.querySelector('.ice-home'), '公共冰晶首页')
+  assert.ok(document.querySelector('.ice-lang-host #rq-lang-switcher'), '首页语言切换器在导航中')
+  document.querySelector('[data-capability="2"]').click()
+  assert.match(document.querySelector('#ice-cap-panel').textContent, /模型/)
+  document.querySelector('[data-enter-crystal]').click()
+  await waitFor(() => document.querySelector('.lens-crystal'), '首页进入冰晶工作台')
+  assert.ok(document.querySelector('.topbar-right #rq-lang-switcher'), '返回工作台后语言切换器仍可用')
+  assert.equal(document.querySelector('#ui-theme-switcher').value, 'crystal')
+  changeTheme('night')
+  await waitFor(() => document.querySelector('.lens-night'), '切回原治理主题')
 
   const actions = [...document.querySelectorAll('#dash-tabs button')].find((el) => el.textContent.includes('行动项目'))
   actions.click()

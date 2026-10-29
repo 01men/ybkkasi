@@ -13,9 +13,10 @@ localStorage.setItem('rq_lang', 'zh-CN')
 const overview = { agents: { total: 1 }, approvals: { pending: 2 }, costTrend: [{ key: '2026-10-01', llmTokens: 12 }, { key: '2026-10-02', llmTokens: 30 }] }
 const exec = { goals: 2, projects: 1, issuesByStatus: { todo: 1, done: 1 }, kpis: { callsToday: 3, tokensToday: 42, risk: { critical: 1, warning: 2 } }, insight: { text: '系统运行正常' } }
 let calls = []
-let allowed = ['console.read', 'exec.read', 'agent.read', 'audit.read', 'approval.read']
+let allowed = ['console.read', 'exec.read', 'agent.read', 'audit.read', 'approval.read', 'workforce.read']
 const payloads = {
   '/api/exec/overview': exec,
+  '/api/workforce/overview': { employees: 3 },
   '/api/exec/goals': { goals: [{ id: 'g1', title: '目标一' }, { id: 'g2', title: '子目标', parentGoalId: 'g1' }] },
   '/api/exec/projects': { projects: [{ id: 'p1', name: '项目一', goalId: 'g2' }] },
   '/api/exec/issues': { issues: [{ id: 'i1', title: '<img src=x onerror=alert(1)>', projectId: 'p1', assigneeAgentId: 'a1', status: 'todo' }] },
@@ -47,13 +48,13 @@ const select = (theme) => {
 }
 
 // 合并在一个场景中验证真实切换事件与异步渲染，不依赖实现私有函数。
-test('四套主题切换、保留偏好、真实关联、图表、权限与降级', async () => {
+test('五套主题切换、保留偏好、真实关联、图表、权限与降级', async () => {
   document.documentElement.dataset.platform = 'strategy'
   replayUiTheme()
   assert.equal(document.documentElement.dataset.uiTheme, 'classic')
   mountThemeSwitcher(document.querySelector('#switch'))
   const picker = document.querySelector('#ui-theme-switcher')
-  assert.equal(picker.options.length, 4)
+  assert.equal(picker.options.length, 5)
   const host = document.querySelector('#content')
   mountThemeLens(host, overview)
   assert.equal(host.textContent, '')
@@ -84,6 +85,15 @@ test('四套主题切换、保留偏好、真实关联、图表、权限与降�
   assert.match(host.querySelector('#lens-trend-chart svg').getAttribute('aria-label'), /10-02: 30/)
   assert.ok(host.querySelector('a[href="#/audit?tab=alerts"]'))
 
+  select('crystal')
+  await waitFor(() => host.querySelector('.lens-crystal #lens-status-chart svg'))
+  assert.match(host.textContent, /让数字员工协同/)
+  assert.equal(host.querySelector('[data-crystal-scene]').dataset.renderer, 'static')
+  assert.equal(localStorage.getItem(UI_THEME_KEY), 'crystal')
+  assert.ok(host.querySelector('a[href="#/home"]'))
+  assert.equal(host.querySelectorAll('.crystal-kpis strong')[1].textContent, '3', '数字员工指标取 workforce 员工档案，不混用 Agent 登记数')
+  assert.equal(host.querySelector('a[href="#/mcp"]'), null, '缺少服务读权限，不显示能力入口')
+
   select('classic')
   assert.equal(host.textContent, '')
   allowed = ['console.read']
@@ -95,6 +105,14 @@ test('四套主题切换、保留偏好、真实关联、图表、权限与降�
   await waitFor(() => host.querySelector('.lens-night'))
   assert.equal(host.querySelector('a[href="#/approvals"]'), null)
   assert.equal(host.querySelector('a[href="#/audit?tab=alerts"]'), null)
+  select('crystal')
+  await waitFor(() => host.querySelector('.lens-crystal'))
+  assert.equal(host.querySelectorAll('.crystal-operation-grid a').length, 0)
+  assert.ok([...host.querySelectorAll('.crystal-kpis strong')].every((el) => el.textContent === '—'), '无权限时不把不可见指标伪装成零')
+  allowed = ['console.read', 'usage.read']
+  select('crystal')
+  await waitFor(() => host.querySelector('.lens-crystal'))
+  assert.equal(host.querySelector('a[href="#/gateway"]'), null, '模型入口必须具备模型和面板读取权限')
   assert.ok(calls.every((c) => c.method === 'GET'))
   select('classic')
 })

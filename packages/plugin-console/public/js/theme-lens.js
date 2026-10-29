@@ -3,10 +3,13 @@ import { api, session } from './api.js'
 import { currentUiTheme } from './theme.js'
 import { esc, fmtNum } from './ui.js'
 import rqI18n from './i18n.js'
+import { icon } from './icons.js'
+import { crystalMarkup, mountCrystalScene } from './crystal-scene.js'
 
 const t = (key, params) => rqI18n.t(key, params)
 let active = null
 let graph = null
+let crystal = null
 let version = 0
 const scripts = new Map()
 
@@ -27,6 +30,7 @@ function loadLibrary(name, relativePath) {
 
 function destroyGraph() {
   if (graph) { graph.destroy(); graph = null }
+  crystal?.destroy(); crystal = null
 }
 
 document.addEventListener('ybk-ui-theme-change', () => {
@@ -52,6 +56,11 @@ async function getExecOverview() {
   try { return await api.get('/api/exec/overview') } catch { return null }
 }
 
+async function getWorkforceOverview() {
+  if (!session.can('workforce.read')) return null
+  try { return await api.get('/api/workforce/overview') } catch { return null }
+}
+
 async function render(state) {
   const run = ++version
   destroyGraph()
@@ -60,11 +69,34 @@ async function render(state) {
   const theme = currentUiTheme()
   if (theme === 'classic') { host.replaceChildren(); return }
   host.innerHTML = `<section class="theme-lens lens-loading" aria-live="polite">${esc(t('正在加载主题视图…'))}</section>`
-  const exec = await getExecOverview()
+  const [exec, workforce] = await Promise.all([getExecOverview(), theme === 'crystal' ? getWorkforceOverview() : null])
   if (run !== version || !host.isConnected) return
   if (theme === 'clear') renderClear(host, overview, exec, run)
   else if (theme === 'graph') await renderGraph(host, overview, exec, run)
+  else if (theme === 'crystal') renderCrystal(host, overview, exec, workforce, run)
   else renderNight(host, overview, exec, run)
+}
+
+function renderCrystal(host, overview, exec, workforce, run) {
+  const label = (key) => esc(t(key))
+  const link = (permission, route, title, glyph) => session.can(permission) ? `<a href="#/${route}"><span aria-hidden="true">${icon(glyph,18)}</span><span>${label(title)}</span><span aria-hidden="true">↗</span></a>` : ''
+  const k = exec?.kpis
+  host.innerHTML = `<section class="theme-lens lens-crystal" aria-label="${label('冰晶协同全景')}">
+    <div class="lens-topline"><span>${label('数字员工 · 企业能力 · 统一治理')}</span><a href="#/home">${label('产品全景')} ↗</a></div>
+    <div class="crystal-overview"><div class="crystal-overview-copy"><span class="lens-eyebrow">CONNECTED INTELLIGENCE</span><h2>${label('让数字员工协同，')}<br><span>${label('让企业能力聚合。')}</span></h2><p>${label('连接目标、行动与治理，让负责人看见进展和需要关注的事项。')}</p><div class="crystal-overview-actions">${link('exec.read','dashboard?tab=actions','查看行动','target')}${link('agent.read','agents','数字员工','users')}</div><small class="crystal-data-note">${label('基于当前账号可见数据')} · ${label('当前快照')}</small></div><div class="crystal-overview-art">${crystalMarkup()}<span class="crystal-art-label">${label('协作生态示意')}</span></div></div>
+    <div class="crystal-kpis">
+      ${metric('目标',exec ? fmtNum(exec.goals??0):'—','已登记目标')}
+      ${metric('数字员工',Number.isFinite(workforce?.employees) ? fmtNum(workforce.employees):'—','已登记数字员工')}
+      ${metric('今日调用',k ? fmtNum(k.callsToday??0):'—','统一计量口径')}
+      ${metric('待处理',session.can('approval.read')&&overview.approvals ? fmtNum(overview.approvals.pending??0):'—','待审批事项')}
+    </div>
+    <div class="crystal-operation-grid"><div class="crystal-shortcuts"><h3>${label('企业能力')}</h3><div>${link('mcp.service.read','mcp','MCP 服务','plug')}${link('skill.read','skills','Skill 技能','sparkles')}${session.can('panel.read') ? link('modelgw.read','gateway','模型渠道','cpu') : ''}${link('app.read','apps','AI 应用','app')}${link('connector.catalog.read','connectors','SaaS 连接器','link')}${link('nas.read','nas','文件存储','server')}</div></div><div class="crystal-task-status"><h3>${label('任务状态分布')}</h3><div class="lens-chart" id="lens-status-chart">${exec?.issuesByStatus?'':unavailable()}</div><div class="crystal-governance-links">${link('approval.read','approvals','查看审批','checkSquare')}${link('audit.read','audit','审计记录','scroll')}${link('usage.read','usage','用量洞察','chart')}</div></div></div>
+    ${!exec ? `<p class="lens-note">${label('执行中枢数据不可用，部分指标以破折号表示。')}</p>`:''}
+  </section>`
+  crystal = mountCrystalScene(host.querySelector('[data-crystal-scene]'))
+  // 工作台以静态 3D 首帧为主，避免持续动效干扰日常操作。
+  crystal.setMotion(false)
+  if (exec?.issuesByStatus) void drawStatusChart(host.querySelector('#lens-status-chart'),exec.issuesByStatus,run)
 }
 
 function renderClear(host, overview, exec, run) {

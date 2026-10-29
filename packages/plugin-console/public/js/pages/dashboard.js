@@ -123,7 +123,7 @@ async function mountBindingBanner() {
 // ================================================================ Tab 1：cockpit 经营驾驶舱
 async function renderCockpitTab(body, d) {
   body.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px" class="mb-14">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px" class="mb-14 dashboard-insight-grid">
       <div class="card card-pad">
         <div class="flex" style="gap:12px;align-items:flex-start">
           <span class="stat-icon" style="background:var(--brand-50);color:var(--brand-500);flex-shrink:0">${icon('sparkles', 16)}</span>

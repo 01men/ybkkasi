@@ -254,6 +254,8 @@ function renderShell(page, params, builder) {
       </div>
     </div>`
 
+  // 首页与控制台互相切换时恢复语言选择器，不留下悬浮的重复控件。
+  rqI18n.mountSwitcher()
   // 侧边导航
   const nav = $('#nav')
   // 高亮判定：同路径下「带查询」的项优先（如 #/a2a 与 #/a2a?tab=uhp 共存时只亮一个）
