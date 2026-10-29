@@ -146,7 +146,7 @@ export class BehaviorService extends Service {
       at: 'TEXT NOT NULL',
     }, { primaryKey: ['consumer', 'event_id'] })
     this.registerHttpEndpoints(ctx)
-    ctx.effect(() => {
+    ctx.effect(() => () => {
       this.consumers.clear()
     })
   }

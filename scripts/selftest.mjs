@@ -2836,6 +2836,31 @@ try {
   check('QA-04 回归：被拒后原描述原样保留（空值未落库）',
     descSurvived.ok && descSurvived.data.attrs.description !== '' && descSurvived.data.attrs.description !== undefined,
     JSON.stringify(descSurvived.data?.attrs?.description))
+
+  // —— issue #8 回归：Agent 模型目录单一事实源（登记 / PATCH fail-fast + 上线门禁）——
+  // 块内自备 stub 模型：无论所在实例目录状态（演示种子/基线空目录）断言都自洽
+  const mdlKnown = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'selftest-mdl-known', displayName: '自测已知模型', provider: 'stub', endpoint: 'http://127.0.0.1:9/v1', apiKey: 'stub-key', costCentsPerKTokens: 0, status: 'online' } })
+  check('#8 前置：登记已知 stub 模型（目录非空，校验生效前提）', mdlKnown.ok, JSON.stringify(mdlKnown.error))
+  const modelUnknownCreate = await api('POST', '/api/agents', { token: ops, body: { name: '自测未知模型机器人', attrs: { description: '模型目录校验自测', model: 'deepseek-nothave', riskLevel: 'low' } } })
+  check('#8：登记模型不在目录 → 400（错误含「模型目录」与可用 slugs 提示）',
+    modelUnknownCreate.status === 400 && /模型目录/.test(modelUnknownCreate.error?.message ?? ''), JSON.stringify(modelUnknownCreate.error))
+  const modelUnknownPatch = await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { model: 'deepseek-nothave' } } })
+  check('#8：PATCH 模型不在目录 → 400（存量值不动）',
+    modelUnknownPatch.status === 400 && /模型目录/.test(modelUnknownPatch.error?.message ?? ''), JSON.stringify(modelUnknownPatch.error))
+  const modelKnownPatch = await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { model: 'selftest-mdl-known' } } })
+  check('#8：PATCH 模型在目录 → 200', modelKnownPatch.ok && modelKnownPatch.data.attrs.model === 'selftest-mdl-known', JSON.stringify(modelKnownPatch.error))
+  await api('PATCH', `/api/agents/${selfAgent.id}`, { token: ops, body: { attrs: { model: 'deepseek-chat' } } })
+  const gateModel = await api('POST', '/api/modelgw/models', { token: admin, body: { slug: 'selftest-tmp-mdl', displayName: '自测临时模型', provider: 'stub', endpoint: 'http://127.0.0.1:9/v1', apiKey: 'stub-key', costCentsPerKTokens: 0, status: 'online' } })
+  check('#8 前置：登记临时模型', gateModel.ok, JSON.stringify(gateModel.error))
+  const gateAgent = await api('POST', '/api/agents', { token: ops, body: { name: '自测上线门禁机器人', attrs: { description: '上线门禁模型校验自测', model: 'selftest-tmp-mdl', riskLevel: 'low', dataClass: 'internal', trialGroups: ['灰度试点组'], entryUrl: 'https://gate.example.com/chat' } } })
+  check('#8 前置：模型在目录时登记/补全治理属性成功', gateAgent.ok, JSON.stringify(gateAgent.error))
+  await api('POST', `/api/agents/${gateAgent.data.agent.id}/transition`, { token: ops, body: { action: 'submit_trial' } })
+  const gateModelDel = await api('DELETE', `/api/modelgw/models/${gateModel.data.id}`, { token: admin })
+  check('#8 前置：目录条目删除', gateModelDel.ok, JSON.stringify(gateModelDel.error))
+  const gateOnline = await api('POST', `/api/agents/${gateAgent.data.agent.id}/transition`, { token: ops, body: { action: 'online' } })
+  check('#8：上线门禁 fail-fast（模型已从目录删除 → 400 模型目录，不再「上线成功、派发才失败」）',
+    gateOnline.status === 400 && /模型目录/.test(gateOnline.error?.message ?? ''), JSON.stringify(gateOnline.error))
+
   const trial = await api('POST', `/api/agents/${selfAgent.id}/transition`, { token: admin, body: { action: 'submit_trial' } })
   check('进入试运行', trial.ok && trial.data.status === 'trial')
 
@@ -4131,6 +4156,32 @@ try {
   // 机器令牌走工具桥（远程工具代理的同一条宿主路径）
   const machineTool = await api('POST', '/api/tools/execute', { token: machineToken, body: { name: 'agent_list', args: {} } })
   check('机器令牌经工具桥执行 agent_list', machineTool.ok && machineTool.data.isError === false && machineTool.data.value.total >= 5)
+
+  // —— issue #9 回归：executor 模板（远程 dsh/Agent 作为执行方：exec.write 任务认领不再 403）——
+  const executorCode = await api('POST', '/api/connect/codes', { token: admin, body: { template: 'executor', ttlMinutes: 10, remark: 'selftest-executor' } })
+  check('#9：executor 模板接入码可签发', executorCode.ok && executorCode.data.template === 'executor', JSON.stringify(executorCode.error))
+  const executorEnroll = await api('POST', '/api/connect/enroll', { body: { enrollmentCode: executorCode.data.code, clientName: 'selftest-executor-dsh', meta: { hostname: 'selftest-executor-pc', platform: 'test' } } })
+  check('#9：executor 模板 enroll 成功（模板回显 executor）',
+    executorEnroll.ok && executorEnroll.data.template === 'executor', JSON.stringify(executorEnroll.error ?? {}))
+  const executorLogin = await api('POST', '/api/auth/client-credentials', { body: { clientId: executorEnroll.data.clientId, clientSecret: executorEnroll.data.clientSecret } })
+  check('#9：executor 机器凭证换牌', executorLogin.ok, JSON.stringify(executorLogin.error))
+  const executorToken = executorLogin.data?.token ?? ''
+  const executorClaim = await api('POST', '/api/tools/execute', { token: executorToken, body: { name: 'exec_claim', args: { issueId: 'selftest-none' } } })
+  check('#9：executor 令牌调 exec_claim 不再 403（权限面放行，业务层「任务不存在」才是预期失败）',
+    executorClaim.status !== 403 && !/exec\.write/.test(JSON.stringify(executorClaim.error ?? {}))
+      && (executorClaim.data?.isError === true || /任务不存在/.test(JSON.stringify(executorClaim.data ?? ''))),
+    JSON.stringify({ status: executorClaim.status, error: executorClaim.error, data: executorClaim.data }))
+  const executorClients = await api('GET', '/api/connect/clients', { token: admin })
+  const executorClient = executorClients.data.clients.find((c) => c.clientId === executorEnroll.data.clientId)
+  check('#9：executor 客户端生效权限含 exec.write/exec.read 且非全量（不含账号凭证管理）',
+    executorClient && executorClient.scopes.includes('exec.write') && executorClient.scopes.includes('exec.read') && !executorClient.scopes.includes('*')
+      && !executorClient.scopes.includes('iam.user.write') && !executorClient.scopes.includes('iam.credential.write'),
+    JSON.stringify(executorClient?.scopes ?? executorClients.error))
+  await api('POST', `/api/connect/clients/${executorEnroll.data.clientId}/disable`, { token: admin, body: { reason: 'selftest executor 验证完成' } })
+  const operatorClaim = await api('POST', '/api/tools/execute', { token: machineToken, body: { name: 'exec_claim', args: { issueId: 'selftest-none' } } })
+  check('#9 对照：operator 模板无 exec.write（exec_claim 仍被 403 权限拒绝，边界不放宽）',
+    operatorClaim.status === 403 || /exec\.write/.test(JSON.stringify(operatorClaim.error ?? operatorClaim.data ?? {})),
+    JSON.stringify({ status: operatorClaim.status, error: operatorClaim.error }))
 
   // 客户端心跳主动推送（宿主侧接入资产存活监测）
   const hb = await api('POST', '/api/connect/heartbeat', { token: machineToken, body: { tools: 42, version: 'v22.14.0', uptimeSec: 600 } })
@@ -7413,6 +7464,29 @@ try {
     const exHbAgent = exOverview.data.agentsHealth.find((a) => a.agentId === exAgent.id)
     check('R9：被派发 Agent 有心跳留痕（健康度 healthy/stale）', ['healthy', 'stale'].includes(exHbAgent?.health), JSON.stringify(exHbAgent))
 
+    // -- issue #7 回归：只读主体心跳解耦（exec.read 即可存活，不再被 exec.write 拦成 failed） --
+    const roAgentRes = await api('POST', '/api/agents', { token: admin, body: { name: '自测只读官', attrs: { description: '只读主体心跳解耦自测（评价官/验收官形态：职责分离要求只读）', model: 'deepseek-chat', riskLevel: 'low', trialGroups: ['灰度试点组'] } } })
+    const roAgent = roAgentRes.data.agent
+    const roPrincipalId = (await api('GET', `/api/agents/${roAgent.id}`, { token: admin })).data.credential?.principalId
+    check('#7 前置：只读官注册并取得机器主体', roAgentRes.ok && Boolean(roPrincipalId), JSON.stringify(roAgentRes.error ?? {}))
+    const roStrip = await api('PATCH', `/api/authn/principals/${roPrincipalId}`, { token: admin, body: { scopes: ['exec.read'] } })
+    check('#7 前置：机器主体收敛为只读（仅 exec.read）', roStrip.ok, JSON.stringify(roStrip.error))
+    const roTrial = await api('POST', `/api/agents/${roAgent.id}/transition`, { token: admin, body: { action: 'submit_trial' } })
+    check('#7 前置：只读官进入试运行（运行态参与心跳调度）', roTrial.ok, JSON.stringify(roTrial.error))
+    await api('PATCH', `/api/agents/${roAgent.id}`, { token: admin, body: { attrs: { heartbeatIntervalMinutes: 30 } } })
+    const roTick = await api('POST', '/api/exec/tick', { token: admin })
+    check('#7 前置：tick 入队并处理心跳唤醒', roTick.ok, JSON.stringify(roTick.data ?? roTick.error))
+    const roWake = (await api('GET', '/api/exec/wakes', { token: admin })).data.wakes.find((w) => w.agentId === roAgent.id && w.trigger === 'routine')
+    check('#7：只读主体心跳唤醒以 done 收尾（skipped_no_todo 路径），不再 status=failed',
+      Boolean(roWake) && roWake.status === 'done' && !(roWake.lastError ?? '').includes('exec'), JSON.stringify(roWake ?? {}))
+    // 对照：任务执行路径的 exec.write 收口不动——把只读官设为 P1 任务负责人，唤醒应在联动③b 被拒
+    const roIssue = await api('POST', '/api/exec/issues', { token: admin, body: { projectId: exProject.data.id, title: '自测任务：只读官不应被派发', priority: 'P1', assigneeAgentId: roAgent.id } })
+    await api('POST', '/api/exec/tick', { token: admin })
+    const roIssueWake = (await api('GET', '/api/exec/wakes', { token: admin })).data.wakes.find((w) => w.issueId === roIssue.data.id)
+    check('#7 对照：issue 派发路径仍要求 exec.write（无写权限 → failed，写权限不放宽）',
+      Boolean(roIssueWake) && roIssueWake.status === 'failed' && /exec\.write/.test(roIssueWake.lastError ?? ''), JSON.stringify(roIssueWake ?? {}))
+    await api('POST', `/api/exec/issues/${roIssue.data.id}/transition`, { token: admin, body: { to: 'cancelled' } })
+
     // -- R10 Agent 主体预算：熔断 → 联动冻结 → L4 解冻审批 → 恢复 ----------------
     const exBudget = await api('PUT', '/api/modelgw/budgets', { token: admin, body: { subject: `agent:${exAgent.id}`, dailyLimitCents: 0, action: 'block', freezeAgent: true } })
     check('R10：Agent 主体预算登记（0 元 block + freezeAgent 联动）', exBudget.ok && exBudget.data.subject === `agent:${exAgent.id}`)
@@ -7696,17 +7770,17 @@ try {
     const adminCaller = { kind: 'human', principalId: adminPrincipal.id, userId: adminUser.id, name: '平台管理员' }
     const wfOrg = wfCtx.iam.createOrg({ name: `组7闭环自测组织-${Date.now() % 100000}` }, iam.SYSTEM_ACTOR)
     check('闭环夹具：测试组织创建', Boolean(wfOrg?.id))
-    const g7AgentReg = wfCtx.agentRegistry.register({ name: '组7闭环员工Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：数字员工绑定用 Agent', model: 'deepseek-chat', riskLevel: 'low' } })
+    // 测试模型登记须先于 Agent 注册（issue #8：attrs.model 以模型目录为单一事实源，
+    // 本子段为独立裸 Context 实例，目录仅含本段自备模型——Agent 一律用 G7_MODEL_SLUG）
+    const G7_MODEL_SLUG = `g7-loop-model-${Date.now() % 100000}`
+    wfCtx.modelGateway.upsertModel({ slug: G7_MODEL_SLUG, displayName: '组7闭环测试模型', provider: 'stub', endpoint: `http://127.0.0.1:${GH_PORT}/v1`, apiKey: 'sk-g7-selftest', costCentsPerKTokens: 1, status: 'online', dataClassLimit: 'internal' })
+    const g7AgentReg = wfCtx.agentRegistry.register({ name: '组7闭环员工Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：数字员工绑定用 Agent', model: G7_MODEL_SLUG, riskLevel: 'low' } })
     const g7Agent = g7AgentReg.agent
     // 机器 caller（§13.2）：主体来自已验证机器凭证（refType=agent 可反查员工绑定），非请求参数自报
     const g7AgentCaller = { kind: 'machine', principalId: g7AgentReg.credential.principal.id, refType: 'agent', refId: g7Agent.id, name: g7Agent.name }
-    const g7RivalReg = wfCtx.agentRegistry.register({ name: '组7闭环他人Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：撞绑拒绝用 Agent', model: 'deepseek-chat', riskLevel: 'low' } })
+    const g7RivalReg = wfCtx.agentRegistry.register({ name: '组7闭环他人Agent', ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7闭环自测：撞绑拒绝用 Agent', model: G7_MODEL_SLUG, riskLevel: 'low' } })
     const g7RivalCaller = { kind: 'machine', principalId: g7RivalReg.credential.principal.id, refType: 'agent', refId: g7RivalReg.agent.id, name: g7RivalReg.agent.name }
     check('闭环夹具：测试 Agent×2 与机器凭证就位（refType=agent）', Boolean(g7Agent?.id && g7AgentReg.credential?.principal?.id && g7RivalReg.credential?.principal?.id))
-
-    // 测试模型登记（model grant 探针的真实核验对象；价格簿随 upsertModel 播种）
-    const G7_MODEL_SLUG = `g7-loop-model-${Date.now() % 100000}`
-    wfCtx.modelGateway.upsertModel({ slug: G7_MODEL_SLUG, displayName: '组7闭环测试模型', provider: 'stub', endpoint: `http://127.0.0.1:${GH_PORT}/v1`, apiKey: 'sk-g7-selftest', costCentsPerKTokens: 1, status: 'online', dataClassLimit: 'internal' })
 
     // -- 员工 / 绑定（2） ---------------------------------------------------------
     let employee = null
@@ -7972,8 +8046,8 @@ try {
 
       // -- W5 运维面（D-③）：status-batch 批量停职 / audit 报表 / 非 admin 令牌 403 ----------------
       try {
-        const w5AgentA = wfCtx.agentRegistry.register({ name: `组7W5批量停职A-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: 'deepseek-chat', riskLevel: 'low' } }).agent
-        const w5AgentB = wfCtx.agentRegistry.register({ name: `组7W5批量停职B-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: 'deepseek-chat', riskLevel: 'low' } }).agent
+        const w5AgentA = wfCtx.agentRegistry.register({ name: `组7W5批量停职A-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: G7_MODEL_SLUG, riskLevel: 'low' } }).agent
+        const w5AgentB = wfCtx.agentRegistry.register({ name: `组7W5批量停职B-Agent-${Date.now() % 100000}`, ownerId: adminUser.id, ownerName: '平台管理员', orgId: wfOrg.id, attrs: { description: '组7 W5 运维面断言用', model: G7_MODEL_SLUG, riskLevel: 'low' } }).agent
         const w5EmpA = wfCtx.workforceEmployees.create({ name: `组7W5批量停职A-${Date.now() % 100000}`, orgId: wfOrg.id, supervisorUserId: adminUser.id, agentId: w5AgentA.id })
         const w5EmpB = wfCtx.workforceEmployees.create({ name: `组7W5批量停职B-${Date.now() % 100000}`, orgId: wfOrg.id, supervisorUserId: adminUser.id, agentId: w5AgentB.id })
         // 直插 active permit 模拟已签发（批量断言聚焦撤权联动；认领→撤权全闭环已由上方断言覆盖）
@@ -8055,7 +8129,7 @@ try {
         const grayWf = await import('../packages/plugin-workforce/src/index.ts')
         await grayCtx.plugin(grayWf, { dataDir: join(grayDataDir, 'domain'), grayMode: 'allowlist', enabledOrgs: [orgIn.id] })
         const mkGrayEmployee = (org, agentName, empName) => {
-          const reg = grayCtx.agentRegistry.register({ name: agentName, ownerId: gAdminU.id, ownerName: '平台管理员', orgId: org.id, attrs: { description: '组7灰度子段', model: 'deepseek-chat', riskLevel: 'low' } })
+          const reg = grayCtx.agentRegistry.register({ name: agentName, ownerId: gAdminU.id, ownerName: '平台管理员', orgId: org.id, attrs: { description: '组7灰度子段', model: GRAY_MODEL, riskLevel: 'low' } })
           const employee = grayCtx.workforceEmployees.create({ name: empName, displayName: empName, orgId: org.id, supervisorUserId: gAdminU.id, agentId: reg.agent.id, principalId: reg.credential.principal.id, runtime: 'dsh' })
           const caller = { kind: 'machine', principalId: reg.credential.principal.id, refType: 'agent', refId: reg.agent.id, name: reg.agent.name }
           return { reg, employee, caller }
@@ -8352,6 +8426,72 @@ try {
     demoProc.kill('SIGTERM')
     await new Promise((resolve) => setTimeout(resolve, 300))
     await rm(demoDataDir, { recursive: true, force: true }).catch(() => {})
+  }
+
+  // -- issue #10 回归：exec-hub 内置定时器自愈（不手动 tick 也产生心跳唤醒） ----------------
+  // cordis ctx.effect(fn) 语义：fn 注册时立即执行、返回值才是 disposer——此前单层箭头把
+  // tick/firstTick/metricsTimer 当场清掉，重启后调度链路静默失效（2026-10-28 生产实测）。
+  {
+    const TIMER_PORT = (await freePort()) ?? 7329
+    const TIMER_BASE = `http://127.0.0.1:${TIMER_PORT}`
+    const timerDataDir = join(process.cwd(), 'data-selftest-timer')
+    await rm(timerDataDir, { recursive: true, force: true })
+    await mkdir(timerDataDir, { recursive: true })
+    const timerProc = spawn(process.execPath, ['src/main.ts', '--port', String(TIMER_PORT), '--data', timerDataDir], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: {
+        ...process.env,
+        DEMO_SEED: '1',
+        OOMOL_CONNECT_ENCRYPTION_KEY: 'selftest-encryption-key-not-a-secret',
+        DSH_UPDATE_AUTO_CHECK: 'off',
+        EXEC_HUB_TICK_MS: '600',
+        EXEC_HUB_FIRST_TICK_MS: '300',
+      },
+    })
+    let timerBooted = false
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      try {
+        if ((await fetch(`${TIMER_BASE}/api/health`)).ok) { timerBooted = true; break }
+      } catch { /* retry */ }
+    }
+    check('#10：短周期定时器实例启动（EXEC_HUB_TICK_MS=600）', timerBooted)
+    if (timerBooted) {
+      const timerApi = async (method, path, { token, body } = {}) => {
+        const headers = { 'content-type': 'application/json' }
+        if (token) headers.authorization = `Bearer ${token}`
+        const res = await fetch(`${TIMER_BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+        return { status: res.status, json: await res.json().catch(() => null) }
+      }
+      // 健康检查先于演示种子完成即放行：登录与「找运行态 Agent」都轮询等待种子就绪（各 12s 上限）
+      let timerToken = ''
+      for (let i = 0; i < 40 && !timerToken; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const timerLogin = await timerApi('POST', '/api/auth/login', { body: { username: 'admin', password: 'Ybk@2026' } })
+        timerToken = timerLogin.json?.data?.token ?? ''
+      }
+      check('#10：定时器实例管理员登录', Boolean(timerToken))
+      let timerTarget = null
+      for (let i = 0; i < 40 && !timerTarget; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const timerAgents = (await timerApi('GET', '/api/agents', { token: timerToken })).json?.data?.agents ?? []
+        timerTarget = timerAgents.find((a) => a.status === 'online' || a.status === 'trial')
+      }
+      check('#10 前置：存在运行态 Agent 可配置心跳', Boolean(timerTarget))
+      await timerApi('PATCH', `/api/agents/${timerTarget.id}`, { token: timerToken, body: { attrs: { heartbeatIntervalMinutes: 1 } } })
+      // 不手动 tick：等待内置定时器自行产生心跳唤醒（firstTick 300ms + 周期 600ms，给 6s 余量）
+      let timerWake = null
+      for (let i = 0; i < 20 && !timerWake; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        const wakes = (await timerApi('GET', '/api/exec/wakes', { token: timerToken })).json?.data?.wakes ?? []
+        timerWake = wakes.find((w) => w.agentId === timerTarget.id && w.trigger === 'routine' && String(w.triggerDetail ?? '').startsWith('heartbeat:'))
+      }
+      check('#10：内置定时器自动入队心跳唤醒（零手动 tick，重启后调度链路不再静默失效）',
+        Boolean(timerWake), JSON.stringify(timerWake ?? (await timerApi('GET', '/api/exec/wakes', { token: timerToken })).json?.data?.wakes?.length))
+    }
+    timerProc.kill('SIGTERM')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    await rm(timerDataDir, { recursive: true, force: true }).catch(() => {})
   }
 
   // ================================================================ MCP 治理（W1-T1）：委托令牌与统一 Principal

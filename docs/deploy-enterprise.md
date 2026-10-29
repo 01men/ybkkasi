@@ -184,7 +184,8 @@ DSHCTL_URL=http://宿主IP:7300 DSHCTL_USER=admin DSHCTL_PASS=*** \
 | 模板 | 权限 |
 |---|---|
 | `readonly`（默认） | 全部查询类权限点（list/get/metrics/logs） |
-| `operator` | 只读 + MCP/Skill/Agent/应用运维与审批决策；**不含**账号与凭证管理 |
+| `operator` | 只读 + MCP/Skill/Agent/应用运维与审批决策；**不含**账号与凭证管理，也不含任务执行（认领走 `executor`） |
+| `executor` | 只读 + `exec.write` 任务认领/执行 + `usage.write` 用量自报；不含账号与凭证管理——供远程 dsh/Agent 作为**执行方**接入 |
 | `full` | 全部权限（`*`），仅可信环境使用 |
 
 ### 4.2 远程电脑：两条接入通道（任选其一）

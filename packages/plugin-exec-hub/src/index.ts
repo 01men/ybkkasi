@@ -257,7 +257,8 @@ export class ExecutionHubService extends Service {
     // 纳管提报催办巡检：每小时一轮（R9：metrics-report 超 24h 自动催办）
     const metricsTimer = setInterval(() => { void this.remindOverdueMetrics() }, 3_600_000)
     metricsTimer.unref?.()
-    ctx.effect(() => {
+    // cordis ctx.effect(fn)：fn 在注册时立即执行，返回值才是清理函数——单层箭头会把定时器当场清掉（issue #10）
+    ctx.effect(() => () => {
       clearInterval(tickTimer)
       clearTimeout(firstTick)
       clearInterval(metricsTimer)
@@ -1061,19 +1062,20 @@ export class ExecutionHubService extends Service {
     }
     this.wakes().update(wakeId, { budgetCheckPassed: true })
 
-    // 联动③：权限校验（Agent 机器主体须持 exec.write——身份纳管即权限收敛）
+    // 联动③：权限校验（#7 解耦：存活心跳只要求 exec.read——评价官/验收官等只读角色也参与心跳调度；
+    // exec.write 在真正写路径（创建 run / 派发执行）上单独校验，见下方联动③b）
     const scopes = this.agentScopes(agentId)
-    if (scopes === null || !(scopes.includes('exec.write') || scopes.includes('*'))) {
-      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）') })
-      this.recordHeartbeat(agent, 'skipped_permission', 'exec.write 缺失')
+    if (scopes === null || !(scopes.includes('exec.read') || scopes.includes('*'))) {
+      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 机器主体无 exec.read 权限（身份未纳管或权限收敛），存活监测无法成立') })
+      this.recordHeartbeat(agent, 'skipped_permission', 'exec.read 缺失')
       this.auditSafe({
         type: 'authz', actorType: 'machine', actorId: `agent:${agentId}`, actorName: agent.name,
         action: 'exec.wakeup', resourceType: 'issue', resourceId: issue?.id ?? agentId,
         resourceName: issue?.title ?? agent.name, result: 'denied',
-        detail: `机器主体缺少 exec.write（wake=${wakeId}）`,
+        detail: `机器主体缺少 exec.read（wake=${wakeId}）`,
       })
       this.ctx.platformBus.emit('audit.authz.denied', {
-        actorId: agentId, actorName: agent.name, point: 'exec.write', path: `exec:wake:${wakeId}`,
+        actorId: agentId, actorName: agent.name, point: 'exec.read', path: `exec:wake:${wakeId}`,
       })
       return 'failed'
     }
@@ -1083,6 +1085,12 @@ export class ExecutionHubService extends Service {
       const todos = this.collectTodos(agent)
       if (todos.total === 0) {
         this.recordHeartbeat(agent, 'skipped_no_todo')
+        this.wakes().update(wakeId, { status: 'done' })
+        return 'skipped'
+      }
+      // 只读角色有待办：心跳成立（存活），但不派发——非错误收尾，不记 status=failed（#7）
+      if (!(scopes.includes('exec.write') || scopes.includes('*'))) {
+        this.recordHeartbeat(agent, 'skipped_permission', t('{n} 项待办未派发（只读主体，缺 exec.write）', { n: todos.total }))
         this.wakes().update(wakeId, { status: 'done' })
         return 'skipped'
       }
@@ -1096,6 +1104,22 @@ export class ExecutionHubService extends Service {
         resourceName: agent.name, result: 'ok', detail: `run=${run.id} trigger=${wake.trigger} 待办=${todos.total}`,
       })
       return 'woken'
+    }
+
+    // 联动③b：任务执行路径须 exec.write（#7：写权限与存活心跳解耦后，在真正写路径收口）
+    if (!(scopes.includes('exec.write') || scopes.includes('*'))) {
+      this.wakes().update(wakeId, { status: 'failed', lastError: t('Agent 机器主体无 exec.write 权限（身份未纳管或权限收敛）') })
+      this.recordHeartbeat(agent, 'skipped_permission', 'exec.write 缺失')
+      this.auditSafe({
+        type: 'authz', actorType: 'machine', actorId: `agent:${agentId}`, actorName: agent.name,
+        action: 'exec.wakeup', resourceType: 'issue', resourceId: issue.id,
+        resourceName: issue.title, result: 'denied',
+        detail: `机器主体缺少 exec.write（wake=${wakeId}）`,
+      })
+      this.ctx.platformBus.emit('audit.authz.denied', {
+        actorId: agentId, actorName: agent.name, point: 'exec.write', path: `exec:wake:${wakeId}`,
+      })
+      return 'failed'
     }
 
     // 联动④：审批门禁（P0=高危任务：执行前须 exec.issue.run 审批 executed）

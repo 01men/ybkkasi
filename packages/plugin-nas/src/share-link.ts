@@ -112,7 +112,7 @@ export class NasShareLinkService extends Service {
     // 过期记录滚动清理（参照 authn：过期 7 天后物理删除；永久/未过期记录不动）
     this.cleanupTimer = setInterval(() => this.cleanupExpired(), 3600_000)
     this.cleanupTimer.unref?.() // lint-timers：测试/嵌入形态允许进程自然退出
-    ctx.effect(() => {
+    ctx.effect(() => () => {
       if (this.cleanupTimer) clearInterval(this.cleanupTimer)
     })
   }

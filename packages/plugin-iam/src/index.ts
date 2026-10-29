@@ -730,7 +730,7 @@ export class IamService extends Service {
     this.autoSyncTimer = setInterval(() => void this.runDueAutoSyncs(), AUTO_SYNC_TICK_MS)
     this.autoSyncTimer.unref?.() // OPT-P3-02
     setTimeout(() => void this.runDueAutoSyncs(), AUTO_SYNC_BOOT_DELAY_MS)
-    ctx.effect(() => {
+    ctx.effect(() => () => {
       if (this.autoSyncTimer) clearInterval(this.autoSyncTimer)
     })
   }

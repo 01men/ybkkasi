@@ -217,7 +217,7 @@ export class UsageService extends Service {
       ctx.effect(() => () => clearTimeout(first))
       this.retentionTimer = setInterval(() => void this.sweepRetention(), 6 * 3_600_000)
       this.retentionTimer.unref?.() // OPT-P3-02
-      ctx.effect(() => {
+      ctx.effect(() => () => {
         if (this.retentionTimer) clearInterval(this.retentionTimer)
       })
     }

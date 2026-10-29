@@ -3,6 +3,54 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · GitHub 反馈修复批次（issue #7 / #8 / #9 / #10，2026-10-29）
+
+**#10 定时器静默失效（cordis ctx.effect 误用，波及全仓库 10 处）**
+
+- cordis 4.0.4 的 `ctx.effect(fn)`：fn 在注册时**立即执行**，返回值才是清理函数。exec-hub 心跳循环
+  此前用单层箭头把 `setInterval`/`setTimeout` 在装配期当场清掉——进程重启后内置 tick 永不运行，
+  routine 唤醒/心跳永不入队，Agent 健康度全部 silent 且无日志报错（生产实测重启 18h 后才发现），
+  唯一可用通道只剩管理员手动 `POST /api/exec/tick`。
+- 同类误用一并修复（同一 bug 类）：plugin-iam 连接器自动同步、plugin-authn 令牌清理 ×2 与
+  OIDC/入场票据清理、plugin-nas 分享链接清理、plugin-a2a 例行巡检、plugin-usage 保留策略、
+  plugin-workforce 台账巡检、platform-core behavior 消费者表清理——全部改为 `ctx.effect(() => () => { … })`
+  返回 disposer 的正确写法。
+- selftest 新增端到端断言：短周期定时器隔离实例（`EXEC_HUB_TICK_MS=600`）**零手动 tick** 亦自动
+  入队心跳唤醒——该缺陷此前完全无测试覆盖（既有断言全用手动 tick 驱动）。
+
+**#7 只读 Agent 心跳被 exec.write 拦死**
+
+- `processWake` 权限解耦：存活心跳只要求 `exec.read`（评价官/验收官等职责分离只读角色照常参与
+  心跳调度），`exec.write` 移到真正写路径收口——无 issue 心跳：无待办 `skipped_no_todo`/done；
+  有待办但只读以 `skipped_permission` 非错误收尾（不再每一拍 `status=failed`）。任务执行路径
+  （issue 派发）仍要求 `exec.write`，边界不放宽；身份未纳管（连 `exec.read` 都没有）保持 failed。
+
+**#8 Agent 模型枚举与模型目录两套口径（单一事实源）**
+
+- `attrs.model` 废除硬编码三值枚举（deepseek-chat/reasoner/coder）：可选值 = 模型网关目录
+  （`modelgw:models`）。登记 / PATCH（提供 model 时）/ 上线门禁三处 fail-fast 校验「目录中存在」，
+  错误即列可用 slugs；目录 online 状态与渠道就绪属运行时事实，由 modelgw invoke 权威 enforce。
+  空目录放行（全新部署引导期不锁死 Agent 登记）；modelgw 未装配时跳过（异常装配降级 legacy）。
+- 目录读取走 `ctx.reflect.get('modelGateway')` 软读——严格注入下直访会被 get trap 硬抛
+  「without inject」（exec_claim 同款坑，1b31af2 的教训复用）。
+- 演示种子补齐 `deepseek-reasoner` / `deepseek-coder` 目录条目（此前 4 个种子 Agent 配了目录外模型，
+  即本 issue 事故形态）；upsertModel 前移到 Agent 注册之前（校验依赖目录先就位）。
+- 控制台注册表单「底层模型」改从 `/api/modelgw/models` 动态取选项（online 在前、offline 标注，
+  拉取失败退回手填）；`agent_register` 工具描述同步指向目录。
+- selftest：登记/PATCH 目录外模型 400（含可用 slugs 提示）、上线门禁 fail-fast（目录条目删除后
+  上线即 400，不再「上线成功、派发才失败」）。
+
+**#9 connect 缺「执行方」接入模板**
+
+- 新增 `executor` 模板：只读 + `exec.write` 任务认领/执行 + `usage.write` 用量自报，不含账号与
+  凭证管理——远程 dsh/Agent 承担任务执行不再被迫二选一（`operator` 无法认领 / `full` 等价管理员 `*`）。
+  `operator` 模板描述同步明确「不含任务执行」。接入码创建校验、connect_code_create 工具枚举、
+  控制台模板表、CLI 帮助、docs/deploy-enterprise.md 模板表五处同步。
+- selftest：executor 模板签发 → enroll → 机器令牌调 `exec_claim` 不再 403（业务层「任务不存在」
+  才是预期失败）、生效权限含 `exec.write`/`exec.read` 且不含账号凭证管理；对照 operator 仍 403。
+
+断言总数 1621 → **1645 全绿**（Node 24.21.0 实测；含 #10 内置定时器隔离实例与 #7/#8/#9 行为级回归）。
+
 ## [Unreleased] · 治理令牌自愈刷新健壮化与告警出口收敛（gov-token / gov-refresh，2026-10-28）
 
 - `scripts/refresh-governance-mcp-tokens.mjs`（治理双身份 MCP 令牌自愈刷新入库，org 自动化

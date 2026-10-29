@@ -143,7 +143,7 @@ export function apply(ctx: Context) {
     parameters: {
       name: { type: 'string', required: true, description: 'Agent 名称' },
       slug: { type: 'string', description: '标识（缺省由名称生成）' },
-      attrs: { type: 'object', description: '扩展属性。必填：description（Agent 职责描述）、model（deepseek-chat/deepseek-reasoner/deepseek-coder）、riskLevel（low/medium/high）；上线前还需 dataClass（public/internal/confidential/secret）' },
+      attrs: { type: 'object', description: '扩展属性。必填：description（Agent 职责描述）、model（模型网关目录中已登记的 slug，model_list 可查；未登记的模型会被拒绝）、riskLevel（low/medium/high）；上线前还需 dataClass（public/internal/confidential/secret）' },
       orgId: { type: 'string', description: '归属组织 ID（缺省首个组织）' },
       withCredential: { type: 'boolean', description: '是否签发机器凭证，缺省 true' },
     },

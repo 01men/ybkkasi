@@ -148,7 +148,7 @@ export class OidcService extends Service {
     this.cleanupExpired()
     this.cleanupTimer = setInterval(() => this.cleanupExpired(), 24 * 3600_000)
     this.cleanupTimer.unref?.() // OPT-P3-02
-    ctx.effect(() => {
+    ctx.effect(() => () => {
       if (this.cleanupTimer) clearInterval(this.cleanupTimer)
     })
     // -- 生命周期联动（真实事件名，见 platform-core/src/bus.ts） --------------------------

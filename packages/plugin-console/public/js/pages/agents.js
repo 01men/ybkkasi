@@ -516,17 +516,21 @@ function openAgentOnboardPrompt(agent) {
 
 async function openAgentCreate(schema, ctx) {
   // 绑定类资源下拉数据源：拉取失败或为空时退回手填，不阻塞注册
-  const [skillData, pgData, groupsData] = await Promise.all([
+  const [skillData, pgData, groupsData, modelData] = await Promise.all([
     api.get('/api/skills').catch(() => ({ skills: [] })),
     api.get('/api/mcp/perm-groups').catch(() => ({ groups: [] })),
     api.get('/api/iam/groups').catch(() => ({ groups: [] })),
+    // 模型目录（issue #8 单一事实源）：可选项 = 目录登记的模型；online 在前，offline 标注状态
+    api.get('/api/modelgw/models').catch(() => ({ models: [] })),
   ])
+  const allModels = (modelData.models ?? []).map((m) => ({ value: m.slug, label: m.status === 'online' ? `${m.displayName}（${m.slug}）` : `${m.displayName}（${m.slug} · 未上线）` }))
   const resourceOptions = {
     skills: (skillData.skills ?? []).filter((s) => s.status === 'published')
       .map((s) => ({ value: s.slug, label: `${s.name}（${s.slug}）` })),
     mcpPermGroupIds: (pgData.groups ?? []).map((g) => ({ value: g.id, label: g.name })),
     trialGroups: [...new Map((groupsData.groups ?? []).map((g) => [g.name, g])).values()]
       .map((g) => ({ value: g.name, label: g.name })),
+    model: [...allModels.filter((m) => !m.label.includes('未上线')), ...allModels.filter((m) => m.label.includes('未上线'))],
   }
   const groupsByField = new Map()
   for (const fieldSpec of schema.fields) {
@@ -586,6 +590,14 @@ async function openAgentCreate(schema, ctx) {
   function renderSchemaField(f) {
     const name = `attr_${f.key}`
     const tagsName = `tags_${f.key}`
+    // 底层模型（issue #8 单一事实源）：选项来自模型目录；目录拉取失败/为空时退回手填 slug
+    if (f.key === 'model') {
+      const options = resourceOptions.model
+      if (options?.length) {
+        return field(f.label, selectField(name, options, { value: String(f.defaultValue ?? '') }), { required: f.required, hint: f.hint, full: false })
+      }
+      return field(f.label, inputField(name, { placeholder: f.placeholder || '模型目录中的 slug，如 deepseek-chat' }), { required: f.required, hint: f.hint })
+    }
     if (f.type === 'enum') {
       return field(f.label, selectField(name, (f.options ?? []).map((o) => ({ value: o.value, label: o.hint ? `${o.label}（${o.hint}）` : o.label })), { value: String(f.defaultValue ?? '') }), { required: f.required, hint: f.hint, full: false })
     }

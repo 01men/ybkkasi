@@ -314,6 +314,8 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
   guarded('PATCH', '/api/agents/:id', 'agent.write', (exchange) => {
     if (!assertAgentOwner(exchange, exchange.params['id']!)) return
     const input = body<{ name?: string; attrs?: Record<string, unknown> }>(exchange)
+    // 模型目录单一事实源（issue #8）：PATCH 提供了 model 时校验目录存在性（未提供不动存量值）
+    if (input.attrs && input.attrs['model'] !== undefined) ctx.agentRegistry.assertModelInCatalog(input.attrs['model'])
     const agent = ctx.resourceCore.update('agent', exchange.params['id']!, input)
     changeLog(exchange, 'agent.update', 'agent', agent.id, agent.name)
     return agent

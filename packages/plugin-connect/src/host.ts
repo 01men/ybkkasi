@@ -48,7 +48,7 @@ export interface ConnectClientRecord extends RecordBase {
   heartbeat?: { tools?: number; version?: string; uptimeSec?: number }
 }
 
-export type TemplateName = 'readonly' | 'operator' | 'full'
+export type TemplateName = 'readonly' | 'operator' | 'executor' | 'full'
 
 export interface TemplateSpec {
   name: TemplateName
@@ -64,7 +64,8 @@ const MAX_TTL_MINUTES = 24 * 60
 export function connectTemplates(): Array<Omit<TemplateSpec, 'scopes'>> {
   return [
     { name: 'readonly', label: translate('只读运维'), description: translate('全部查询类权限点（list/get/metrics/logs），适合只读巡检 Agent') },
-    { name: 'operator', label: translate('运维（读 + 资源变更）'), description: translate('只读 + MCP/Skill/Agent/应用运维与审批决策；不含账号与凭证管理') },
+    { name: 'operator', label: translate('运维（读 + 资源变更）'), description: translate('只读 + MCP/Skill/Agent/应用运维与审批决策；不含账号与凭证管理，也不含任务执行（认领走 executor）') },
+    { name: 'executor', label: translate('执行方（读 + 任务执行）'), description: translate('只读 + exec.write 任务认领/执行 + usage.write 用量自报；不含账号与凭证管理，供远程 dsh/Agent 作为执行方接入（issue #9）') },
     { name: 'full', label: translate('全部权限（*）'), description: translate('等价平台管理员，仅可信环境使用') },
   ]
 }
@@ -73,6 +74,7 @@ export function templateScopes(template: TemplateName): string[] {
   if (template === 'full') return ['*']
   const readPoints = PermissionCatalog.filter((item) => item.point.endsWith('.read') || item.point === 'console.login').map((item) => item.point)
   if (template === 'readonly') return readPoints
+  if (template === 'executor') return [...new Set([...readPoints, 'exec.write', 'usage.write'])]
   const operatorExtra = [
     'mcp.service.write', 'mcp.service.deploy', 'mcp.service.offline', 'mcp.permgroup.write', 'mcp.invoke',
     'skill.submit', 'skill.install', 'agent.write', 'agent.offline', 'app.write', 'app.offline',
@@ -261,7 +263,7 @@ export const connectHostApi = {
     http.register('POST', '/api/connect/codes', (exchange) => {
       if (!requireManage(exchange)) return
       const input = (exchange.body ?? {}) as { template?: string; ttlMinutes?: number; remark?: string }
-      const template = (['readonly', 'operator', 'full'] as const).includes(input.template as TemplateName) ? input.template as TemplateName : 'readonly'
+      const template = (['readonly', 'operator', 'executor', 'full'] as const).includes(input.template as TemplateName) ? input.template as TemplateName : 'readonly'
       const ttlMinutes = Math.min(Math.max(Math.floor(Number(input.ttlMinutes) || DEFAULT_TTL_MINUTES), 1), MAX_TTL_MINUTES)
       const code = generateSecret('enr')
       const info = exchange.principal as { userId?: string; principalId?: string; name?: string }
@@ -389,7 +391,7 @@ export const connectHostTools = {
       description: '创建一次性接入码（远程 dsh/Agent 凭此向本平台申请机器凭证）。默认只读模板、15 分钟有效。',
       permission: 'connect.manage',
       parameters: {
-        template: { type: 'string', enum: ['readonly', 'operator', 'full'], description: '权限模板：readonly 只读 / operator 运维（读+资源变更）/ full 全权限' },
+        template: { type: 'string', enum: ['readonly', 'operator', 'executor', 'full'], description: '权限模板：readonly 只读 / operator 运维（读+资源变更，不含任务执行）/ executor 执行方（读+任务认领执行）/ full 全权限' },
         ttlMinutes: { type: 'integer', description: '有效分钟数（1-1440，默认 15）' },
         remark: { type: 'string', description: '用途备注（留痕）' },
       },
