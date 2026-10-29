@@ -7,6 +7,7 @@ export const UI_THEMES = [
   { id: 'clear', label: '澄明 · 经营总览' },
   { id: 'graph', label: '星图 · 协作关系' },
   { id: 'night', label: '夜航 · 治理观察' },
+  { id: 'crystal', label: '冰晶 · 协同全景' },
 ]
 
 export function currentUiTheme() {
