@@ -679,12 +679,44 @@ try {
     && Array.isArray(health.data.contract?.panel?.capabilities) && health.data.contract.panel.capabilities.length > 0
     && Array.isArray(health.data.contract?.panel?.depts),
     JSON.stringify(health.data?.contract))
+  // #13 复核（2026-10-29）：capabilities 只是路由族名（board ≠ 平铺 GET /api/panel/board），
+  // 契约因此附 routes[]（method+path 实时推导）——:dept 参数化路由与 panel 自持登录路由显式可协商，
+  // 前台按路由模式拼 URL，不再「声明了能力但按字面调就 404」
+  const panelContractRoutes = health.data.contract?.panel?.routes ?? []
+  const routeFamilies = new Set(panelContractRoutes.flatMap((route) => {
+    const segments = String(route.path).split('/').filter(Boolean)
+    const panelIdx = segments.indexOf('panel')
+    const families = []
+    if (segments[panelIdx + 1] !== undefined && !segments[panelIdx + 1].startsWith(':')) families.push(segments[panelIdx + 1])
+    if (segments[panelIdx + 2] !== undefined && !segments[panelIdx + 2].startsWith(':')) families.push(segments[panelIdx + 2])
+    return families
+  }))
+  check('#13 复核：契约暴露 routes[]（method+path），:dept 参数化与 panel-auth 路由显式在列',
+    Array.isArray(panelContractRoutes) && panelContractRoutes.length > 0
+    && panelContractRoutes.some((route) => route.method === 'GET' && route.path === '/api/panel/:dept/board')
+    && panelContractRoutes.some((route) => route.method === 'POST' && route.path === '/api/panel/auth/login')
+    && panelContractRoutes.some((route) => route.method === 'POST' && route.path === '/api/panel/auth/refresh'),
+    JSON.stringify(panelContractRoutes.slice(0, 4)))
+  check('#13 复核：capabilities 每个族都有对应路由（无「声明即 404」族，spa 为静态挂载特例）',
+    (health.data.contract.panel.capabilities ?? []).every((family) => family === 'spa' || routeFamilies.has(family)),
+    JSON.stringify(health.data.contract.panel.capabilities))
 
   const noAuth = await api('GET', '/api/overview')
   check('无令牌访问被拒绝（401）', noAuth.status === 401)
 
   const badLogin = await api('POST', '/api/auth/login', { body: { username: 'admin', password: 'wrong' } })
   check('错误密码被拒绝', badLogin.status === 401)
+
+  // 面板自持登录面（交接 F 清单 N 节欠账补齐，前台 #2 复核残留）：/api/panel/auth/* 此前
+  // 仅登记公开白名单、处理器从未合入 main（面板本页登录实际 404）——现与 /api/auth/* 同后端
+  const panelBadLogin = await api('POST', '/api/panel/auth/login', { body: { username: 'admin', password: 'wrong' } })
+  check('面板自持登录路由存在（404 欠账闭环）：错误口令 401 而非 404', panelBadLogin.status === 401, JSON.stringify(panelBadLogin.error ?? panelBadLogin.status))
+  const panelLogin = await api('POST', '/api/panel/auth/login', { body: { username: 'admin', password: 'Ybk@2026' } })
+  check('面板自持登录成功（同后端同响应形状：token + user.permissions）',
+    panelLogin.ok && panelLogin.data.token.startsWith('dst1.') && Array.isArray(panelLogin.data.user?.permissions))
+  const panelRefresh = await api('POST', '/api/panel/auth/refresh', { body: { refreshToken: panelLogin.data.refreshToken } })
+  check('面板自持刷新成功（refreshToken 换新令牌对）',
+    panelRefresh.ok && panelRefresh.data.token.startsWith('dst1.') && Boolean(panelRefresh.data.refreshToken))
 
   const adminLogin = await api('POST', '/api/auth/login', { body: { username: 'admin', password: 'Ybk@2026' } })
   check('管理员登录成功', adminLogin.ok && adminLogin.data.token.startsWith('dst1.'))
@@ -1921,6 +1953,46 @@ try {
   check('#17：orgId 空串在调用上游前 fail-fast（不再「先花钱后报错」）',
     !noOrgInvoke.ok && /(归口组织|组织归属)/.test(JSON.stringify(noOrgInvoke.error ?? {})), JSON.stringify(noOrgInvoke.error))
   modelStub.close()
+
+  // #14 复核（2026-10-29）：存量事件覆盖率盲区——覆盖率标注字段引入前入账的事件无
+  // cost_status/nonbillable，此前 summary 的 not_priced 只认标注 → 存量零费率事件
+  //「既非 priced 也非 notPriced」（复核实测 priced=0/notPriced=0）。现读侧按零费率
+  // 快照（rate.list=0 且 rate.cost=0）识别存量事件，免一次性迁移；费率在配但量小
+  // 取整为 0（rate.cost>0）仍算 priced。进程内最小装配直测 summary SQL 两个分支。
+  section('#14 复核：存量零费率事件读侧识别（进程内最小装配）')
+  {
+    const legacyCtx = new Context()
+    await legacyCtx.plugin(platformCore, { dataDir: join(DATA_DIR, 'legacy-pricing'), startHttp: false })
+    await legacyCtx.plugin(resourceCore)
+    await legacyCtx.plugin(iam)
+    await legacyCtx.plugin(usage)
+    legacyCtx.usage.upsertPrice({ pattern: 'model:legacy-zero', meter_key: 'tokens', list_cents_per_unit: 0, cost_cents_per_unit: 0, units_per_step: 1000, tax_rate: 0, currency: 'CNY', rate_version: 'legacy-zero-v1' })
+    legacyCtx.usage.upsertPrice({ pattern: 'model:legacy-round', meter_key: 'tokens', list_cents_per_unit: 0, cost_cents_per_unit: 1, units_per_step: 1000, tax_rate: 0, currency: 'CNY', rate_version: 'legacy-round-v1' })
+    const legacyRecord = (resource, tokens, idem) => legacyCtx.usage.record({
+      org: 'legacy-org', subject: 'agent:legacy-a', principal: 'org:legacy-org',
+      resource, meters: [{ key: 'tokens', value: tokens, unit: 'token' }], idempotency_key: idem,
+    })
+    // 全零费率事件（现行代码会带标注；随后手工剥掉标注模拟「升级前入账」的存量行）
+    legacyRecord('model:legacy-zero', 1000, 'legacy-zero-1')
+    const zeroRow = legacyCtx.txnStore.one('usage_events', { idempotency_key: 'legacy-zero-1' })
+    const strippedPricing = JSON.parse(zeroRow.pricing_json)
+    delete strippedPricing.cost_status
+    delete strippedPricing.rate.nonbillable
+    check('前置：存量形态模拟（剥掉 cost_status/nonbillable 后无标注可认）',
+      strippedPricing.cost_status === undefined && strippedPricing.rate.nonbillable === undefined && strippedPricing.cost_cents === 0)
+    legacyCtx.txnStore.run('UPDATE usage_events SET pricing_json = ? WHERE idempotency_key = ?', [JSON.stringify(strippedPricing), 'legacy-zero-1'])
+    // 费率在配但量小取整为 0（400 tokens × 1分/千 → round 0.4 = 0）：有费率在配，算 priced
+    const roundEvent = legacyRecord('model:legacy-round', 400, 'legacy-round-1')
+    const legacySummary = legacyCtx.usage.summary({ from: '2020-01-01T00:00:00.000Z', to: '2999-01-01T00:00:00.000Z' })
+    const zeroSummaryRow = legacySummary.byResource.find((row) => row.resource === 'model:legacy-zero')
+    const roundSummaryRow = legacySummary.byResource.find((row) => row.resource === 'model:legacy-round')
+    check('#14 复核：存量零费率快照（无标注）被识别为 not_priced（免迁移）',
+      zeroSummaryRow?.not_priced_events === 1 && zeroSummaryRow?.events === 1,
+      JSON.stringify(zeroSummaryRow))
+    check('#14 复核：费率在配但量小取整为 0 仍算 priced（不与「未定价」混读）',
+      roundSummaryRow?.events === 1 && roundSummaryRow?.not_priced_events === 0 && roundEvent.pricing.cost_cents === 0,
+      JSON.stringify(roundSummaryRow))
+  }
 
   // ================================================================ 第 6 步：OIDC Provider（浏览器授权流 / 协议合规）
   section('第 6 步：OIDC Provider（浏览器授权流 / RS256 / 协议合规）')

@@ -3,6 +3,41 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · #13/#14 复核残留闭环：契约自描述 + 面板自持登录面 + 存量计价识别（2026-10-29）
+
+复核报告（截图）指出两项已关闭 issue 仍有残留，逐项核实属实并修复：
+
+**#13 残留：capabilities 声明 `board` 但 `GET /api/panel/board` 404（「契约不实」）**
+
+- 根因：capabilities 只是**路由族名**（`board` = 「有 board 族路由」），实际形状是
+  `/api/panel/:dept/board`——按字面拼平铺 URL 必然 404，契约没把可调形状告诉前台。
+- 修复：`contract.panel` 新增 `routes[]`（additive，method+path 从 declaredRoutes 实时推导）——
+  `:dept` 参数化路由、写-only 族（agents/config 仅 PUT）、scenegraph/scenegraphs 并存族全部
+  显式可见，前台按路由模式对齐调用形状，不再「声明了能力但按字面调就 404」。
+- 顺带闭环**前台 #2 复核残留中的 panel-auth 404 欠账**：`/api/panel/auth/login`、
+  `/api/panel/auth/refresh` 此前仅登记公开白名单、处理器从未合入 main（源码注释自认
+  「先行登记，合入后即闭环」）——现与 `/api/auth/*` 同一 authn 后端、同响应形状补齐注册，
+  面板本页登录/刷新不再 404。
+
+**#14 残留：成本仍全零且 `priced=0/notPriced=0`（两个桶都没进）**
+
+- 根因一（价格簿全零）：6/6 模型 `costCentsPerKTokens=0` 属运行时数据（模型经管理端登记时
+  未填费率），非代码缺陷——计价链路按「全零费率 = 未定价」处理是正确语义；**补录真实费率
+  仍是运营动作**（管理端模型表单已含输入/输出单价字段，价格簿按调用时点读取、即时生效）。
+- 根因二（双零盲区，代码缺陷，本次修复）：`/api/usage/summary` 的 `not_priced` 判定只认
+  修复后新增的标注字段——**存量事件**（标注引入前入账）既进不了 priced 也进不了 notPriced。
+  现读侧按零费率快照（`rate.list=0 且 rate.cost=0`，存量事件 rate 快照恒在）识别存量零费率
+  事件为 not_priced，**免一次性迁移**；费率在配但量小取整为 0 仍算 priced，rate 缺失保守计 priced。
+- audit 成本报表行新增 `coverage`（`live`/`legacy`/`mixed`）：存量 CostRecord（无覆盖率字段）
+  与被新事件合并过的存量桶（`legacyUncounted` 标记）不再把「存量未知」误读成「在档 0」，
+  门禁可区分「归集可信」与「需回填/待费率」。
+- mfg×10 / ddws×8 / agent-stream 仍 404 属**定制面板域自研面**（handoff F 遗留采纳清单明确
+  「main 不消费，留定制分支另行评估」），不属本仓欠账；health 契约 `routes[]` 已让宿主实际
+  支持面对前台显式可协商。
+
+- selftest 1668/1668 全绿（本批新增 8 断言：契约 routes[] 与能力族对账、面板自持登录/刷新
+  401→200、存量零费率读侧识别与取整为 0 不混读；清单 lint 同步登记两条新路由）。
+
 ## [Unreleased] · README 三视图：中文 / English / Agent（2026-10-29）
 
 - **README 拆成三种视图**，共用同一套事实，面向不同读者：

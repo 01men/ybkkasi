@@ -22,9 +22,18 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
   // 底座是契约所有者：/api/health 公开暴露面板契约版本 + 能力清单（从已注册路由实时推导，
   // 单一事实源 = declaredRoutes）+ 已配置部门。前台（DeptAI-UI-DSH 等）据此对齐宿主支持面，
   // 版本组合偏差 fail-visible 而非静默 404；apiRoutes 计数与 /api/openapi.json 对账。
+  //
+  // #13 复核残留（2026-10-29）：capabilities 只是路由族名（board = 「有 board 族路由」），
+  // 不代表平铺 URL GET /api/panel/board 存在——实际形状是 /api/panel/:dept/board，
+  // 按字面拼接必然 404（「契约不实」）。契约因此附 routes[]（method+path 实时推导）：
+  // 前台按路由模式对齐调用形状，参数化/写-only 族（agents/config 仅 PUT）不再靠试错。
   http.register('GET', '/api/health', (exchange) => {
     const capabilities = new Set<string>()
+    const panelRoutes: Array<{ method: string; path: string }> = []
     for (const route of ctx.httpServer.declaredRoutes) {
+      if (route.path.startsWith('/api/panel/')) {
+        panelRoutes.push({ method: route.method, path: route.path })
+      }
       const segments = route.path.split('/').filter(Boolean)
       const panelIdx = segments.indexOf('panel')
       if (panelIdx < 0) continue
@@ -39,6 +48,7 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
     try {
       depts = ctx.panel.deptConfigs().all().map((item) => item.id).filter(Boolean)
     } catch { /* 面板域未装配：能力清单照常返回，depts 置空 */ }
+    panelRoutes.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
     exchange.ok({
       status: 'ok',
       time: new Date().toISOString(),
@@ -47,6 +57,9 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
         panel: {
           version: PANEL_CONTRACT_VERSION,
           capabilities: [...capabilities].sort(),
+          // 可调路由形状（additive）：路径含 :dept 等参数段时按模式替换后调用，
+          // 能力族名与平铺 URL 不再混淆（空库部署也返回 []，字段存在即契约 v1+）
+          routes: panelRoutes,
           // 恒为数组（空库部署也返回 []）：前台按「字段存在即契约 v1」做对齐判断
           depts: [...new Set(depts)].sort(),
         },
@@ -63,7 +76,10 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
   }, { access: 'public' })
 
   // -- 认证 ---------------------------------------------------------------
-  http.register('POST', '/api/auth/login', async (exchange) => {
+  // 面板自持登录面（交接 F 清单 N 节）与控制台登录转发同一 authn 后端、响应形状一致：
+  // 白名单早已登记两条 /api/panel/auth/* 路径，但处理器此前未合入 main（面板本页登录
+  // 实际 404，前台 #2 复核残留）——2026-10-29 补齐闭环，口令错误照旧 401。
+  const handleLogin = async (exchange: HttpExchange): Promise<void> => {
     const { username, password } = body<{ username: string; password: string }>(exchange)
     if (!username || !password) {
       exchange.fail(400, 'BAD_REQUEST', t('用户名与密码必填'))
@@ -87,7 +103,26 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
       const message = error instanceof Error ? error.message : String(error)
       exchange.fail(401, 'LOGIN_FAILED', message)
     }
-  }, { access: 'public' })
+  }
+  http.register('POST', '/api/auth/login', handleLogin, { access: 'public' })
+  http.register('POST', '/api/panel/auth/login', handleLogin, { access: 'public' })
+
+  const handleRefresh = async (exchange: HttpExchange): Promise<void> => {
+    const { refreshToken } = body<{ refreshToken?: string }>(exchange)
+    if (!refreshToken) {
+      exchange.fail(400, 'BAD_REQUEST', t('refreshToken 必填'))
+      return
+    }
+    try {
+      const result = ctx.authn.refreshSession(refreshToken)
+      exchange.ok({ token: result.token, refreshToken: result.refreshToken })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      exchange.fail(401, 'REFRESH_FAILED', message)
+    }
+  }
+  http.register('POST', '/api/auth/refresh', handleRefresh, { access: 'public' })
+  http.register('POST', '/api/panel/auth/refresh', handleRefresh, { access: 'public' })
 
   // -- 三方登录（IdentityProviderAdapter 链路） ------------------------------
   http.register('POST', '/api/auth/sso/authorize', async (exchange) => {
@@ -334,21 +369,6 @@ else if(nx&&/^https?:\\/\\/(localhost|127\\.|10\\.|192\\.168\\.|172\\.(1[6-9]|2[
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       exchange.fail(401, 'SSO_REGISTER_FAILED', message)
-    }
-  }, { access: 'public' })
-
-  http.register('POST', '/api/auth/refresh', async (exchange) => {
-    const { refreshToken } = body<{ refreshToken: string }>(exchange)
-    if (!refreshToken) {
-      exchange.fail(400, 'BAD_REQUEST', t('refreshToken 必填'))
-      return
-    }
-    try {
-      const result = ctx.authn.refreshSession(refreshToken)
-      exchange.ok({ token: result.token, refreshToken: result.refreshToken })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      exchange.fail(401, 'REFRESH_FAILED', message)
     }
   }, { access: 'public' })
 

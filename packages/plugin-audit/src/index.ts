@@ -119,6 +119,12 @@ export interface CostRecord extends RecordBase {
    */
   pricedEvents?: number
   notPricedEvents?: number
+  /**
+   * 存量未计数标记（#14 复核 additive）：覆盖率字段引入前已聚合的桶，既有 portion 的
+   * priced/notPriced 不可知（事件级权威口径见 /api/usage/summary 的零费率快照识别）。
+   * costReport 据此把行标为 coverage=legacy/mixed，门禁不再把「存量未知」误读成「在档 0」。
+   */
+  legacyUncounted?: boolean
 }
 
 export interface ApprovalRecord extends RecordBase {
@@ -780,14 +786,17 @@ export class AuditService extends Service {
         // #14：覆盖率增量合并（存量桶无字段按 0 起算，additive 不迁移）
         pricedEvents: (existing.pricedEvents ?? 0) + (input.pricedEvents ?? 0),
         notPricedEvents: (existing.notPricedEvents ?? 0) + (input.notPricedEvents ?? 0),
+        // #14 复核：覆盖率字段引入前已聚合的桶被新事件合并——既有 portion 的覆盖率不可知，
+        // 标记混合口径，costReport 的 coverage 据此报 mixed 而非谎报 live 100% 覆盖
+        ...(existing.pricedEvents === undefined && existing.notPricedEvents === undefined ? { legacyUncounted: true } : {}),
       })
     } else {
       this.costs().insert({ id: newId('cost'), ...input })
     }
   }
 
-  costReport(groupBy: 'app' | 'agent' | 'org' | 'date', from?: string, to?: string): Array<{ key: string; llmTokens: number; toolCalls: number; costYuan: number; priced: number; notPriced: number }> {
-    const buckets = new Map<string, { key: string; llmTokens: number; toolCalls: number; costYuan: number; priced: number; notPriced: number }>()
+  costReport(groupBy: 'app' | 'agent' | 'org' | 'date', from?: string, to?: string): Array<{ key: string; llmTokens: number; toolCalls: number; costYuan: number; priced: number; notPriced: number; coverage: 'live' | 'legacy' | 'mixed' }> {
+    const buckets = new Map<string, { key: string; llmTokens: number; toolCalls: number; costYuan: number; priced: number; notPriced: number; liveRecords: number; legacyRecords: number }>()
     for (const cost of this.costs().all()) {
       if (from && cost.date < from) continue
       if (to && cost.date > to) continue
@@ -798,16 +807,29 @@ export class AuditService extends Service {
         const entity = cost.agentId ? this.ctx.resourceCore?.collection('agent').get(cost.agentId) : undefined
         key = entity ? this.ctx.iam?.orgs().get(entity.orgId)?.name ?? entity.orgId : t('（未归集组织）')
       }
-      const bucket = buckets.get(key) ?? { key, llmTokens: 0, toolCalls: 0, costYuan: 0, priced: 0, notPriced: 0 }
+      const bucket = buckets.get(key) ?? { key, llmTokens: 0, toolCalls: 0, costYuan: 0, priced: 0, notPriced: 0, liveRecords: 0, legacyRecords: 0 }
       bucket.llmTokens += cost.llmTokens
       bucket.toolCalls += cost.toolCalls
       bucket.costYuan += cost.costYuan
       // #14：覆盖率（存量记录无字段不计入分母——门禁按 priced+notPriced>0 判定归集可信度）
       bucket.priced += cost.pricedEvents ?? 0
       bucket.notPriced += cost.notPricedEvents ?? 0
+      // #14 复核：coverage 让门禁区分「在档 0」与「存量未知」——legacy = 全部记录早于覆盖率
+      // 字段（priced/notPriced 恒 0 属不可知而非真 0）；mixed = 部分存量未计数；live = 全量在档
+      const hasCoverage = cost.pricedEvents !== undefined || cost.notPricedEvents !== undefined
+      if (hasCoverage && !cost.legacyUncounted) bucket.liveRecords += 1
+      else bucket.legacyRecords += 1
       buckets.set(key, bucket)
     }
-    return [...buckets.values()].map((bucket) => ({ ...bucket, costYuan: Math.round(bucket.costYuan * 1000) / 1000 }))
+    return [...buckets.values()].map((bucket) => ({
+      key: bucket.key,
+      llmTokens: bucket.llmTokens,
+      toolCalls: bucket.toolCalls,
+      costYuan: Math.round(bucket.costYuan * 1000) / 1000,
+      priced: bucket.priced,
+      notPriced: bucket.notPriced,
+      coverage: bucket.liveRecords > 0 && bucket.legacyRecords === 0 ? 'live' as const : bucket.liveRecords === 0 ? 'legacy' as const : 'mixed' as const,
+    }))
       .sort((a, b) => b.costYuan - a.costYuan)
   }
 

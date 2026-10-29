@@ -659,8 +659,12 @@ export class UsageService extends Service {
     // 裸关联子查询只对组内某一行求值，tokens 因此只统计到每组任意一条事件（J4 报表小 176 倍）。
     // SUM((SELECT …)) 语义 = 逐行求子查询值再求和，与 json_each JOIN 口径一致且三维自洽。
     const tokensExpr = "COALESCE(SUM((SELECT SUM(CAST(json_extract(m.value, '$.value') AS INTEGER)) FROM json_each(e.meters_json) m WHERE json_extract(m.value, '$.key') LIKE '%tokens%')), 0)"
-    // #14：not_priced = cost 为 0 且（零费率快照 或 显式 not_priced 标注）——「未知」与「真零成本」读侧分开
-    const notPricedExpr = "COALESCE(SUM(CASE WHEN CAST(json_extract(e.pricing_json, '$.cost_cents') AS INTEGER) = 0 AND (json_extract(e.pricing_json, '$.rate.nonbillable') = 1 OR json_extract(e.pricing_json, '$.cost_status') = 'not_priced') THEN 1 ELSE 0 END), 0)"
+    // #14：not_priced = cost 为 0 且（显式标注 或 零费率快照）——「未知」与「真零成本」读侧分开。
+    // 零费率快照判定同时覆盖两类事件：修复后事件带 nonbillable/cost_status 标注；存量事件
+    //（标注字段引入前入账）无标注，但 rate 快照恒记录实际采用的费率——list=0 且 cost=0 即
+    // 全零费率，语义与标注等价，读侧直接识别免一次性迁移。费率在配但量小取整为 0
+    //（rate.cost>0）不匹配，仍算 priced；rate 缺失（极端老数据）无法判定，保守计 priced。
+    const notPricedExpr = "COALESCE(SUM(CASE WHEN CAST(json_extract(e.pricing_json, '$.cost_cents') AS INTEGER) = 0 AND (json_extract(e.pricing_json, '$.rate.nonbillable') = 1 OR json_extract(e.pricing_json, '$.cost_status') = 'not_priced' OR (json_extract(e.pricing_json, '$.rate.list_cents_per_unit') = 0 AND json_extract(e.pricing_json, '$.rate.cost_cents_per_unit') = 0)) THEN 1 ELSE 0 END), 0)"
     const byResource = this.ctx.txnStore.sql<{ resource: string; events: number; tokens: number; cost_cents: number; charge_cents: number; not_priced_events: number }>(
       `SELECT e.resource AS resource, COUNT(*) AS events, ${tokensExpr} AS tokens,` +
       " COALESCE(SUM(CAST(json_extract(e.pricing_json, '$.cost_cents') AS INTEGER)), 0) AS cost_cents," +
