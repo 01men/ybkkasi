@@ -1,3 +1,8 @@
+---
+name: dsh-ops-admin
+description: 诊断平台状态并按领域选择运维手册；执行变更前核查授权与影响。
+---
+
 # Skill: dsh-ops-admin（平台总控）
 
 ## 何时使用
@@ -26,7 +31,7 @@
 - 升级（仅 source 安装形态）：先 `update_apply { dryRun: true }` 预演，向使用者确认后
   `update_apply { reason: "<升级原因>" }`（git pull --ff-only + npm install），**完成后提醒使用者重启平台进程**；
   本地有未提交修改会安全失败，请使用者人工处理后再试。
-- bundle 安装形态：工具会返回宿主侧指引（`dsh plugin update github:01men/ybkk-AIOS`），按指引转述即可。
+- bundle 安装形态：工具会返回宿主侧指引（`dsh plugin update github:01men/ybkkasi`），按指引转述即可。
 - 升级是管理员权限（platform.update.apply）；检查/查看为 platform.update.read。
 
 ## 远程 dsh 接入（本机未配置宿主时第一步）
@@ -38,13 +43,13 @@
 ## 通用运维闭环（方法论）
 1. **诊断**：`dshctl audit alerts --unread` + `dshctl mcp list` 定位异常
 2. **取证**：`dshctl audit logs --resourceId=<id>` 回溯操作链
-3. **预演**：变更命令带 `--dry-run` 查看影响面
-4. **执行**：L4 高危操作生成审批单（`--reason` 必填），有审批权限者单人通过即自动执行
+3. **预演**：仅对明确支持预演的命令使用 `--dry-run`；其他命令不要假设该参数能阻止写入，先核实授权和执行方式
+4. **执行**：依目标操作的实际权限与审批规则执行，高危变更先取得明确授权
 5. **验证**：`dshctl <resource> get <id>` 确认终态 + 审计回写
 
 ## 护栏（全局）
 - offline / freeze / revoke / deprecate 必须给出 `--reason`，原因永久留痕
-- L4 操作（下线/吊销/删除/批量>10）一律走审批单，发起人与审批人不得为同一人
+- 下线、吊销、删除或批量变更前核查实际审批流程；不要假设所有接口都会自动触发审批
 - 批量操作超过 10 个对象需二次确认
 - 一切只读命令（list/get/metrics/logs）可放心执行
 

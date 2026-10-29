@@ -18,7 +18,10 @@
     "packages",
     "src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "skills",
+    "cli",
+    "llms.txt"
   ],
   "dsh": {
     "bundle": {
@@ -37,6 +40,7 @@
   "scripts": {
     "start": "node --experimental-strip-types src/main.ts",
     "selftest": "node scripts/selftest.mjs",
+    "test:cli": "node --test cli/tests/*.test.mjs",
     "lint:manifests": "node --experimental-strip-types scripts/lint-manifests.mjs",
     "manifests": "node scripts/gen-manifests.mjs",
     "lint:boot-order": "node --experimental-strip-types scripts/check-boot-order.mjs",

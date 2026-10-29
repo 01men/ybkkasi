@@ -49,7 +49,7 @@ The full tree with per-plugin descriptions is in [README.md §4](README.md).
 | Form | What runs where | Entry point | Notes |
 |---|---|---|---|
 | Independent host | `node src/main.ts` serves REST + Console SPA + tools bridge | platform port (default 7300) | no dsh required; baseline for all other forms |
-| Full dsh runtime (source checkout) | same plugin tree patched into `dsh web --patch cordis.yml`, sharing the `data/` directory | both ports | operations tools surface in dsh's native ToolRuntime and become model-callable |
+| Full dsh runtime (source checkout) | plugin tree patched into `dsh web` with an overlay | dsh web `/rq` | experimental; validate with isolated data and never share a data directory between processes |
 | Bundle mount (recommended for use) | `dsh plugin --profile web add github:01men/ybkkasi` | **dsh web port is the single entry** | the host bridge mounts the YuanBingKe data plane under the `/rq` prefix |
 
 The key piece is **`dsh-plugin-dsh-bridge` (the host bridge)**: it mounts YuanBingKe's data plane — REST, the Console SPA, static docs, and the `/mcp` endpoint — into the dsh webServer under the **`/rq` prefix**, so users and agents reach everything through one port; the platform's own HTTP listener can be turned off with `startHttp: false`. Companion access-layer plugins complete the in-session experience: `dsh-plugin-panel-core` (department Agent workbench Panel（面板）: `/panel` SPA + `/api/panel/*` REST + SSE), `dsh-plugin-rq-card` (four-state execution cards with a thumbs-up / thumbs-down feedback bar injected into dsh conversations — a `dsh.client` dual-sided plugin), and `dsh-plugin-dingtalk-bridge` (DingTalk group bridge, outbound delivery, approval push, alert channels).
@@ -77,7 +77,8 @@ Then run `pnpm dsh web --patch <project>/cordis.yml` from the dsh checkout. Bund
 Domain operations skill manuals (`skills/dsh-ops-*/SKILL.md`, 9 skills, including the `dsh-ops-admin` master index) do not auto-enter dsh's skill system — dsh only scans `.dsh/skills` roots. Host operators distribute them explicitly:
 
 ```bash
-cp -r skills/dsh-ops-* ~/.dsh/skills/    # user level: available in all sessions
+mkdir -p ~/.dsh/skills
+cp -r skills/dsh-ops-* ~/.dsh/skills/    # from a source checkout; check for existing names before copying
 # or project level:
 mkdir -p .dsh/skills && cp -r skills/dsh-ops-* .dsh/skills/
 ```

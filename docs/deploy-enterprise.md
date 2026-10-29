@@ -11,12 +11,10 @@
 | 形态 | 进程 | 说明 | 适用 |
 |---|---|---|---|
 | A. 独立宿主（默认） | `node src/main.ts` | 一个进程提供 REST 网关 + 控制台 SPA + 41 运维工具桥（含 4 个接入管理工具） | 企业生产最小形态，控制台人工使用 |
-| B. 独立宿主 + dsh 运行时 | A 的进程 + `dsh web --patch cordis.yml` | dsh 侧插件树对模型暴露全部运维工具，Agent 可用自然语言运维平台；两进程**共享同一 `data/` 目录**。形态 A（独立宿主）是默认、承诺 SLA 的形态；本形态（完整 dsh 运行时）为 **experimental** | 需要 Agent 驱动运维的企业 |
+| B. dsh 运行时挂载 | `dsh web --patch <overlay>` | 配置将平台数据面挂载至 dsh Web 的 `/rq`；此形态为实验性，需在隔离环境验证 | 需要 Agent 驱动运维的企业 |
 | C. 远程 dsh 接入 | 宿主（A）+ 远程电脑 `dsh plugin add` | 远程电脑经插件市场安装本平台，凭**一次性接入码**向宿主申请机器凭证；运维工具全部远程代理到宿主执行（免源码、免共享 data） | 多办公点/多人用 dsh 协作运维同一平台 |
 
-> 关键事实：`cordis.yml` 不挂载 console 插件——控制台 SPA 与 REST 始终由独立宿主进程提供；
-> dsh 侧只挂业务插件（`provideToolRuntime: false`，使用 dsh 原生 ToolRuntime）。
-> 因此**形态 B 也必须先完成形态 A**。
+> `cordis.yml` 包含 console 和 dsh bridge，并关闭平台独立 HTTP 监听，目标是在 dsh 进程内提供 `/rq` 入口。不要让独立宿主和 dsh 进程同时使用同一数据目录。
 
 环境要求：Node ≥ 22.6（原生 TypeScript 运行，无构建步骤）；数据落盘在 `--data` 指定目录
 （JSON 集合 + SQLite `txnstore.db`）。
@@ -149,19 +147,26 @@ Restart=always
 
 ## 三、dsh 运行时接入（形态 B，启用 Agent 运维）
 
-前提：deepseek-harness 源码检出可用（`pnpm dsh web`）。
+此形态为实验性，先使用独立的数据目录验证。已安装 dsh 时可使用插件包：
 
 ```bash
-# 1. 生成接入 overlay（替换 <PROJECT_ROOT> 为本仓库绝对路径）
-sed 's|<PROJECT_ROOT>|/opt/ops-platform|g' cordis.yml > /tmp/ops-overlay.yml
+dsh plugin --profile web add github:01men/ybkkasi
+```
 
-# 2. 在 deepseek-harness 检出中启动（与独立宿主共享 data/，两进程同时在线）
+源码挂载需要可运行的 deepseek-harness 检出、同一个 cordis 实例，并将 `cordis.yml` 的 `<PROJECT_ROOT>` 替换为本仓库的 `file://` 绝对 URL（路径含空格或非 ASCII 字符也需要 URL 编码）。可在本仓库根目录生成 overlay：
+
+```bash
+node --input-type=module -e '
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const root = pathToFileURL(process.cwd()).href.replace(/\/$/, "");
+writeFileSync("/tmp/ops-overlay.yml", readFileSync("cordis.yml", "utf8").replaceAll("<PROJECT_ROOT>", root));
+'
+# 在 deepseek-harness 检出中启动，并验证 /rq 控制台及实际可用工具
 pnpm dsh web --patch /tmp/ops-overlay.yml
 ```
 
-Agent 运维凭据（环境变量）：`DSHCTL_URL`（默认 `http://127.0.0.1:7300`）、
-`DSHCTL_USER` / `DSHCTL_PASS`（建议 ops 类账号，勿用 admin 常驻）、或 `DSHCTL_TOKEN`。
-日常运维让 Agent 读 `skills/dsh-ops-admin/SKILL.md` 即可（诊断→取证→dry-run 预演→执行→验证闭环，L4 高危操作自动走审批单）。
+源码模式下须确保本仓库的 `@deepseek-ai/cordis` 与 dsh 使用同一实例；会话卡片的浏览器代码如有改动，需要重新构建。不要让多个进程同时使用同一数据目录。运维手册见 `skills/dsh-ops-admin/SKILL.md`。
 
 ---
 
@@ -243,12 +248,12 @@ DSHCTL_URL=http://宿主IP:7300 DSHCTL_USER=admin DSHCTL_PASS=*** \
    c. GET /api/overview（Bearer token）返回 200；
    d. npm run selftest 全部通过；npm run lint:manifests 70/70 通过。
 6.（可选，仅当"接入 dsh"=是）按仓库 docs/deploy-enterprise.md 第三节生成 overlay 并以
-   pnpm dsh web --patch 启动，验证两进程共享同一 data/。
+   pnpm dsh web --patch 启动，在隔离数据目录中验证 /rq；不得让两个进程同时共享 data/。
 7. 回报：commit hash、服务地址、admin 首登是否成功、自测结果、初始口令交付方式（不得明文贴在公开渠道）。
 
 【护栏】
 - 一切高危操作（下线/吊销/删除）必须走平台审批单并留痕，不得绕过；
-- 只读命令可自由执行；任何变更前先 --dry-run 预演；
+- 只读命令可自由执行；仅对明确支持预演的命令使用 --dry-run，其他命令不得假设该参数能阻止写入；
 - 部署完成后建议立即改掉 admin 初始口令并创建企业自有账号（参考 skills/dsh-ops-iam）。
 ```
 

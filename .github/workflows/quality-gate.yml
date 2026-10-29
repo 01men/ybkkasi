@@ -48,6 +48,8 @@ jobs:
         run: npm run lint:i18n
       - name: Realtime transport tests (SSE 优先 + 轮询降级)
         run: node packages/plugin-console/public/js/realtime.test.mjs
+      - name: CLI dry-run safety tests
+        run: npm run test:cli
       - name: Selftest (全量断言 incl. P95 gate & fault injection)
         run: npm run selftest
       # test:contracts 由耦合组添加，可能尚未存在：--if-present 兼容空缺

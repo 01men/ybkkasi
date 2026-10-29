@@ -1,3 +1,8 @@
+---
+name: dsh-ops-agent
+description: 管理数字员工的登记、授权、上下线和运行指标。
+---
+
 # Skill: dsh-ops-agent
 
 ## 何时使用
