@@ -103,6 +103,20 @@ const COPY = {
     message: '当前账号缺少执行此操作所需的权限点。如需办理，请联系管理员调整角色授权。',
     action: null,
   },
+  // 面板域扩展收编（DeptAI-UI-DSH，2026-10-29）：制造工具箱 AI 工具的诚实降级码——
+  // 面板零密钥铁律，模型面在宿主平台侧；未配置时 503 + 本码，不冒充成功。
+  MODEL_NOT_CONFIGURED: {
+    tone: 'warn',
+    title: '模型尚未配置',
+    message: '该 AI 工具需要平台侧配置可用模型才能执行（面板不持有任何模型密钥）。请在模型网关登记模型渠道后重试。',
+    action: null,
+  },
+  INTERNAL_ERROR: {
+    tone: 'danger',
+    title: '服务内部错误',
+    message: '处理本次请求时发生未预期的错误。请稍后重试；若持续出现，请联系平台管理员并附上发生时间。',
+    action: null,
+  },
   // W1 MCP 治理（2026-10-22）：服务创建/更新携带明文敏感头被门禁拒绝——
   // 引导改走「服务凭证」入口（PUT /api/mcp/services/:id/credential），经 Secret Broker 保管、永不明文落库。
   SENSITIVE_HEADERS_FORBIDDEN: {

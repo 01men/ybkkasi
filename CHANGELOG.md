@@ -3,6 +3,39 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · 面板域扩展整体收编：战略看板 / 制造工具箱 / 本地钉钉面 / Agent 流式应答（DeptAI-UI-DSH 前台 #2 底座半，2026-10-29）
+
+维护者拍板「全部收编生效」后，DeptAI-UI-DSH 前台仓 panel-core 的 21 条扩展路由整体并入 main
+（此前按 handoff F 清单留定制分支；并入后 gate-01 前台对 main 宿主的 23 条缺口全部闭环，
+另 2 条 panel-auth 已在上批补齐）：
+
+- **战略看板 `GET /api/panel/board`**（panel.read）：卡片包（card pack，角色 × 平台过滤、
+  失效资产引用过滤 + 告警）+ 漏斗（曝光/点击→调用→完成）+ WAIC 周聚合 + ROI 替代工时估算
+  （估算口径声明随响应下发）。卡片包 5 平台 JSON 随包分发，`CARDPACK_DIR` 可覆盖。
+- **制造工具箱 `/api/panel/mfg/*`（10 条）**：13 个确定性计算内核（OEE/CPK/帕累托/EOQ 等）
+  + 3 个 AI 工具（Skill 放行制：评估→人工审阅→签署放行，fail-closed）+ 100 项选题清单
+  （来源追溯 PMO 行号 + PDF 页码）。目录/选题/模板/执行/导出为 panel.read/write，
+  评估发起与放行签署为 panel.config.write（放行是治理动作）。配套 `panel_mfg_*` 工具族 ×3；
+  对外原因码 `MODEL_NOT_CONFIGURED`（面板零密钥铁律，诚实 503）与 `INTERNAL_ERROR`
+  补入前端文案注册表。
+- **本地钉钉面 `/api/panel/ddws/*`（8 条）**：dws CLI 桥（钉钉官方命令行）——状态/一键安装/
+  设备流登录（激活指令弹窗直出）/群绑定/连通性测试/入向消息拉取（按 messageId 幂等去重落库）。
+  与宿主 plugin-dingtalk-bridge **共存不互斥**（命名空间铁律：绝不碰 /api/dingtalk/*）；
+  消息 ddSync 出向按「群桥在场让位宿主桥，否则 dws 投递」事件时裁决。CLI 缺席全部诚实降级
+  （200 + ok:false，降级是数据不是传输错误）。
+- **Agent 流式应答 `POST /api/panel/:dept/agent-stream`**（panel.write，SSE-over-POST）：
+  @数字同事 → 逐事件 start/delta/done/fallback；`messages` 面新增 `streamAgent` 参数
+  （跳过隐式派发防双跑）。与 invokeAgent 同一决策链（资产绑定/模型取向/#17 组织兜底/
+  V16/D08 分型标注/审计留痕/D1 协作计量同键幂等），`<think>` 思考块经门控不进正文；
+  modelgw 当前非流式单轮 → 整段单个 delta（不造假打字动画），网关长出 streamEvents 自动走增量。
+- **`panel_board_digest` 工具**：战略看板摘要的工具面同构（panel.read）。
+- **移植修正**：`ddws/pull` 原实现按 `:dept` 路径参数解析部门，平铺路径下必 400（前台仓潜在 bug）——
+  改为自 channelId 反查频道归属部门并做组织范围校验。
+- 契约同步：panel-core manifest 登记 21 路由 + 4 工具；health `contract.panel` 能力族实时
+  扩容（board/mfg/ddws/agent-stream）；加载屏 486 REST 路由 / 96 MCP 工具。
+- selftest 1697/1697 全绿（本批新增 29 断言：流式事件链/隐式派发跳过/幂等计量/跨部门拒绝 7 条，
+  看板聚合与越权、mfg 真实执行/导出/放行越权、ddws 诚实降级与绑定 22 条；错误文案映射扫描同步扩容）。
+
 ## [Unreleased] · #13/#14 复核残留闭环：契约自描述 + 面板自持登录面 + 存量计价识别（2026-10-29）
 
 复核报告（截图）指出两项已关闭 issue 仍有残留，逐项核实属实并修复：

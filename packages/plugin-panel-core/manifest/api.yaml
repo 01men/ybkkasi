@@ -17,6 +17,14 @@ endpoints:
   - POST /api/panel/channels/:id/read（频道已读游标）
   - PUT /api/panel/:dept/config（面板配置） · PUT /api/panel/:dept/agents（Agent 阵容） · POST /api/panel/:dept/artifacts（产物登记）
   - POST /api/panel/:dept/scenes/:scene/diagnose（场景诊断） · POST /api/panel/:dept/scenes/:scene/sync-dingtalk（场景钉钉同步）
+  - GET /api/panel/board（panel.read；战略看板：卡片包角色×平台过滤 + 漏斗/WAIC/ROI 估算聚合，DeptAI-UI-DSH 收编 2026-10-29）
+  - POST /api/panel/:dept/agent-stream（panel.write；SSE-over-POST 流式应答：start/delta/done/fallback 逐事件，应答照常落库广播）
+  - GET /api/panel/mfg/catalog · GET /api/panel/mfg/roadmap · GET /api/panel/mfg/releases · GET /api/panel/mfg/evaluation-plan · GET /api/panel/mfg/tools/:id/template（panel.read；制造工具箱目录/选题/放行/评估面）
+  - POST /api/panel/mfg/tools/:id/run · POST /api/panel/mfg/tools/:id/export（panel.write；工具执行与结果导出）
+  - POST /api/panel/mfg/evaluate · POST /api/panel/mfg/releases · DELETE /api/panel/mfg/releases/:skillId（panel.config.write；评估发起与放行签署/撤回——放行是治理动作）
+  - GET /api/panel/ddws/status · GET /api/panel/ddws/login（panel.read；本地钉钉面 dws CLI 桥状态与登录会话轮询）
+  - POST /api/panel/ddws/install · POST /api/panel/ddws/login · DELETE /api/panel/ddws/login · PUT/DELETE /api/panel/ddws/bind（panel.config.write；CLI 安装/设备流登录/群绑定）
+  - POST /api/panel/ddws/test · POST /api/panel/ddws/pull（panel.write；连通性测试与入向消息拉取，失败 200+ok:false 诚实降级）
 tools:
   - panel_agents_list
   - panel_msg_send
@@ -26,6 +34,10 @@ tools:
   - panel_widget_data
   - panel_agent_invoke
   - panel_skill_invoke
+  - panel_board_digest
+  - panel_mfg_tools_list
+  - panel_mfg_tool_run
+  - panel_mfg_roadmap
 services:
   - key: panel
     access: ctx.panel

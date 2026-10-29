@@ -582,6 +582,138 @@ export class PanelService extends Service {
     }
   }
 
+  /** Agent 应答落库 + 事件广播（invokeAgent / streamAgentReply 共用；V16/D08 分型标注随事件透传）。 */
+  private async insertAgentReply(
+    dept: DeptConfigRecord, agentCard: DeptAgent, trigger: MessageRecord, text: string,
+    card?: MessageRecord['card'], usedModel?: string, workforce?: PanelWorkforceNotice,
+  ): Promise<MessageRecord> {
+    const record = this.messages().insert({
+      id: newId('pmsg'), channelId: trigger.channelId, dept: dept.id,
+      senderType: 'agent', senderName: agentCard.name, senderIcon: agentCard.icon,
+      text, mentions: [], ...(card ? { card: { ...card, done: [] } } : {}),
+      ddSync: 'none', agentName: agentCard.name, ...(usedModel ? { model: usedModel } : {}),
+      ...(trigger.sceneCode ? { sceneCode: trigger.sceneCode } : {}),
+    })
+    this.ctx.platformBus.emit(PlatformEvents.PanelMessageCreated, {
+      messageId: record.id, dept: dept.id, channelId: trigger.channelId,
+      senderName: agentCard.name, text, ddSync: 'none', card: record.card, title: record.card?.title ?? '',
+      ...(workforce ? { workforce } : {}),
+    })
+    return record
+  }
+
+  /**
+   * Agent 流式应答（SSE 数据面，自 DeptAI-UI-DSH 收编 2026-10-29）：与 invokeAgent 同一决策链
+   * （资产绑定 → 模型取向严格不回落 → #17 组织兜底 → V16/D08 分型标注 → 审计留痕 → D1 协作计量），
+   * 仅应答通道改为逐事件回调（start/delta/done/fallback），完成后应答照常落库并广播——
+   * 其他端经既有 SSE 通道收到持久消息，流式端只负责增量渲染。modelgw 当前为非流式单轮 →
+   * 整段作为单个 delta（通道能力如实呈现，不造假打字动画）；网关未来长出 streamEvents 时自动走增量。
+   */
+  async streamAgentReply(
+    dept: DeptConfigRecord,
+    agentCard: DeptAgent,
+    trigger: MessageRecord,
+    modelOverride: string | undefined,
+    onEvent: (event: { type: 'start' | 'delta' | 'done' | 'fallback'; text?: string; agent?: string; icon?: string; model?: string; reason?: string }) => void,
+  ): Promise<void> {
+    onEvent({ type: 'start', agent: agentCard.name, icon: agentCard.icon })
+    const fallback = async (reason: string): Promise<void> => {
+      onEvent({ type: 'fallback', agent: agentCard.name, reason })
+      await this.insertAgentReply(dept, agentCard, trigger, t('「{name}」暂不能自主应答：{reason}已转人工待办，请相关同事跟进。', { name: agentCard.name, reason }))
+      this.tasks().insert({
+        id: newId('ptask'), dept: dept.id, title: t('跟进：{text}', { text: trigger.text.slice(0, 40) }),
+        detail: t('Agent「{name}」不可用（{reason}），由消息 {messageId} 转人工', { name: agentCard.name, reason, messageId: trigger.id }),
+        lane: 'todo', assigneeType: 'human', createdBy: `agent:${agentCard.name}`, messageId: trigger.id,
+      })
+      onEvent({ type: 'done', agent: agentCard.name })
+    }
+    // 解析 Agent 资产与模型（与 invokeAgent 同规：显式切换 > 资产 model 属性，不静默回落目录）
+    const ref = agentCard.agentRef?.replace(/^agent:/, '') ?? ''
+    const asset = ref ? this.ctx.resourceCore.list('agent').find((item) => item.id === ref || item.slug === ref || item.name === ref) : undefined
+    if (!asset) return void fallback(t('未绑定 Agent 资产（请在控制台「Agent 本体」登记并在此配置 agentRef）'))
+    const model = modelOverride ?? String((asset.attrs as Record<string, unknown> | undefined)?.model ?? '')
+    if (!model) return void fallback(t('Agent 资产未配置模型（model 属性为空），且本次会话未指定模型'))
+    // 组装频道上下文（最近 8 条）+ 部门场景图谱摘要（与 invokeAgent 同构）
+    const channel = this.channels().get(trigger.channelId)
+    const recent = this.messages().find((m) => m.channelId === trigger.channelId).slice(-8)
+    const contextText = recent.map((m) => `${m.senderName}: ${m.text}`).join('\n')
+    const sceneSummary = this.sceneSummaryForDept(dept)
+    const systemPrompt = [
+      String((asset.attrs as Record<string, unknown> | undefined)?.systemPrompt ?? `你是企业部门协作面板中的数字同事「${agentCard.name}」（${agentCard.desc}）。`),
+      sceneSummary ? `本部门挂载的行业场景图谱要点：\n${sceneSummary}` : '',
+      `以下是频道「${channel?.name ?? ''}」最近对话：\n${contextText}`,
+    ].filter(Boolean).join('\n\n')
+    const workforce = await this.managedWorkforceOf(asset.id)
+    // #17：组织兜底链（caller→dept.orgId→根组织）——机器主体/外部通道不再空串打穿计量
+    const { orgId, orgSource } = this.resolveOrgId(trigger.senderId, dept)
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      { role: 'user' as const, content: trigger.text },
+    ]
+    let usedModel = ''
+    const gatedDelta = createThinkGate((text) => {
+      onEvent({ type: 'delta', agent: agentCard.name, text, ...(usedModel ? { model: usedModel } : {}) })
+    })
+    try {
+      const gateway = this.ctx.modelGateway as {
+        invoke(input: Record<string, unknown>): Promise<{ content: string; model: string }>
+        streamEvents?(input: Record<string, unknown>): AsyncIterable<{ delta?: string; model?: string }>
+      }
+      let content = ''
+      if (typeof gateway.streamEvents === 'function') {
+        for await (const chunk of gateway.streamEvents({ model, orgId, subject: trigger.senderId ? `user:${trigger.senderId}` : 'panel:runtime', messages })) {
+          if (chunk.model) usedModel = chunk.model
+          if (chunk.delta) {
+            content += chunk.delta
+            gatedDelta(chunk.delta)
+          }
+        }
+      } else {
+        // 非流式单轮：整段作为单个 delta（不造假流式动画，通道能力如实呈现）
+        const result = await gateway.invoke({ model, orgId, subject: trigger.senderId ? `user:${trigger.senderId}` : 'panel:runtime', messages })
+        content = result.content
+        usedModel = result.model
+        gatedDelta(result.content)
+      }
+      const finalContent = stripThink(content)
+      if (!finalContent) {
+        await fallback(t('模型只输出了思考过程（<think> 未闭合或正文为空），没有可展示的应答。'))
+        return
+      }
+      await this.insertAgentReply(dept, agentCard, trigger, finalContent, undefined, usedModel || undefined, workforce)
+      onEvent({ type: 'done', agent: agentCard.name })
+      this.auditSafe({
+        type: 'invoke', actorType: 'machine', actorId: `agent:${agentCard.name}`, actorName: agentCard.name,
+        action: 'panel.agent.invoke', resourceType: 'agent', resourceId: asset.id, resourceName: agentCard.name,
+        result: 'ok', detail: `model=${usedModel || model} stream=1 org=${orgSource}${workforce ? `；workforce=受管员工(${workforce.employeeId})，${workforce.notice}` : ''}`,
+        ...(trigger.sceneCode ? { sceneCode: trigger.sceneCode } : {}),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await fallback(t('模型网关调用失败（{message}）。', { message }))
+      this.auditSafe({
+        type: 'invoke', actorType: 'machine', actorId: `agent:${agentCard.name}`, actorName: agentCard.name,
+        action: 'panel.agent.invoke', resourceType: 'agent', resourceId: asset.id, resourceName: agentCard.name,
+        result: 'error', detail: `model=${model} 失败：${message}`,
+        ...(trigger.sceneCode ? { sceneCode: trigger.sceneCode } : {}),
+      })
+    } finally {
+      // 面板协作计量（D1 裁决键格式，与 invokeAgent 同键幂等）：org 缺省跳过，计量不阻塞协作面
+      if (orgId) {
+        try {
+          this.ctx.usage.record({
+            org: orgId,
+            subject: trigger.senderId ? `user:${trigger.senderId}` : 'panel:runtime',
+            principal: `org:${orgId}`,
+            resource: this.meterResource(dept.id, orgId),
+            meters: [{ key: 'calls', value: 1, unit: 'call' }],
+            idempotency_key: `panel:agent:${trigger.id}:${agentCard.name}`,
+          })
+        } catch { /* 计量失败不阻塞回包 */ }
+      }
+    }
+  }
+
   private callerOrgId(userId?: string): string {
     if (!userId) return ''
     try {
@@ -1018,4 +1150,40 @@ export function extractMentions(text: string): string[] {
   const mentions = new Set<string>()
   for (const match of text.matchAll(/@([\p{L}\p{N}·]{2,20})/gu)) mentions.add(match[1]!)
   return [...mentions]
+}
+
+/**
+ * <think> 思考块剥离（自 DeptAI-UI-DSH 收编 2026-10-29）：推理模型的思考过程不入正文。
+ * 只处理开头的思考块（模型惯例位置）；未闭合（思考未结束即截断）视为无正文。
+ */
+const THINK_BLOCK = /^\s*<think>[\s\S]*?<\/think>/
+const THINK_OPEN_UNTERMINATED = /^\s*<think>[\s\S]*$/
+
+export function stripThink(text: string): string {
+  let out = text.replace(THINK_BLOCK, '')
+  if (THINK_OPEN_UNTERMINATED.test(out)) out = ''
+  return out.trimStart()
+}
+
+/** 流式增量的 think 屏蔽门：思考块闭合前按住不发，闭合后放行其后内容（单 delta 形态同样适用）。 */
+export function createThinkGate(emit: (text: string) => void): (text: string) => void {
+  let hold = ''
+  let passed = false
+  return (text) => {
+    if (passed) { emit(text); return }
+    hold += text
+    if (hold.trimStart().startsWith('<think>')) {
+      const close = hold.indexOf('</think>')
+      if (close === -1) return // 思考未结束，继续按住
+      passed = true
+      const rest = hold.slice(close + '</think>'.length)
+      hold = ''
+      if (rest) emit(rest)
+      return
+    }
+    passed = true
+    const all = hold
+    hold = ''
+    emit(all)
+  }
 }

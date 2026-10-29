@@ -6389,6 +6389,50 @@ try {
       const switchReply = afterSwitch.data.messages.find((m) => m.agentName === '面板质检员' && m.model === 'qwen-plus')
       check('面板：对话框模型切换生效（modelOverride 优先于资产 model，回包记录实际所用模型）', Boolean(switchReply),
         JSON.stringify(afterSwitch.data?.messages?.filter((m) => m.agentName)?.map((m) => ({ t: String(m.text).slice(0, 30), model: m.model }))))
+
+      // -- Agent 流式应答（SSE-over-POST，DeptAI-UI-DSH 收编 2026-10-29） ----------------
+      // streamAgent:true 跳过隐式派发（防双跑），由流式端点驱动应答；完成后照常落库广播。
+      const streamMsg = await api('POST', '/api/panel/mfg/messages', { token: panelAdmin, body: { channelId: mainChannel.id, text: '@面板质检员 流式自测：给一句合格率结论', ddSync: false, streamAgent: true } })
+      check('面板流式：streamAgent=true 消息发送（落库拿 messageId）', streamMsg.ok && Boolean(streamMsg.data.message?.id), JSON.stringify(streamMsg.error))
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      const beforeStream = await api('GET', `/api/panel/mfg/messages?channelId=${mainChannel.id}&limit=30`, { token: panelAdmin })
+      check('面板流式：隐式派发被跳过（流式端点驱动前无 Agent 应答）',
+        !beforeStream.data.messages.some((m) => m.agentName === '面板质检员' && String(m.createdAt ?? '') > String(streamMsg.data.message.createdAt ?? '')),
+        JSON.stringify(beforeStream.data?.messages?.filter((m) => m.agentName)?.slice(-2)?.map((m) => ({ at: m.createdAt, t: String(m.text).slice(0, 24) }))))
+      const streamRaw = await rawReq('POST', '/api/panel/mfg/agent-stream', {
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${panelAdmin}` },
+        body: JSON.stringify({ messageId: streamMsg.data.message.id }),
+      })
+      const streamEvents = streamRaw.body.split(/\r?\n/).filter((line) => line.startsWith('data: ')).map((line) => { try { return JSON.parse(line.slice(6)) } catch { return {} } })
+      check('面板流式：SSE 事件链 start→delta→done→end（200 event-stream）',
+        streamRaw.status === 200 && String(streamRaw.headers['content-type']).includes('text/event-stream')
+        && streamEvents.some((event) => event.type === 'start' && event.agent === '面板质检员')
+        && streamEvents.some((event) => event.type === 'delta' && /质检结论/.test(String(event.text)))
+        && streamEvents.some((event) => event.type === 'done')
+        && streamEvents.at(-1)?.type === 'end',
+        JSON.stringify(streamEvents).slice(0, 200))
+      const afterStreamReply = await api('GET', `/api/panel/mfg/messages?channelId=${mainChannel.id}&limit=30`, { token: panelAdmin })
+      const streamedReply = afterStreamReply.data.messages.find((m) => m.agentName === '面板质检员' && String(m.createdAt ?? '') > String(streamMsg.data.message.createdAt ?? ''))
+      check('面板流式：应答落库并标注实际模型（其他端经既有 SSE 收到持久消息）',
+        Boolean(streamedReply) && streamedReply.model === 'deepseek-chat' && /质检结论/.test(streamedReply.text),
+        JSON.stringify(streamedReply ?? afterStreamReply.data?.messages?.at(-1)).slice(0, 160))
+      const streamMeter = await api('GET', '/api/usage/events?resource=' + encodeURIComponent('panel:mfg.qb01') + '&limit=50', { token: panelAdmin })
+      check('面板流式：协作计量幂等（D1 键 panel:agent:<msgId>:<agent> 同键不双计）',
+        streamMeter.ok && streamMeter.data.items.filter((item) => item.idempotency_key === `panel:agent:${streamMsg.data.message.id}:面板质检员`).length === 1,
+        JSON.stringify(streamMeter.data?.items?.filter((item) => String(item.idempotency_key).startsWith('panel:agent:'))?.map((item) => item.idempotency_key)))
+      const streamNoMention = await api('POST', '/api/panel/mfg/messages', { token: panelAdmin, body: { channelId: mainChannel.id, text: '流式自测：不点名任何数字同事', ddSync: false, streamAgent: true } })
+      const streamNoMentionRaw = await rawReq('POST', '/api/panel/mfg/agent-stream', {
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${panelAdmin}` },
+        body: JSON.stringify({ messageId: streamNoMention.data.message.id }),
+      })
+      check('面板流式：未点名数字同事 → end 事件诚实收尾（不造假应答）',
+        streamNoMentionRaw.status === 200 && /"type":"end".*未点名/.test(streamNoMentionRaw.body), streamNoMentionRaw.body.slice(0, 120))
+      const streamWrongDept = await rawReq('POST', '/api/panel/rd/agent-stream', {
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${panelAdmin}` },
+        body: JSON.stringify({ messageId: streamMsg.data.message.id }),
+      })
+      check('面板流式：跨部门 messageId 被拒（400，部门范围校验同规）',
+        streamWrongDept.status === 400 && /消息不存在或不属于该部门/.test(streamWrongDept.body), streamWrongDept.body.slice(0, 120))
       const badModelMsg = await api('POST', '/api/panel/mfg/messages', { token: panelAdmin, body: { channelId: mainChannel.id, text: '未登记模型应被拒', model: 'no-such-model', ddSync: false } })
       check('面板：对话框指定未登记模型被拒（400，诚实报错）', badModelMsg.status === 400, JSON.stringify(badModelMsg.error))
       const panelModelDel = await api('DELETE', `/api/panel/models/${panelModelUpsert.data.id}`, { token: panelAdmin })
@@ -6506,6 +6550,103 @@ try {
     check('面板：未认证签发 ticket 被拒 401', ticketNoAuth.status === 401, String(ticketNoAuth.status))
     const orgUnbind = await api('PUT', '/api/panel/rd/config', { token: panelAdmin, body: { orgId: null } })
     check('面板：解除组织绑定恢复开放', orgUnbind.ok && !orgUnbind.data.dept.org)
+  }
+
+  // ================================================================ 面板域扩展收编（DeptAI-UI-DSH 前台 #2 底座半，2026-10-29）
+  section('面板扩展：战略看板 board · 制造工具箱 mfg · 本地钉钉面 ddws（前台收编）')
+  {
+    // 越权探针账号（member 角色：无 panel.* 权限点）
+    const extRoles = (await api('GET', '/api/iam/roles', { token: admin })).data.roles
+    const extMemberRole = extRoles.find((role) => role.code === 'member')
+    const rootOrgForPanel = (await api('GET', '/api/iam/orgs', { token: admin })).data.find((org) => org.parentId === null) ?? {}
+    const extMemberInit = await api('POST', '/api/iam/users', { token: admin, body: { username: 'panel_ext_member', displayName: '面板扩展越权探针', orgId: rootOrgForPanel.id, roleIds: [extMemberRole.id] } })
+    const memberTokenForPanel = (await api('POST', '/api/auth/login', { body: { username: 'panel_ext_member', password: extMemberInit.data?.initialPassword ?? 'Ybk@2026' } })).data.token
+    // -- 战略看板（卡片包 + 漏斗/WAIC/ROI 聚合） ----------------------------------
+    const board = await api('GET', '/api/panel/board?platform=rd', { token: admin })
+    check('面板扩展：战略看板聚合（platform=cards/assets/funnel/waic/roi 全字段）',
+      board.ok && board.data.platform === 'rd' && Array.isArray(board.data.cards)
+      && board.data.assets && Number.isFinite(board.data.assets.agentsOnline)
+      && board.data.funnel && Number.isFinite(board.data.funnel.invoked)
+      && board.data.waic && Number.isFinite(board.data.waic.count)
+      && board.data.roi && /估算/.test(board.data.roi.note),
+      JSON.stringify({ platform: board.data?.platform, cards: board.data?.cards?.length, funnel: board.data?.funnel }))
+    const boardQuality = await api('GET', '/api/panel/board?platform=quality', { token: admin })
+    check('面板扩展：战略看板多平台差异化（quality 平台独立下发）',
+      boardQuality.ok && boardQuality.data.platform === 'quality' && boardQuality.data.availablePlatforms.length === 5,
+      JSON.stringify(boardQuality.data?.availablePlatforms))
+    const boardBad = await api('GET', '/api/panel/board?platform=no-such', { token: admin })
+    check('面板扩展：非法 platform 被拒（400 枚举校验）', boardBad.status === 400, JSON.stringify(boardBad.error))
+    const boardNoAuth = await api('GET', '/api/panel/board')
+    check('面板扩展：看板未认证被拒（401，panel.read 同规）', boardNoAuth.status === 401)
+
+    // -- 制造工具箱（目录/选题/模板/计算内核/导出/评估面/放行面） ------------------
+    const mfgCatalog = await api('GET', '/api/panel/mfg/catalog', { token: admin })
+    check('面板扩展：mfg 工具目录（tools/categories/skills + 模型就绪态）',
+      mfgCatalog.ok && Array.isArray(mfgCatalog.data.tools) && mfgCatalog.data.tools.length === 16
+      && Array.isArray(mfgCatalog.data.categories) && mfgCatalog.data.skills.length === 3
+      && mfgCatalog.data.modelReady === true,
+      JSON.stringify({ tools: mfgCatalog.data?.tools?.length, modelReady: mfgCatalog.data?.modelReady, skills: mfgCatalog.data?.skills?.length }))
+    const mfgRoadmap = await api('GET', '/api/panel/mfg/roadmap', { token: admin })
+    check('面板扩展：mfg 选题清单（100 项来源追溯 + 状态分组）',
+      mfgRoadmap.ok && mfgRoadmap.data.tools.length === 100 && Array.isArray(mfgRoadmap.data.groups) && mfgRoadmap.data.statusLabels['implemented-calculation'] !== undefined,
+      JSON.stringify({ total: mfgRoadmap.data?.tools?.length, groups: mfgRoadmap.data?.groups?.length }))
+    const mfgTemplate = await api('GET', '/api/panel/mfg/tools/oee/template', { token: admin })
+    check('面板扩展：mfg 工具模板（oee 字段定义下发）',
+      mfgTemplate.ok && mfgTemplate.data.toolId === 'oee' && mfgTemplate.data.fields.length === 5,
+      JSON.stringify(mfgTemplate.data?.fields?.map((field) => field.key)))
+    const mfgRun = await api('POST', '/api/panel/mfg/tools/oee/run', { token: admin, body: { planned: 480, running: 420, cycle: 0.5, total: 760, good: 735 } })
+    check('面板扩展：mfg 计算内核真实执行（OEE 结构化结果：metrics/blocks）',
+      mfgRun.ok && mfgRun.data.mode === 'calculation' && Array.isArray(mfgRun.data.blocks) && mfgRun.data.blocks.length > 0
+      && JSON.stringify(mfgRun.data).includes('OEE'),
+      JSON.stringify(mfgRun.data?.blocks?.map((block) => block.type)))
+    const mfgRunBad = await api('POST', '/api/panel/mfg/tools/oee/run', { token: admin, body: { planned: 'x' } })
+    check('面板扩展：mfg 非法输入诚实 4xx（校验不静默）', mfgRunBad.status >= 400 && mfgRunBad.status < 500, JSON.stringify(mfgRunBad.error))
+    const mfgExport = await api('POST', '/api/panel/mfg/tools/oee/export', { token: admin, body: { result: mfgRun.data, format: 'md' } })
+    check('面板扩展：mfg 结果导出（Markdown 文件名 + 内容）',
+      mfgExport.ok && /\.md$/.test(mfgExport.data.filename) && mfgExport.data.content.length > 0 && mfgExport.data.mime === 'text/markdown',
+      JSON.stringify(mfgExport.data?.filename))
+    const mfgEvalPlan = await api('GET', '/api/panel/mfg/evaluation-plan', { token: admin })
+    check('面板扩展：mfg 评估计划（fixtures 随计划下发，不发起模型调用）',
+      mfgEvalPlan.ok && Array.isArray(mfgEvalPlan.data.plan) && Object.keys(mfgEvalPlan.data.fixtures ?? {}).length > 0,
+      JSON.stringify(mfgEvalPlan.data?.plan?.length))
+    const mfgReleases = await api('GET', '/api/panel/mfg/releases', { token: admin })
+    check('面板扩展：mfg 放行台账（identity + releases 可查询）',
+      mfgReleases.ok && Array.isArray(mfgReleases.data.releases) && Boolean(mfgReleases.data.identity?.model),
+      JSON.stringify(mfgReleases.data?.identity))
+    const mfgNoWrite = await api('POST', '/api/panel/mfg/releases', { token: memberTokenForPanel, body: { report: {} } })
+    check('面板扩展：mfg 放行写面越权被拒（403，panel.config.write 治理动作）', mfgNoWrite.status === 403, String(mfgNoWrite.status))
+
+    // -- 本地钉钉面（dws CLI 桥；CLI 未装环境诚实降级） ----------------------------
+    const ddwsStatus = await api('GET', '/api/panel/ddws/status', { token: admin })
+    check('面板扩展：ddws 状态（mode=dws-cli + 绑定/安装态诚实呈现）',
+      ddwsStatus.ok && ddwsStatus.data.mode === 'dws-cli' && ddwsStatus.data.via === 'dws-cli' && 'installed' in ddwsStatus.data,
+      JSON.stringify({ installed: ddwsStatus.data?.installed, bound: ddwsStatus.data?.bound }))
+    const ddwsBind = await api('PUT', '/api/panel/ddws/bind', { token: admin, body: { group: '自测钉钉群' } })
+    check('面板扩展：ddws 绑定目标群（panel.config.write）', ddwsBind.ok && ddwsBind.data.bound === true && ddwsBind.data.group === '自测钉钉群', JSON.stringify(ddwsBind.error))
+    const ddwsStatusBound = await api('GET', '/api/panel/ddws/status', { token: admin })
+    check('面板扩展：绑定后状态反映群名（形状兼容 displayName）',
+      ddwsStatusBound.ok && ddwsStatusBound.data.bound?.displayName === '自测钉钉群', JSON.stringify(ddwsStatusBound.data?.bound))
+    const ddwsTest = await api('POST', '/api/panel/ddws/test', { token: admin, body: { text: 'selftest 连通性测试' } })
+    check('面板扩展：ddws 连通性测试（CLI 缺席 → 200+ok:false 诚实降级，不造假成功）',
+      ddwsTest.status === 200 && ddwsTest.data.ok === false && /dws CLI/.test(String(ddwsTest.data.error)),
+      JSON.stringify(ddwsTest.data))
+    const ddwsPullNoChannel = await api('POST', '/api/panel/ddws/pull', { token: admin, body: {} })
+    check('面板扩展：ddws 入向拉取缺 channelId 被拒（400，部门自频道反查）',
+      ddwsPullNoChannel.status === 400 && /channelId/.test(JSON.stringify(ddwsPullNoChannel.error)), JSON.stringify(ddwsPullNoChannel.error))
+    const extChannels = await api('GET', '/api/panel/mfg/channels', { token: admin })
+    const ddwsPull = await api('POST', '/api/panel/ddws/pull', { token: admin, body: { channelId: extChannels.data.channels[0]?.id } })
+    check('面板扩展：ddws 入向拉取（CLI 缺席 → 200+ok:false 诚实降级，降级是数据不是传输错误）',
+      ddwsPull.status === 200 && ddwsPull.data.ok === false && /dws/.test(String(ddwsPull.data.error)),
+      JSON.stringify(ddwsPull.data))
+    const ddwsLoginState = await api('GET', '/api/panel/ddws/login', { token: admin })
+    check('面板扩展：ddws 登录会话轮询（无进行中会话 active:false + 授权态字段在列）',
+      ddwsLoginState.ok && ddwsLoginState.data.active === false && typeof ddwsLoginState.data.authenticated === 'boolean'
+      && Boolean(ddwsLoginState.data.auth),
+      JSON.stringify(ddwsLoginState.data))
+    const ddwsUnbind = await api('DELETE', '/api/panel/ddws/bind', { token: admin })
+    check('面板扩展：ddws 解绑（幂等）', ddwsUnbind.ok && ddwsUnbind.data.bound === false)
+    const ddwsMemberWrite = await api('PUT', '/api/panel/ddws/bind', { token: memberTokenForPanel, body: { group: '越权' } })
+    check('面板扩展：ddws 绑定越权被拒（403，panel.config.write）', ddwsMemberWrite.status === 403, String(ddwsMemberWrite.status))
   }
 
   // ================================================================ J1 契约 v1 + 安全响应头 + usage 保留策略（2026-09-11 版本优化）

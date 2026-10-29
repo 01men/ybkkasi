@@ -25,6 +25,12 @@ import { newId } from '../../platform-core/src/ids.ts'
 import { PanelService, TASK_LANES, type TaskLane, type DeptWidget, type DeptKpi, type DeptAgent } from './service.ts'
 import { seedPanel } from './seed/seed.ts'
 import { t } from '../../platform-i18n/src/index.ts'
+// 面板域扩展（自 DeptAI-UI-DSH 收编 2026-10-29，前台 #2 底座半落地）：
+//   board=战略看板（卡片包+漏斗/ROI 聚合）、ddws=本地钉钉面（dws CLI 桥，与宿主桥共存）、
+//   mfg=制造工具箱（13 计算内核 + 3 AI 工具放行制 + 100 选题清单）、agent-stream=流式应答。
+import { CardpackService, CARD_PLATFORMS, filterCards, type CardPlatform } from './cardpacks.ts'
+import { DwsCli } from './dws.ts'
+import { applyMfgModule } from './mfg/module.ts'
 
 /**
  * 面板契约版本（#13，2026-10-29）：面板能力族集合的语义版本——新增能力族/下线路由族时递增。
@@ -49,6 +55,16 @@ export function apply(ctx: Context) {
   const http = ctx.httpServer
   ctx.plugin(PanelService)
   const panel = new PanelService(ctx)
+  // 卡片包服务（board 战略看板的配置底座；面板是卡片包域唯一宿主，不可自 inject 同 PanelService 惯例）
+  const cardpacks = new CardpackService(ctx)
+  // 本地钉钉面（dws CLI 桥；与宿主 plugin-dingtalk-bridge 共存，命名空间 /api/panel/ddws/* 铁律不变）
+  const dws = new DwsCli(ctx)
+
+  // 可选宿主服务软读（board 聚合用；不经 inject 声明避免装配序硬约束——缺席时聚合面诚实置 0）
+  const softService = (key: string): any => { try { return ctx.reflect.get(key, false) } catch { return undefined } }
+
+  // 工具输出渲染（panel_* 与 panel_mfg_* 工具族共用；JSON 直出）
+  const renderJson = (args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }]
 
   // R5 收敛：caller/requirePermission/guarded/body/changeLog 统一引 platform-core 共享实现（单点修复、单点审计）
   const { caller, requirePermission, guarded, body, changeLog } = createRestGate(ctx)
@@ -108,6 +124,99 @@ export function apply(ctx: Context) {
   guarded('GET', '/api/panel/orgs', 'panel.config.write', (exchange) => ({
     orgs: ctx.iam.orgs().all().map((org) => ({ id: org.id, name: org.name, parentId: org.parentId })),
   }))
+
+  // -- 战略看板（自 DeptAI-UI-DSH 收编 2026-10-29）：卡片包面 + 漏斗/WAIC/ROI 聚合面 -----------
+
+  /** 资产 ref 存活性（卡片包失效引用过滤）：mcpRegistry/behavior 软读，目录缺席视为存活（不误伤）。 */
+  const cardRefAlive = (ref: string): boolean => {
+    const [type, id] = ref.split(':')
+    const matches = (item: { id?: string; slug?: string; name?: string }): boolean =>
+      item.id === id || item.slug === id || item.name === id
+    // 资产目录缺失（演示态）→ 视为存活（卡片全部展示，不因降级隐藏入口）
+    const mcpRegistry = softService('mcpRegistry')
+    if (!mcpRegistry && type === 'mcp') return true
+    try {
+      if (type === 'agent' || type === 'app' || type === 'nas') return ctx.resourceCore.list(type).some(matches)
+      if (type === 'mcp') return mcpRegistry.services().all().some(matches)
+      if (type === 'skill') return ctx.skillHub.skills().all().some(matches)
+      if (type === 'kb') return ctx.iam.orgs().get(id) !== undefined
+      return true
+    } catch {
+      return true
+    }
+  }
+
+  guarded('GET', '/api/panel/board', 'panel.read', (exchange) => {
+    const info = caller(exchange)
+    // -- 卡片包面（角色 × 平台过滤下发） --
+    const available = [...new Set(cardpacks.all().map((pack) => pack.platform))]
+    const requested = exchange.query.get('platform') ?? process.env.RQ_PLATFORM
+      ?? (available.includes('rd') ? 'rd' : available[0]) ?? 'strategy'
+    if (!CARD_PLATFORMS.includes(requested as CardPlatform)) {
+      exchange.fail(400, 'BAD_REQUEST', t('platform 非法（应为 {platforms}）', { platforms: CARD_PLATFORMS.join('/') }))
+      return
+    }
+    const platform = requested as CardPlatform
+    const user = info.userId ? ctx.iam.users().get(info.userId) : undefined
+    const roles = user ? user.roleIds.map((roleId) => ctx.iam.roles().get(roleId)?.code).filter((code): code is string => Boolean(code)) : []
+    cardpacks.setRefAliveResolver(cardRefAlive)
+    const packs = cardpacks.forPlatform(platform)
+    const { cards, droppedDeadRefs } = filterCards({ packs, roles, refAlive: cardRefAlive })
+    if (droppedDeadRefs.length > 0) {
+      ctx.platformBus.emit(PlatformEvents.AlertFired, {
+        id: newId('alt'), severity: 'warning', title: t('卡片包含失效资产引用'),
+        message: t('平台 {platform} 卡片包中 {count} 个 ref 已失效被过滤：{refs}（请修正 cardpacks 配置）', { platform, count: droppedDeadRefs.length, refs: droppedDeadRefs.join('、') }),
+      })
+    }
+
+    // -- 聚合面（漏斗=曝光/点击→调用→完成；WAIC=usage 周聚合）——目录缺席（演示态）→ 全 0 诚实降级 --
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3600_000).toISOString()
+    const behavior = softService('behavior')
+    const behaviorCount = (type: string): number => behavior?.query({ type, from: weekAgo }).total ?? 0
+    const usageTotals = ctx.usage.totals({ from: weekAgo })
+    const usageCount = usageTotals.count
+    const chargeCents = usageTotals.charge_cents
+    const byDay = ctx.usage.breakdown(weekAgo).byDay
+    const mcpRegistry = softService('mcpRegistry')
+    const completedCalls = mcpRegistry?.calls().all()
+      .filter((call: { ok: boolean; at: string }) => call.ok && call.at >= weekAgo).length ?? 0
+    const callBase = completedCalls > 0 ? completedCalls : usageCount
+    const minutesPerCall = Number(process.env.ROI_MINUTES_PER_CALL ?? 3)
+    const laborCostCentsPerHour = Number(process.env.ROI_LABOR_COST_CENTS_PER_HOUR ?? 5000)
+
+    return {
+      generatedAt: new Date().toISOString(),
+      windowDays: 7,
+      // 卡片包面（顶层平铺，控制台工作台卡片消费方零改动换端点即可用）
+      platform, label: packs[0]?.label ?? '', roles, cards, totalPacks: packs.length, availablePlatforms: available, droppedDeadRefs,
+      // 聚合面（战略看板）
+      assets: {
+        appsOnline: ctx.resourceCore.list('app').filter((item) => item.status === 'online').length,
+        agentsOnline: ctx.resourceCore.list('agent').filter((item) => item.status === 'online').length,
+        skillsPublished: ctx.skillHub.skills().all().filter((item) => item.status === 'published').length,
+        mcpServing: mcpRegistry?.services().all()
+          .filter((service: { status: string }) => service.status === 'online' || service.status === 'gray').length ?? 0,
+      },
+      waic: { count: usageCount, chargeCents },
+      byDay,
+      funnel: {
+        exposed: behaviorCount('card.exposed'),
+        clicked: behaviorCount('card.clicked'),
+        invoked: usageCount,
+        completed: completedCalls,
+      },
+      // ROI 用工成本模型（WP-14）：估算口径声明随响应下发，看板侧必须展示「估算」字样。
+      roi: {
+        minutesPerCallEstimate: minutesPerCall,
+        laborCostCentsPerHour,
+        callBase,
+        estimatedHoursSaved: Math.round((callBase * minutesPerCall / 60) * 100) / 100,
+        estimatedLaborCostCents: Math.round(callBase * minutesPerCall / 60 * laborCostCentsPerHour),
+        platformChargeCents: chargeCents,
+        note: t('估算口径：替代工时 = 调用次数 × 单次替代分钟 ÷ 60；人力成本 = 替代工时 × 综合人力时薪。非实测值。'),
+      },
+    }
+  })
 
   /** 部门↔组织绑定（账号组织打通的管理动作）：设置后部门范围权限即刻生效。 */
   guarded('PUT', '/api/panel/:dept/config', 'panel.config.write', (exchange) => {
@@ -307,7 +416,7 @@ export function apply(ctx: Context) {
 
   guarded('POST', '/api/panel/:dept/messages', 'panel.write', async (exchange) => {
     const dept = deptOf(exchange)
-    const input = body<{ channelId?: string; text?: string; ddSync?: boolean; uniqueKey?: string; model?: string }>(exchange)
+    const input = body<{ channelId?: string; text?: string; ddSync?: boolean; uniqueKey?: string; model?: string; streamAgent?: boolean }>(exchange)
     if (!input.text?.trim()) throw new Error(t('消息内容必填'))
     const channelId = input.channelId || panel.channels().find((item) => item.dept === dept.id).at(0)?.id
     if (!channelId) throw new Error(t('部门暂无频道，请先创建'))
@@ -322,8 +431,56 @@ export function apply(ctx: Context) {
       senderName: info.name, text: input.text.trim(), ddSync: input.ddSync === true,
       ...(input.uniqueKey ? { uniqueKey: input.uniqueKey } : {}),
       ...(requestedModel ? { modelOverride: requestedModel } : {}),
+      // streamAgent（流式应答卡）：@数字同事 由流式端点驱动应答，跳过隐式派发防双跑；
+      // 流式端点不可用时前端回落拉取，应答缺失可由用户重发触发（诚实降级，不假装有人在打字）
+      ...(input.streamAgent === true ? { skipAgentDispatch: true } : {}),
     })
     return { message }
+  })
+
+  /**
+   * Agent 流式应答（SSE-over-POST，自 DeptAI-UI-DSH 收编 2026-10-29）：@数字同事 → 增量卡片渲染。
+   * 逐事件转发 {type:start|delta|done|fallback|end}；完成后应答照常落库并广播
+   * panel.message.created（其他端经既有 SSE 通道收到持久消息）。鉴权/部门范围与 REST 面同规
+   * （guarded + deptOf），权限失败仍是干净 403/401；流已开后的失败在流内以 end 事件收尾。
+   */
+  guarded('POST', '/api/panel/:dept/agent-stream', 'panel.write', async (exchange) => {
+    const res = exchange.res
+    const sse = (payload: Record<string, unknown>): void => {
+      try { res.write(`data: ${JSON.stringify(payload)}\n\n`) } catch { /* 连接已断 */ }
+    }
+    try {
+      const dept = deptOf(exchange)
+      const input = body<{ messageId?: string; model?: string }>(exchange)
+      const message = input.messageId ? panel.messages().get(input.messageId) : undefined
+      if (!message || message.dept !== dept.id || message.senderType !== 'human') {
+        exchange.fail(400, 'BAD_REQUEST', t('消息不存在或不属于该部门'))
+        return
+      }
+      if (res.writableEnded || res.headersSent) return
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
+      const mentioned = dept.agents.filter((agent) => message.text.includes(`@${agent.name}`))
+      if (mentioned.length === 0) {
+        sse({ type: 'end', note: t('消息未点名任何数字同事') })
+        res.end()
+        return
+      }
+      const requestedModel = input.model?.trim() || undefined
+      for (const agentCard of mentioned) {
+        await panel.streamAgentReply(dept, agentCard, message, requestedModel, sse)
+      }
+      sse({ type: 'end' })
+      res.end()
+    } catch (error) {
+      // 流已开则只能在流内报错；未开流走标准错误信封
+      const message = error instanceof Error ? error.message : String(error)
+      if (res.headersSent) {
+        sse({ type: 'end', error: message })
+        res.end()
+      } else {
+        exchange.fail(400, 'BAD_REQUEST', message)
+      }
+    }
   })
 
   guarded('POST', '/api/panel/channels/:id/read', 'panel.read', (exchange) => {
@@ -687,13 +844,116 @@ export function apply(ctx: Context) {
     http.serveStatic('/panel', publicDir, '/index.html')
   }
 
+  // -- 本地钉钉面（dws CLI 桥，自 DeptAI-UI-DSH 收编 2026-10-29）——无条件注册 ------------------
+  // 命名空间铁律：dws 面全部挂在 /api/panel/ddws/*（绝不碰 /api/dingtalk/*，那是
+  // plugin-dingtalk-bridge 的路由面）。宿主桥在场（全量形态常态）时本面作为「本地直连钉钉」
+  // 共存——用户可不经宿主平台连接器直接用自家钉钉 dws；消息投递归属在事件时裁决（下方钩子）。
+  {
+    guarded('GET', '/api/panel/ddws/status', 'panel.read', async () => {
+      const status = await dws.status()
+      return {
+        ...status,
+        via: 'dws-cli',
+        // 形状兼容（面板 renderTopRight 消费）：bound=false | {displayName,...}
+        bound: status.bound && status.group ? { displayName: status.group, via: 'dws-cli' } : false,
+        connector: { configured: status.installed, name: `dws CLI${status.version ? ` ${status.version}` : ''}`, mode: status.installed ? 'real' : 'mock' },
+      }
+    })
+    guarded('POST', '/api/panel/ddws/install', 'panel.config.write', async () => dws.install())
+    // 登录授权面：POST 发起设备流登录（返回激活指令：授权链接+用户码，前端弹窗直出）；
+    // GET 轮询会话状态（前端 3s 轮询，授权完成即 authenticated:true）；
+    // DELETE 取消进行中的登录会话。授权态归 dws CLI 自身（面板零凭证铁律不变）。
+    guarded('POST', '/api/panel/ddws/login', 'panel.config.write', async () => dws.startLogin())
+    guarded('GET', '/api/panel/ddws/login', 'panel.read', async () => dws.loginState())
+    guarded('DELETE', '/api/panel/ddws/login', 'panel.config.write', () => {
+      dws.cancelLogin()
+      return { cancelled: true }
+    })
+    guarded('PUT', '/api/panel/ddws/bind', 'panel.config.write', (exchange) => {
+      const group = body<{ group?: string }>(exchange).group?.trim() ?? ''
+      const record = dws.bind(group, caller(exchange).userId ?? caller(exchange).principalId)
+      changeLog(exchange, 'panel.ddws.bind', 'panel_dingtalk', 'dws', record.group ?? '')
+      return { bound: true, group: record.group }
+    })
+    guarded('DELETE', '/api/panel/ddws/bind', 'panel.config.write', (exchange) => {
+      dws.unbind()
+      changeLog(exchange, 'panel.ddws.unbind', 'panel_dingtalk', 'dws', '')
+      return { bound: false }
+    })
+    guarded('POST', '/api/panel/ddws/test', 'panel.write', async (exchange) => {
+      const text = body<{ text?: string }>(exchange).text?.trim() || t('面板 dws 连通性测试')
+      try {
+        const sent = await dws.sendToGroup(text)
+        return { ok: true, group: sent.group }
+      } catch (error) {
+        // 失败诚实回包（HTTP 200，降级是数据不是传输错误）：CLI 未装/未登录/未绑群可判读可重试
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    })
+    // 入向拉取：dws +chat-messages 读绑定群最新消息，按 messageId 幂等去重落目标频道
+    //（senderType=human + uniqueKey 去重键）。拉取失败以 ok:false + error 回包（HTTP 200），前端可重试。
+    // 部门取向自频道反查（前台只传 channelId；移植修正：原实现按 ：dept 路径参数解析，平铺路径下必 400）。
+    guarded('POST', '/api/panel/ddws/pull', 'panel.write', async (exchange) => {
+      const input = body<{ channelId?: string; limit?: number }>(exchange)
+      if (!input.channelId?.trim()) throw new Error(t('channelId 必填（拉取落入的目标频道）'))
+      const channel = panel.channels().get(input.channelId)
+      if (!channel) throw new Error(t('频道不存在：{channelId}', { channelId: input.channelId }))
+      const dept = panel.dept(channel.dept)
+      if (!panel.deptScopeAllowed(caller(exchange), dept)) {
+        exchange.fail(403, 'FORBIDDEN', t('部门范围受限：{label} 已绑定组织治理，仅该组织子树成员可访问', { label: dept.label }), { permission: 'panel.read', deptScope: dept.orgId })
+        return
+      }
+      const info = caller(exchange)
+      try {
+        const incoming = await dws.pullLatestMessages(Math.floor(Number(input.limit) || 20))
+        let inserted = 0
+        for (const item of incoming) {
+          const uniqueKey = `dws:${item.messageId}`
+          if (panel.messages().findOne((m) => m.channelId === channel.id && m.uniqueKey === uniqueKey)) continue
+          await panel.sendMessage({
+            dept: dept.id, channelId: channel.id, senderType: 'human',
+            senderId: info.userId, senderName: t('{sender} · 钉钉', { sender: item.sender }),
+            text: item.text, ddSync: false,
+            uniqueKey,
+          })
+          inserted += 1
+        }
+        return { ok: true, inserted, fetched: incoming.length, group: channel.name }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    })
+
+    // 消息 ddSync 出向钩子（投递归属事件时裁决——装配序不可靠，apply 期探测不算数）：
+    //   a. 宿主桥在场且有 channel 群桥 → 桥全权处理（本钩子让位：桥在 deliver 前自查，杜绝双投）；
+    //   b. 否则本钩子负责：dws 已绑群 → dws 投递；未绑群 → 诚实失败回执。
+    ctx.platformBus.on(PlatformEvents.PanelMessageCreated, (payload) => {
+      const data = (payload ?? {}) as { messageId?: string; ddSync?: string; text?: string }
+      if (!data.messageId || data.ddSync !== 'pending') return
+      const bridgeSvc = softService('dingtalkBridge') as { bridgeChannels?: () => { find: (fn: (item: { purpose: string }) => boolean) => Array<{ purpose: string }> } } | undefined
+      if (bridgeSvc?.bridgeChannels?.().find((item) => item.purpose === 'channel').length > 0) return
+      void dws.sendToGroup(String(data.text ?? '')).then(
+        (sent) => ctx.platformBus.emit(PlatformEvents.DingtalkDelivered, { messageId: data.messageId, ok: true, via: 'dws-cli', group: sent.group }),
+        (error) => ctx.platformBus.emit(PlatformEvents.DingtalkDelivered, {
+          messageId: data.messageId, ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    })
+    ctx.logger('panel-core').info(t('本地钉钉面已挂载：dws CLI 桥（/api/panel/ddws/*，宿主桥{state}；ddSync 投递按群桥归属裁决）', { state: softService('dingtalkBridge') ? t('在场共存') : t('缺席独任') }))
+  }
+
+  // -- 制造工具箱（自 DeptAI-UI-DSH 收编 2026-10-29） ----------------------------------------
+  // 13 个确定性计算内核 + 3 个 AI 工具（Skill 放行制）+ 100 项选题清单。
+  // 路由：/api/panel/mfg/*（读 panel.read / 执行 panel.write / 放行 panel.config.write）；
+  // 工具：panel_mfg_*（共享 tools 键）；模型面经平台网关，面板零密钥；无网关时 AI 工具诚实 503。
+  applyMfgModule(ctx, { guarded, changeLog, renderJson })
+
   // -- 种子（基线骨架 + DEMO_SEED=1 演示内容） ---------------------------------------
 
   void seedPanel(ctx)
 
   // -- panel_* 工具族（共享 tools 键，dsh 下即原生 ToolRuntime） ------------------------
-
-  const renderJson = (args: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }]
 
   ctx.tools.register({
     name: 'panel_agents_list',
@@ -869,6 +1129,67 @@ export function apply(ctx: Context) {
         userId: exec.principal?.userId,
         ...(input.context_note ? { contextNote: input.context_note } : {}),
       })
+    },
+  })
+
+  ctx.tools.register({
+    name: 'panel_board_digest',
+    description: '战略看板摘要（GET /api/panel/board 的工具面同构）：卡片包（角色×平台过滤）+ 资产在线面 + 漏斗（曝光/点击/调用/完成）+ 7 天 WAIC 与替代工时估算',
+    permission: 'panel.read',
+    parameters: {
+      type: 'object',
+      properties: { platform: { type: 'string', description: `卡片包平台（${CARD_PLATFORMS.join('/')}），缺省 rd` } },
+    },
+    output: { schema: { type: 'object' }, render: renderJson },
+    async execute(args, exec) {
+      const input = args as { platform?: string }
+      const available = [...new Set(cardpacks.all().map((pack) => pack.platform))]
+      const requested = input.platform ?? process.env.RQ_PLATFORM ?? (available.includes('rd') ? 'rd' : available[0]) ?? 'strategy'
+      if (!CARD_PLATFORMS.includes(requested as CardPlatform)) {
+        throw new Error(t('platform 非法（应为 {platforms}）', { platforms: CARD_PLATFORMS.join('/') }))
+      }
+      const platform = requested as CardPlatform
+      const info = exec.principal as { userId?: string } | undefined
+      const user = info?.userId ? ctx.iam.users().get(info.userId) : undefined
+      const roles = user ? user.roleIds.map((roleId) => ctx.iam.roles().get(roleId)?.code).filter((code): code is string => Boolean(code)) : []
+      cardpacks.setRefAliveResolver(cardRefAlive)
+      const packs = cardpacks.forPlatform(platform)
+      const { cards } = filterCards({ packs, roles, refAlive: cardRefAlive })
+
+      const weekAgo = new Date(Date.now() - 7 * 24 * 3600_000).toISOString()
+      const behavior = softService('behavior')
+      const behaviorCount = (type: string): number => behavior?.query({ type, from: weekAgo }).total ?? 0
+      const usageTotals = ctx.usage.totals({ from: weekAgo })
+      const usageCount = usageTotals.count
+      const chargeCents = usageTotals.charge_cents
+      const mcpRegistry = softService('mcpRegistry')
+      const completedCalls = mcpRegistry?.calls().all().filter((call: { ok: boolean; at: string }) => call.ok && call.at >= weekAgo).length ?? 0
+      const minutesPerCall = Number(process.env.ROI_MINUTES_PER_CALL ?? 3)
+      const callBase = completedCalls > 0 ? completedCalls : usageCount
+      return {
+        generatedAt: new Date().toISOString(),
+        windowDays: 7,
+        platform,
+        assets: {
+          appsOnline: ctx.resourceCore.list('app').filter((item) => item.status === 'online').length,
+          agentsOnline: ctx.resourceCore.list('agent').filter((item) => item.status === 'online').length,
+          skillsPublished: ctx.skillHub.skills().all().filter((item) => item.status === 'published').length,
+          mcpServing: mcpRegistry?.services().all().filter((service: { status: string }) => service.status === 'online' || service.status === 'gray').length ?? 0,
+        },
+        funnel: {
+          exposed: behaviorCount('card.exposed'),
+          clicked: behaviorCount('card.clicked'),
+          invoked: usageCount,
+          completed: completedCalls,
+        },
+        waic: { count: usageCount, chargeCents },
+        roiEstimate: {
+          callBase,
+          estimatedHoursSaved: Math.round((callBase * minutesPerCall / 60) * 100) / 100,
+          note: t('估算口径（非实测）：替代工时 = 调用次数 × 单次替代分钟 ÷ 60'),
+        },
+        cards: cards.map((card) => ({ id: card.id, title: card.title, badge: card.badge })),
+      }
     },
   })
 }
