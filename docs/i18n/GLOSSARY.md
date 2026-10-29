@@ -1,8 +1,10 @@
 # 国际化术语表与本地化风格基线（GLOSSARY）
 
-> 版本 v1.1（2026-10-15）· 本表是所有翻译稿的**术语契约**。翻译团队开工前必读；
+> 版本 v1.2（2026-10-29）· 本表是所有翻译稿的**术语契约**。翻译团队开工前必读；
 > 新术语一律先登记本表再使用。中文原文与译稿发生歧义时，以中文原文为准。
-> v1.1：按六组翻译团队上报的术语缺口增补（见「八」），修正「冪等」日文注音。
+> v1.1（2026-10-15）：按六组翻译团队上报的术语缺口增补（见「八」），修正「冪等」日文注音。
+> v1.2（2026-10-29）：根 README 定位重写（「堆工具为什么不管用 / 新生产关系的运行底座」），
+> 新增定位论述术语（见「十」）。
 
 ---
 
@@ -290,3 +292,22 @@ Execution Hub、Canary、Fallback、contextPack、RBAC、on-behalf-of、A2A、pe
 | 接入提示词 | onboarding prompt | オンボーディングプロンプト |
 | 凭证换牌 | credential re-exchange | クレデンシャル再交換 |
 | 用量归口 | usage attribution | 使用量の帰属 |
+
+## 十、定位论述术语增补（2026-10-29）
+
+> 根 README 定位重写引入的论述术语，仅用于产品定位与叙述文本，不进入协议层。
+> 「生产关系 / 生产力」为政治经济学既有概念，各语言采用通行译法；日文注音从略。
+
+| 中文 | English | 日本語 |
+|---|---|---|
+| 生产关系 | production relations | 生産関係 |
+| （新）生产力 | (new) productive forces | （新）生産力 |
+| 生产资料 | means of production | 生産手段 |
+| AI 原生组织 | AI-native organization | AI ネイティブ組織 |
+| 新生产关系的运行底座 | runtime foundation for new production relations | 新しい生産関係の実行基盤 |
+| 确权（资产登记确权） | asset ownership registration | 資産の帰属確定（登記による確権） |
+| 动态派单 | dynamic dispatch | 動的ディスパッチ（ダイナミックな作業割り当て） |
+| 价值分配 | distribution of value | 価値の分配 |
+| 议价能力 | bargaining power | 交渉力 |
+| 透明用量计量 | transparent usage metering | 透明な使用量計測 |
+| 未定价（显式标注） | unpriced (labeled explicitly, `cost_status=not_priced`) | 未価格（明示マーク、`cost_status=not_priced`） |

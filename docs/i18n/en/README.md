@@ -18,7 +18,7 @@
 </p>
 
 > **English edition** — machine-assisted translation, reviewed by the i18n PM. **The Chinese original governs.**
-> Source: [`README.md`](../../../README.md), [`llms.txt`](../../../llms.txt) · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
+> Source: [`README.md`](../../../README.md), [`llms.txt`](../../../llms.txt) · Source updated: 2026-10-29 (positioning rewrite) · Glossary: [GLOSSARY.md](../GLOSSARY.md) · Governance: [README.md](../README.md)
 
 <p align="center">
   <a href="https://demo.ybkkasi.com/"><strong>Live demo</strong></a> ·
@@ -30,14 +30,27 @@
 
 [![YuanBingKe console: usage and cost view, showing demo data](../../../packages/plugin-console/public/launch/img/20-usage-cost.jpg)](https://demo.ybkkasi.com/)
 
-## An AI platform built for collaboration and governance
+## Why stacking tools does not work
 
-YuanBingKe connects an enterprise's goals, digital employees, and AI capabilities so that task execution, capability invocation, and delivery acceptance all leave a traceable record. Digital employees are the collaborating subjects; MCP services, skills, model routes, and applications are the capabilities and resources they draw on.
+The usual path to adopting AI is to keep buying new tools: a model, an agent framework, a batch of MCP services. Tools pile up, but organizational output does not change with them. The problem is not tool quality — it is **new productive forces running into old production relations**.
 
-- **Organized collaboration** — work is structured around goals, projects, and tasks, with controlled invocation and delivery acceptance.
-- **Capability management** — MCP services, skills, model routes, applications, and connectors are managed in one place, with lifecycle and authorization controls.
-- **Enterprise governance** — access is bounded by organization, identity, and permission; approvals, audit, and usage records track what actually happened.
-- **Flexible integration** — run the console and API standalone, or reach the platform through the dsh plugin, MCP, and the CLI.
+Production relations answer three questions: **how people hold and use the means of production**, **how work is divided and coordinated**, and **how the fruits of work are distributed between the organization and the individual**. Models, data, knowledge bases, and agents are the new means of production. When those assets carry no clear ownership, when the division of labor still follows fixed positions, when information power stays concentrated in management, and when the value an individual creates can be neither measured nor shared, productivity stays locked up no matter how many tools get swapped in.
+
+## What YuanBingKe AIOS is: a runtime foundation for new production relations
+
+YuanBingKe does not aim to be the Nth AI tool on a procurement list. It turns the institutional infrastructure an enterprise needs in order to reorganize production relations around AI into runnable software: it connects the enterprise's goals, digital employees, and AI capabilities so that task execution, capability invocation, and delivery acceptance all leave a traceable record. Digital employees are the collaborating subjects; MCP services, skills, model routes, knowledge bases, and applications are assets registered under the organization.
+
+An AI-native organization needs to reshape production relations in five places. The platform has a foundation under each:
+
+| Reshaping point | How production relations change | The YuanBingKe foundation |
+| --- | --- | --- |
+| **People and the means of production** | Models, data, knowledge bases, and agents need explicit answers to who owns, who uses, who configures, and who benefits; individuals are no longer just users of issued tools | Assets are registered to the organization: MCP services, skills, model routes, applications, and digital employees all carry an owning organization, a permission matrix, and a lifecycle (release, approval, decommission). Authorization comes before use. |
+| **Division of labor** | From fixed job positions to workflows decomposed by business outcome, with dynamic dispatch between humans and agents — whoever is faster, cheaper, and smoother gets the work | Work is organized around goals, projects, and tasks: controlled dispatch, controlled capability invocation, recorded delivery acceptance — the dispatch trail is traceable |
+| **People and power** | Information power is no longer a management monopoly: whoever owns the outcome and can mobilize agents holds the power | Power moves down without going rogue: "mobilizing an agent" is formal, grantable power — tool lists filtered by caller permissions, on-behalf-of token chains, mandatory L4 approval for high-risk lifecycle operations, full audit |
+| **Collaboration** | From standardized, rigid processes to blurred division of labor and fast iteration | The platform itself is a plugin tree: each business domain starts and stops independently, collaboration goes only through the event bus and extension points, and boundaries follow interface contracts rather than fixed positions |
+| **Distribution of value** | The value an individual can leverage grows sharply, and so does bargaining power: without sufficient return and premium, people leave and take their capability with them | Every capability invocation is metered idempotently, with transparent usage and internal cost reference; unpriced is labeled explicitly, never recorded as zero — value must be measurable and attributable before it can be distributed |
+
+This matches the platform's own position: **without parity between people and the means of production, and between people and the distribution of value, this productivity shift does not get off the ground.** YuanBingKe does no monetary settlement and makes no distribution decisions for the enterprise. It turns registration, dispatch, authorization, and metering into institutions that run every day, so that "the people using AI" and "the value being created" reconcile in the same ledger.
 
 ## Interface
 
