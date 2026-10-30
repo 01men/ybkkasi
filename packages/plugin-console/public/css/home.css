@@ -1,19 +1,19 @@
 /* ============================================================
    元冰可 · 产品首页（公共营销页）
-   2026-10-14 设计适配换肤：主色切深青蓝 #1663C7（暖纸 + 深青蓝主题），
-   点缀青 #2E8BE0/#28A8EC（渐变端点），微信绿 #07C160 承接「通过/在线/生长」
+   2026-10-14 设计适配换肤：主色切深青蓝 #1466CF（暖纸 + 深青蓝主题），
+   点缀青 #2E8BE0/#28B5EC（渐变端点），微信绿 #07C160 承接「通过/在线/生长」
    语义保留。关键色用字面量固定（品牌稳定优先）：本页不消费 --brand-* 别名，
    避免登录后五平台 data-platform 主题覆写改变首页品牌观感（platform.js 在
    首页即恢复 localStorage 记忆的平台）。
    ============================================================ */
 
 .home {
-  --hb: #1663C7;        /* 深青蓝（品牌主色 = tokens --brand-500） */
+  --hb: #1466CF;        /* 深青蓝（品牌主色 = tokens --brand-500） */
   --hb-deep: #084d70;
   --hnavy: #0E3A7A;     /* 深海青（渐变起点 = --brand-700） */
   --hink: #0C1B33;      /* 夜墨青（标题/深色底） */
   --hx: #2E8BE0;        /* 青（点缀/渐变中点 = --brand-400） */
-  --hc: #28A8EC;        /* 湖青亮（渐变终点 = 渐变 cyan 端） */
+  --hc: #28B5EC;        /* 湖青亮（渐变终点 = 渐变 cyan 端） */
   --hg: #07C160;        /* 微信绿（辅色：在线/生长/CTA 强调） */
   --hg-deep: #06ad56;
   --hgray: #5c554f;
@@ -60,7 +60,7 @@
 /* ============ Hero ============ */
 .home-hero {
   position: relative; overflow: hidden;
-  background: linear-gradient(135deg, #0E3A7A 0%, #123F8F 45%, #1663C7 78%, #0e7490 100%);
+  background: linear-gradient(135deg, #0E3A7A 0%, #0E3A7A 45%, #1466CF 78%, #0e7490 100%);
   color: #fff;
   padding: 132px max(32px, calc(50vw - 560px)) 96px;
   display: flex; align-items: center; gap: 48px;
@@ -102,7 +102,7 @@
   line-height: 1.28; letter-spacing: 1px; margin: 0 0 18px;
 }
 .home-hero h1 .grad {
-  background: linear-gradient(100deg, #7FC3F2 8%, #28A8EC 46%, #4EE59B 96%);
+  background: linear-gradient(100deg, #7FC3F2 8%, #28B5EC 46%, #4EE59B 96%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .home-hero-sub {
@@ -246,7 +246,7 @@
 /* ============ 架构理念 ============ */
 .home-arch {
   display: grid; grid-template-columns: 1.05fr 1fr; gap: 44px; align-items: center;
-  background: linear-gradient(135deg, #0C1B33 0%, #0E3A7A 70%, #123F8F 100%);
+  background: linear-gradient(135deg, #0C1B33 0%, #0E3A7A 70%, #0E3A7A 100%);
   border-radius: 20px; color: #fff;
   padding: 52px 52px; position: relative; overflow: hidden;
 }
@@ -263,7 +263,7 @@
   background: rgba(56, 168, 200, 0.14); border: 1px solid rgba(56, 168, 200, 0.35); color: #7FC3F2;
 }
 .home-point:nth-child(2) .home-point-ic { background: rgba(7, 193, 96, 0.12); border-color: rgba(7, 193, 96, 0.38); color: #4EE59B; }
-.home-point:nth-child(3) .home-point-ic { background: rgba(34, 184, 207, 0.10); border-color: rgba(34, 184, 207, 0.32); color: #28A8EC; }
+.home-point:nth-child(3) .home-point-ic { background: rgba(34, 184, 207, 0.10); border-color: rgba(34, 184, 207, 0.32); color: #28B5EC; }
 .home-point-ic svg { width: 19px; height: 19px; }
 .home-point b { display: block; font-size: 16px; font-weight: 600; margin-bottom: 5px; letter-spacing: 0.5px; }
 .home-point span { font-size: 13px; color: #C9DBF2; line-height: 1.8; }
