@@ -52,7 +52,7 @@ jobs:
         run: node packages/plugin-console/public/js/realtime.test.mjs
       - name: Theme prototypes and execution heartbeat tests
         run: |
-          node --test packages/plugin-console/public/js/theme.test.mjs packages/plugin-console/public/js/theme-integration.test.mjs packages/plugin-console/public/js/pages/home.test.mjs
+          node --test packages/plugin-console/public/js/theme.test.mjs packages/plugin-console/public/js/theme-integration.test.mjs
           node --experimental-strip-types --test packages/plugin-exec-hub/src/timer-permission.test.mjs packages/plugin-panel-core/src/metering-org.test.mjs
       - name: Selftest (全量断言 incl. P95 gate & fault injection)
         run: npm run selftest

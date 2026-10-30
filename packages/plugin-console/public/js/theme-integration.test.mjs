@@ -83,13 +83,13 @@ test('演示态真实接口、主题切换和工作台导航', async () => {
   assert.ok(document.querySelector('.crystal-shortcuts a[href="#/mcp"]'))
   assert.ok(document.querySelector('.crystal-shortcuts a[href="#/connectors"]'))
   location.hash = '#/home'
-  await waitFor(() => document.querySelector('.ice-home'), '公共冰晶首页')
-  assert.ok(document.querySelector('.ice-lang-host #rq-lang-switcher'), '首页语言切换器在导航中')
-  document.querySelector('[data-capability="2"]').click()
-  assert.match(document.querySelector('#ice-cap-panel').textContent, /模型/)
-  document.querySelector('[data-enter-crystal]').click()
-  await waitFor(() => document.querySelector('.lens-crystal'), '首页进入冰晶工作台')
-  assert.ok(document.querySelector('.topbar-right #rq-lang-switcher'), '返回工作台后语言切换器仍可用')
+  // 2026-10-30 首页回退批次：公共产品首页回到「生态树」版（.home，科技蓝配色）——
+  // 旧版首页自带导航（无顶栏语言切换器宿主），切换器恢复语义由下方工作台断言覆盖。
+  await waitFor(() => document.querySelector('.home .home-nav'), '公共产品首页（生态树版）')
+  assert.ok(document.querySelector('.home #home-login-btn'), '首页登录 CTA 在位')
+  location.hash = '#/dashboard'
+  await waitFor(() => document.querySelector('.lens-crystal'), '回到冰晶工作台')
+  assert.ok(document.querySelector('.topbar-right #rq-lang-switcher'), '工作台语言切换器仍可用')
   assert.equal(document.querySelector('#ui-theme-switcher').value, 'crystal')
   changeTheme('night')
   await waitFor(() => document.querySelector('.lens-night'), '切回原治理主题')

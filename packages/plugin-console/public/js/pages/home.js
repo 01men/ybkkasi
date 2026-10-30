@@ -1,302 +1,636 @@
-/** 公共冰晶首页：数字员工是协作主体；能力与治理分别呈现。 */
+/**
+ * 产品首页（公共营销页）：品牌叙事 + 资源生态树（canvas 特效）+ 能力矩阵 + 架构理念 + 快速开始。
+ *
+ * 免会话可浏览——未登录访问根路径落地本页（不再直接整登录页），登录从导航/CTA 进入 #/login。
+ * 主题为品牌字面量色（科技蓝 #1466CF + 晶青蓝 #28B5EC + 微信绿 #07C160；2026-10-30 首页回退批次由元冰蓝/冰湖青切换，取自冰晶主题色系），不消费 --brand-*，
+ * 免受登录态五平台 data-platform 主题覆写影响；样式见 css/home.css（index.html 直链）。
+ * 特效零依赖（零构建约束）：canvas 2D 手绘生态树（生长动画 + 绿色流转脉冲 + 悬停依赖链高亮）、
+ * 粒子星尘、数字滚动与滚动显现（IntersectionObserver）；rAF 循环以 canvas 脱离文档为退出条件。
+ */
 import { icon } from '../icons.js'
 import { session } from '../api.js'
-import { esc } from '../ui.js'
-import rqI18n from '../i18n.js'
-import { setUiTheme } from '../theme.js'
-import { crystalMarkup, mountCrystalScene } from '../crystal-scene.js'
-const t = (key) => rqI18n.t(key)
-const text = (key) => esc(t(key))
-const glyph = (name, size = 20) =>
-  `<span aria-hidden="true">${icon(name, size)}</span>`
-const CAPABILITIES = [
-  {
-    name: 'MCP 服务',
-    icon: 'plug',
-    route: 'mcp',
-    title: '让工具成为受控的企业能力',
-    desc: '统一登记服务、管理调用权限与健康状态，让数字员工按授权调用业务工具。',
-    tags: ['服务目录', '调用授权', '健康监控'],
-  },
-  {
-    name: 'Skill 技能',
-    icon: 'sparkles',
-    route: 'skills',
-    title: '把经验沉淀为可复用的技能',
-    desc: '通过提交、扫描、审批和版本管理，让工作方法在团队之间有序流转。',
-    tags: ['技能审批', '版本管理', '复用分发'],
-  },
-  {
-    name: '模型渠道',
-    icon: 'cpu',
-    route: 'gateway',
-    title: '为不同任务选择合适的模型',
-    desc: '集中接入模型渠道，结合分级路由、预算约束与降级策略管理真实调用。',
-    tags: ['渠道管理', '分级路由', '预算约束'],
-  },
-  {
-    name: 'AI 应用',
-    icon: 'app',
-    route: 'apps',
-    title: '让应用连接身份、能力与用量',
-    desc: '管理应用生命周期与能力绑定，通过统一身份和用量记录理解应用的运行情况。',
-    tags: ['应用管理', '能力绑定', '用量记录'],
-  },
-  {
-    name: 'SaaS 连接器',
-    icon: 'link',
-    route: 'connectors',
-    title: '把既有业务系统接入协作',
-    desc: '通过连接器管理服务接入、凭据与授权，让数字员工获得明确边界内的业务能力。',
-    tags: ['服务接入', '凭据管理', '按需授权'],
-  },
-  {
-    name: '文件存储',
-    icon: 'server',
-    route: 'nas',
-    title: '让文件访问遵循组织权限',
-    desc: '通过 MCP 文件网关连接存储，按组织位置授权，支持受控访问与文件共享。',
-    tags: ['文件网关', '组织授权', '受控共享'],
-  },
-]
-const STEPS = [
-  {
-    name: '目标对齐',
-    icon: 'target',
-    title: '先明确，要交付什么',
-    desc: '把经营目标拆成项目与任务，明确责任、范围和交付要求，让协作有共同方向。',
-    tag: '示例场景 · 行业研究',
-    input: '目标：完成新市场行业研究',
-    output: '交付要求：研究报告与来源清单',
-    role: '负责人明确目标与验收要求',
-    route: 'dashboard?tab=goals',
-  },
-  {
-    name: '任务协作',
-    icon: 'users',
-    title: '让合适的数字员工接住任务',
-    desc: '围绕项目分配任务，连接人员与数字员工，跟踪进行中、待审与已完成事项。',
-    tag: '示例场景 · 任务分工',
-    input: '任务：收集资料、分析与复核',
-    output: '责任：明确分工与当前进度',
-    role: '人与数字员工共同推进任务',
-    route: 'dashboard?tab=actions',
-  },
-  {
-    name: '能力调用',
-    icon: 'plugZap',
-    title: '带着权限，调用所需能力',
-    desc: '数字员工连接远端执行环境，按授权使用模型、Skill 与 MCP 工具，留下调用与用量记录。',
-    tag: '示例场景 · 受控执行',
-    input: '能力：检索工具、分析技能与模型',
-    output: '过程：授权调用与用量记录',
-    role: '平台提供能力接入与调用治理',
-    route: 'dashboard?tab=collab',
-  },
-  {
-    name: '交付验收',
-    icon: 'fileCheck',
-    title: '用可检查的结果完成协作',
-    desc: '将执行结果与任务关联，按交付要求完成验收，让工作从有进展走向有结果。',
-    tag: '示例场景 · 交付确认',
-    input: '交付：报告、依据与工作记录',
-    output: '验收：核对要求，确认结果',
-    role: '验收方确认结果与后续行动',
-    route: 'exec',
-  },
-]
-let cleanup = () => {}
-export function disposeHome() {
-  cleanup()
-  cleanup = () => {}
+import { $, $$ } from '../ui.js'
+
+/** 生态树数据：平台 → 三域 → 资源叶（与控制台导航同源的 12 个能力面） */
+const TREE = {
+  label: '元冰可平台',
+  children: [
+    { label: 'AI 资源域', children: ['Skill 市场', 'Agent 本体', 'AI 应用', 'MCP 服务', 'NAS 存储'] },
+    { label: '治理与运营', children: ['组织账号', '审批中心', '审计告警', '财务视图'] },
+    { label: '接入与协同', children: ['连接器', '平台接入', '部门面板'] },
+  ],
 }
+
+const FEATURES = [
+  { icon: 'zap', title: '资产登记', desc: '五类资源一个入口登记建档：元数据、归属、计量口径一步到位。' },
+  { icon: 'sparkles', title: 'Skill 市场', desc: '企业级技能市场：上架审批、热度洞察、活跃日历一目了然。' },
+  { icon: 'bot', title: 'Agent 本体', desc: 'Agent 身份与运行档案统一纳管，能力、依赖、健康度全程可见。' },
+  { icon: 'app', title: 'AI 应用', desc: '应用注册即接入单点登录与计量，流量、活跃与成本一屏读懂。', green: true },
+  { icon: 'plug', title: 'MCP 服务', desc: 'MCP 端点目录与调用治理：工具边界清晰、每一次调用可审计。' },
+  { icon: 'server', title: 'NAS 存储', desc: '文件资产纳管与授权：数据不动、权限先行，跨域共享有据可查。', green: true },
+  { icon: 'checkSquare', title: '审批中心', desc: '上架、授权、变更统一审批流：待办聚合、随时处理、留痕完整。' },
+  { icon: 'scroll', title: '审计与告警', desc: '全链路操作审计与告警订阅，合规检查永远有据可依。', green: true },
+  { icon: 'coins', title: '财务视图', desc: '用量与成本穿透到资源与团队：口径透明、内部结算可解释。' },
+  { icon: 'users', title: '组织与账号', desc: '双轨身份 + 角色权限 + 三方集成：一套组织树管住所有入口。' },
+  { icon: 'link', title: '连接器', desc: '钉钉等三方身份与消息通道开箱即接，组织协同不断档。', green: true },
+  { icon: 'building', title: '部门面板', desc: '业务同学零门槛工作台：打开即用，无需理解控制台全貌。' },
+]
+
+const STATS = [
+  { n: 9, unit: '大', lab: '业务域即插即用' },
+  { n: 5, unit: '类', lab: 'AI 资源统一纳管' },
+  { n: 24, unit: '个', lab: '平台插件并行运转' },
+  { n: 1201, unit: '条', lab: '自检断言每次启动全绿' },
+]
+
 export function renderHome(app) {
-  disposeHome()
-  const consoleRoute =
-    session.token || session.isDemo ? '#/dashboard' : '#/login'
-  const link = (label, section) =>
-    `<a href="#/home?section=${section}" data-home-scroll="${section}">${text(label)}</a>`
-  const enter = (label) =>
-    `<a class="ice-button" href="${consoleRoute}" data-enter-crystal>${text(label)} ${glyph('external', 16)}</a>`
-  app.innerHTML = `<div class="ice-home">
-    <a class="ice-skip" href="#/home" data-home-scroll="ice-workflow">${text('跳到产品内容')}</a>
-    <nav class="ice-nav" aria-label="${text('产品导航')}">
-      <a class="ice-brand" href="#/home"><img src="ybk-mark.png" width="38" height="38" alt=""><span>元冰可 <b>AIOS</b><small>${text('企业 AI 运行与治理平台')}</small></span></a>
-      <div class="ice-nav-links" id="ice-nav-links">${link('协作流程', 'ice-workflow')}${link('企业能力', 'ice-capabilities')}${link('统一治理', 'ice-governance')}<a href="https://github.com/01men/ybkkasi" target="_blank" rel="noopener noreferrer">GitHub ${glyph('external', 12)}</a><div class="ice-lang-host"></div></div>
-      ${enter('进入工作台')}<button class="ice-menu" type="button" aria-expanded="false" aria-controls="ice-nav-links" aria-label="${text('打开菜单')}">${glyph('menu')}</button>
+  const loginLabel = session.token ? '进入控制台' : '登录控制台'
+  app.innerHTML = `
+  <div class="home">
+    <nav class="home-nav" id="home-nav">
+      <a class="home-nav-brand" href="#/home">
+        <img src="ybk-mark.png" alt="元冰可">
+        <div><div class="cn">元冰可</div><div class="en">YUANBINGKE</div></div>
+      </a>
+      <div class="home-nav-links">
+        <a href="#sec-features">产品能力</a>
+        <a href="#sec-arch">架构理念</a>
+        <a href="#sec-start">快速开始</a>
+      </div>
+      <div class="home-nav-cta">
+        <a class="home-btn home-btn-ghost" href="#/panels" style="height:38px;padding:0 16px;font-size:13.5px">部门面板</a>
+        <a class="home-btn home-btn-primary" href="#/login" id="home-login-btn" style="height:38px;padding:0 18px;font-size:13.5px">${loginLabel}</a>
+      </div>
+      <button class="home-nav-toggle" id="home-nav-toggle" aria-label="打开菜单" aria-expanded="false">${icon('menu', 20)}</button>
     </nav>
-    <main>
-      <header class="ice-hero ice-wrap">
-        <div class="ice-hero-copy"><div class="ice-kicker"><i></i>${text('数字员工 · 企业能力 · 统一治理')}</div><h1>${text('让数字员工协同，')}<br><span>${text('让企业能力聚合。')}</span></h1><p class="ice-lead">${text('把目标、数字员工与 AI 能力连接起来，让执行有序、交付有据。')}</p><div class="ice-actions">${enter('体验冰晶工作台')}<a class="ice-button ice-button-outline" href="#/home?section=ice-workflow" data-home-scroll="ice-workflow">${text('探索协作方式')} ${glyph('arrowDown', 16)}</a></div><div class="ice-hero-note">${glyph('shieldCheck', 15)}${text('支持自主部署，按组织与角色管理访问。')}</div></div>
-        <div class="ice-hero-visual"><div class="ice-visual-heading"><span>CONNECTED INTELLIGENCE</span><span class="ice-live-dot">${text('协作生态示意')}</span></div>${crystalMarkup()}<div class="ice-orbit-label ice-orbit-label-a">${glyph('users', 17)}${text('数字员工')}</div><div class="ice-orbit-label ice-orbit-label-b">${glyph('plug', 17)}${text('能力接入')}</div><div class="ice-orbit-label ice-orbit-label-c">${glyph('shieldCheck', 17)}${text('统一治理')}</div><button type="button" class="ice-motion" aria-pressed="false">${text('暂停动效')}</button><div class="ice-visual-caption">${text('协作主体彼此连接，企业能力按需调用')}</div></div>
-      </header>
-      <div class="ice-foundations ice-wrap">${[
-        ['users', '数字员工协作', '目标、任务与交付相互连接'],
-        ['layers', '企业能力接入', '模型、技能与工具统一管理'],
-        ['shieldCheck', '统一治理', '权限、审计与用量有据可查'],
-        ['puzzle', '开放生态', 'MCP · REST API · CLI'],
-      ]
-        .map(
-          ([i, a, b]) =>
-            `<div>${glyph(i)}<span><b>${text(a)}</b><small>${text(b)}</small></span></div>`,
-        )
-        .join('')}</div>
-      <section class="ice-section ice-wrap" id="ice-workflow" aria-labelledby="ice-workflow-title"><div class="ice-section-head"><div><div class="ice-kicker">01 / ${text('协作流程')}</div><h2 id="ice-workflow-title">${text('从目标到交付，')}<span>${text('每一步有据可循。')}</span></h2></div><p>${text('人明确方向与判断标准，数字员工参与执行，平台连接任务、能力与记录。')}</p></div><div class="ice-workflow-tabs" role="tablist" aria-label="${text('协作流程')}">${STEPS.map((s, i) => `<button type="button" id="ice-step-${i}" role="tab" aria-controls="ice-step-panel" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}" data-step="${i}"><span class="ice-step-index">0${i + 1}</span>${glyph(s.icon)}<span>${text(s.name)}</span>${i < 3 ? '<span class="ice-step-arrow" aria-hidden="true">→</span>' : ''}</button>`).join('')}</div><div id="ice-step-panel" class="ice-step-panel" role="tabpanel" aria-labelledby="ice-step-0" tabindex="0"></div></section>
-      <section class="ice-section ice-capabilities-section" id="ice-capabilities" aria-labelledby="ice-cap-title"><div class="ice-wrap"><div class="ice-section-head"><div><div class="ice-kicker">02 / ${text('企业能力')}</div><h2 id="ice-cap-title">${text('员工负责协作，')}<span>${text('能力按需接入。')}</span></h2></div><p>${text('数字员工是协作主体；模型、Skill、MCP 与业务应用，是其可使用的能力与资源。')}</p></div><div class="ice-cap-layout"><div class="ice-cap-tabs" role="tablist" aria-label="${text('选择企业能力')}">${CAPABILITIES.map((c, i) => `<button type="button" role="tab" id="ice-cap-${i}" aria-controls="ice-cap-panel" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}" data-capability="${i}"><span class="ice-icon-glass">${glyph(c.icon, 27)}</span><span>${text(c.name)}</span><span class="ice-cap-arrow" aria-hidden="true">↗</span></button>`).join('')}</div><div class="ice-cap-panel" id="ice-cap-panel" role="tabpanel" aria-labelledby="ice-cap-0" tabindex="0"></div></div></div></section>
-      <section class="ice-section ice-wrap" id="ice-governance" aria-labelledby="ice-gov-title"><div class="ice-section-head"><div><div class="ice-kicker">03 / ${text('统一治理')}</div><h2 id="ice-gov-title">${text('让执行可控，')}<span>${text('让过程可追溯。')}</span></h2></div><p>${text('将身份、权限和记录融入协作，帮助负责人看清谁在执行、调用了什么、产生了多少用量。')}</p></div><div class="ice-gov-grid">${[
-        [
-          'fingerprint',
-          '身份与权限',
-          '以组织、角色和机器凭据限定访问范围，让数字员工带着明确的权限参与工作。',
-          '组织与角色',
-          '最小权限',
-        ],
-        [
-          'fileCheck',
-          '审批与审计',
-          '对关键操作设置审批，保留操作与调用记录，为复核、追踪和责任归属提供依据。',
-          '关键操作审批',
-          '操作记录追踪',
-        ],
-        [
-          'chart',
-          '用量与成本',
-          '从部门、数字员工和技能等维度查看用量与内部成本，为资源配置提供依据。',
-          '用量洞察',
-          '成本归集',
-        ],
-      ]
-        .map(
-          ([i, title, desc, a, b]) =>
-            `<article><span class="ice-icon-glass">${glyph(i, 27)}</span><h3>${text(title)}</h3><p>${text(desc)}</p><div class="ice-tags"><span>${text(a)}</span><span>${text(b)}</span></div></article>`,
-        )
-        .join('')}</div></section>
-      <section class="ice-final ice-wrap"><div><div class="ice-kicker">READY TO WORK TOGETHER</div><h2>${text('把下一项工作，')}<br><span>${text('交给协作的力量。')}</span></h2><p>${text('自主部署 · MIT 开源 · 插件化扩展')}</p></div><div class="ice-final-actions">${enter('进入冰晶工作台')}<a class="ice-text-link" href="https://github.com/01men/ybkkasi/blob/main/docs/deploy-enterprise.md" target="_blank" rel="noopener noreferrer">${text('阅读部署与接入指南')} ↗</a></div></section>
-    </main><footer class="ice-footer ice-wrap"><span>© ${new Date().getFullYear()} ${text('杭州元冰可科技有限公司')}</span><span>${text('让数字员工与企业 AI 能力，在统一治理下协同工作。')}</span><a href="https://github.com/01men/ybkkasi" target="_blank" rel="noopener noreferrer">GitHub ↗</a></footer>
+
+    <header class="home-hero">
+      <div class="home-hero-bg"><canvas id="home-stars"></canvas></div>
+      <div class="home-hero-copy">
+        <div class="home-hero-eyebrow"><span class="dot"></span>企业级 AI 资源管理平台</div>
+        <h1>让团队一起用 AI，<br>把<span class="grad">每一份资源</span>都管起来</h1>
+        <p class="home-hero-sub">Skill 市场、Agent 本体、AI 应用、MCP 服务、NAS 存储——五类资源一套身份、一套权限、一套审计。基于 DeepSeek Harness「一切皆插件」架构，九大业务域即插即用，按团队需要随用随上。</p>
+        <div class="home-hero-actions">
+          <a class="home-btn home-btn-primary" href="#/login">${icon('arrowUp')}${loginLabel}</a>
+          <a class="home-btn home-btn-ghost" href="#sec-start">了解架构</a>
+        </div>
+        <div class="home-hero-hint">${icon('shieldCheck')}支持钉钉扫码 · 账号密码 · 一次性票据免登</div>
+      </div>
+      <div class="home-hero-visual">
+        <div class="home-tree-wrap">
+          <canvas id="home-tree"></canvas>
+          <div class="home-tree-caption"><i></i>资源生态树 · 悬停查看依赖链路</div>
+        </div>
+      </div>
+    </header>
+
+    <div class="home-stats">
+      ${STATS.map((s, i) => `
+      <div class="home-stat home-reveal" style="--d:${i * 0.08}s">
+        <div class="home-stat-num" data-n="${s.n}">0<span class="unit">${s.unit}</span></div>
+        <div class="home-stat-lab">${s.lab}</div>
+        <div class="bar"></div>
+      </div>`).join('')}
+    </div>
+
+    <section class="home-section" id="sec-features">
+      <div class="home-sec-head home-reveal">
+        <div class="home-sec-kicker">产品能力</div>
+        <h2>一个平台，管住企业的全部 AI 资产</h2>
+        <p>从资源登记到用量计量、从权限治理到审计告警，九大业务域以插件形态按需启用——能力齐全，但从不为用不到的功能付费。</p>
+      </div>
+      <div class="home-grid">
+        ${FEATURES.map((f, i) => `
+        <div class="home-card${f.green ? ' green' : ''} home-reveal" style="--d:${(i % 4) * 0.07}s">
+          <div class="home-card-ic">${icon(f.icon)}</div>
+          <div class="home-card-title">${f.title}</div>
+          <div class="home-card-desc">${f.desc}</div>
+        </div>`).join('')}
+      </div>
+    </section>
+
+    <section class="home-section" id="sec-arch">
+      <div class="home-sec-head home-reveal">
+        <div class="home-sec-kicker">架构理念</div>
+        <h2>一切皆插件，治理与生俱来</h2>
+        <p>平台自身由 24 个插件组成：业务域即插即用、按需生长；资源从注册那一刻起就进入身份、权限与审计的治理轨道。</p>
+      </div>
+      <div class="home-arch home-reveal">
+        <div class="home-points">
+          <div class="home-point">
+            <div class="home-point-ic">${icon('puzzle')}</div>
+            <div><b>一切皆插件</b><span>基于 DeepSeek Harness 插件架构，九大业务域即插即用：按团队需要随用随上，不绑架整体升级。</span></div>
+          </div>
+          <div class="home-point">
+            <div class="home-point-ic">${icon('shieldCheck')}</div>
+            <div><b>注册即治理</b><span>双轨身份 + 角色权限 + 令牌网关：从接入到调用全链路留痕，企业合规一次到位。</span></div>
+          </div>
+          <div class="home-point">
+            <div class="home-point-ic">${icon('gitBranch')}</div>
+            <div><b>依赖可穿透</b><span>应用 → Agent → MCP/Skill 拓扑一图可视：谁依赖谁、影响多大，改动之前先知道。</span></div>
+          </div>
+        </div>
+        <div>
+          <div class="home-topo">
+            <svg viewBox="0 0 480 268" width="100%" role="img" aria-label="依赖拓扑示意">
+              <defs>
+                <marker id="tp-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 z" fill="rgba(159,196,255,0.55)"/>
+                </marker>
+              </defs>
+              <g stroke="rgba(159,196,255,0.4)" stroke-width="1.3" fill="none" class="tp-edges">
+                <path class="flow" d="M96,84 C150,84 160,66 214,66"/>
+                <path class="flow" d="M96,84 C150,84 160,116 214,116"/>
+                <path class="flow" d="M96,176 C150,176 160,116 214,116"/>
+                <path class="flow" d="M96,176 C150,176 160,166 214,166"/>
+                <path class="flow" d="M254,66 C310,66 320,62 366,62"/>
+                <path class="flow" d="M254,66 C310,66 320,107 366,107"/>
+                <path class="flow" d="M254,116 C310,116 320,107 366,107"/>
+                <path class="flow" d="M254,116 C310,116 320,152 366,152"/>
+                <path class="flow" d="M254,166 C310,166 320,152 366,152"/>
+                <path class="flow" d="M254,166 C310,166 320,197 366,197"/>
+              </g>
+              <g stroke="#07C160" stroke-width="2" fill="none" opacity="0.95">
+                <path class="flow" d="M96,84 C150,84 160,116 214,116"/>
+                <path class="flow" d="M254,116 C310,116 320,152 366,152"/>
+              </g>
+              <g fill="rgba(255,255,255,0.05)" stroke="rgba(159,196,255,0.34)" stroke-width="1">
+                <rect x="26" y="68" width="70" height="32" rx="8"/>
+                <rect x="26" y="160" width="70" height="32" rx="8"/>
+                <rect x="196" y="50" width="58" height="32" rx="8"/>
+                <rect x="196" y="100" width="58" height="32" rx="8"/>
+                <rect x="196" y="150" width="58" height="32" rx="8"/>
+                <rect x="366" y="46" width="88" height="32" rx="8"/>
+                <rect x="366" y="91" width="88" height="32" rx="8"/>
+                <rect x="366" y="136" width="88" height="32" rx="8"/>
+                <rect x="366" y="181" width="88" height="32" rx="8"/>
+              </g>
+              <g stroke="#07C160" stroke-width="1.6" fill="rgba(7,193,96,0.10)">
+                <rect x="196" y="100" width="58" height="32" rx="8"/>
+                <rect x="366" y="136" width="88" height="32" rx="8"/>
+              </g>
+              <g font-size="12" fill="#C4DBFF" text-anchor="middle" font-family="inherit">
+                <text x="61" y="88">智能客服</text>
+                <text x="61" y="180">营销助手</text>
+                <text x="225" y="70">客服 Agent</text>
+                <text x="225" y="120" fill="#4EE59B">数据 Agent</text>
+                <text x="410" y="66">MCP · 知识库</text>
+                <text x="410" y="111">Skill · 工单</text>
+                <text x="410" y="156" fill="#4EE59B">MCP · 报表</text>
+                <text x="410" y="201">Skill · 分析</text>
+              </g>
+              <g font-size="10.5" fill="#7E9AD2" text-anchor="middle">
+                <text x="61" y="46">AI 应用</text>
+                <text x="225" y="38">Agent 本体</text>
+                <text x="410" y="30">能力底座（MCP / Skill）</text>
+              </g>
+            </svg>
+            <div class="home-topo-cap">依赖穿透示例：营销助手 → 数据 Agent → MCP · 报表（绿色链路）</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-section" id="sec-start">
+      <div class="home-sec-head home-reveal" style="text-align:center;margin-left:auto;margin-right:auto">
+        <div class="home-sec-kicker" style="justify-content:center">快速开始</div>
+        <h2>从第一份资产登记开始</h2>
+        <p style="margin-left:auto;margin-right:auto">三步进入运转状态，治理能力随资源一起就位。</p>
+      </div>
+      <div class="home-cta-band">
+        <div class="home-steps">
+          <div class="home-step home-reveal">
+            <div class="home-step-no">1</div>
+            <b>登记第一份资源</b>
+            <span>登录控制台，把第一个 MCP 服务或 Skill 登记建档——归属、口径、权限一次配齐。</span>
+          </div>
+          <div class="home-step home-reveal" style="--d:0.1s">
+            <div class="home-step-no">2</div>
+            <b>邀请团队按角色入岗</b>
+            <span>组织账号开箱即建：管理员、开发者、审计员各就其位，权限随角色自动流转。</span>
+          </div>
+          <div class="home-step home-reveal" style="--d:0.2s">
+            <div class="home-step-no">3</div>
+            <b>部门面板开箱即用</b>
+            <span>业务同学从钉钉或门户一键进入部门面板：打开即工作台，资源共享从第一天开始。</span>
+          </div>
+        </div>
+        <div class="home-cta-actions home-reveal">
+          <a class="home-btn home-btn-green" href="#/login">${loginLabel}</a>
+          <a class="home-btn home-btn-light" href="#/panels">进入部门面板</a>
+        </div>
+        <div class="home-cta-note home-reveal">首次部署：平台管理员初始口令见服务器 data/admin-initial-password.txt，登录后请立即修改。</div>
+      </div>
+    </section>
+
+    <footer class="home-footer">
+      <div class="home-footer-inner">
+        <div class="home-footer-brand">
+          <img src="ybk-mark.png" alt="元冰可">
+          <div>
+            <div class="cn">元冰可 <span style="font-size:11px;letter-spacing:2px;color:#7E9AD2;font-weight:500">YUANBINGKE</span></div>
+            <div class="en">让企业的每一份 AI 资产，安全、可见、可协作</div>
+            <div class="tag">企业AI资源管理平台 · 一切皆插件</div>
+          </div>
+        </div>
+        <div class="home-footer-links">
+          <a href="#sec-features">产品能力</a>
+          <a href="#sec-arch">架构理念</a>
+          <a href="#sec-start">快速开始</a>
+          <a href="#/panels">部门面板</a>
+        </div>
+      </div>
+      <div class="home-footer-meta">
+        <span>© 2026 杭州元冰可科技有限公司 · 基于 DeepSeek Harness 构建</span>
+        <span class="grow-dot"><i></i>系统运行中 · 自检断言全绿</span>
+      </div>
+    </footer>
   </div>`
-  rqI18n.mountSwitcher()
-  const root = app.querySelector('.ice-home'),
-    scene = mountCrystalScene(root.querySelector('[data-crystal-scene]'))
-  const scroll = (id) =>
-    root
-      .querySelector(`#${id}`)
-      ?.scrollIntoView?.({
-        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')
-          ?.matches
-          ? 'auto'
-          : 'smooth',
-        block: 'start',
-      })
-  const menu = root.querySelector('.ice-menu'),
-    nav = root.querySelector('.ice-nav')
-  const closeMenu = () => {
-    nav.classList.remove('is-open')
-    menu.setAttribute('aria-expanded', 'false')
-  }
-  menu.addEventListener('click', () => {
-    const open = nav.classList.toggle('is-open')
-    menu.setAttribute('aria-expanded', String(open))
+
+  mountNav(app)
+  mountStars($('#home-stars'))
+  mountTree($('#home-tree'))
+  mountCounters(app)
+  mountReveal(app)
+}
+
+/* ---------- 顶部导航：滚动态玻璃效果 + 移动端汉堡下拉（≤880px） ---------- */
+function mountNav() {
+  const nav = $('#home-nav')
+  if (!nav) return
+  const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8)
+  onScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+  // 移动端：汉堡开合锚点菜单；点选锚点后收起
+  $('#home-nav-toggle')?.addEventListener('click', () => {
+    const open = nav.classList.toggle('open')
+    const toggle = $('#home-nav-toggle')
+    if (toggle) toggle.setAttribute('aria-expanded', String(open))
   })
-  root.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && nav.classList.contains('is-open')) {
-      closeMenu()
-      menu.focus()
+  nav.querySelectorAll('.home-nav-links a').forEach((a) => {
+    a.addEventListener('click', () => nav.classList.remove('open'))
+  })
+}
+
+/* ---------- 粒子星尘（hero 背景）：零依赖 canvas ---------- */
+function mountStars(canvas) {
+  if (!canvas) return
+  // canvas 缺席守卫（headless/jsdom 或 canvas 被禁用的环境）：跳过特效，页面结构照常渲染
+  const ctx = canvas.getContext ? canvas.getContext('2d') : null
+  if (!ctx) return
+  let stars = []
+  const resize = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    canvas.width = canvas.clientWidth * dpr
+    canvas.height = canvas.clientHeight * dpr
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    const count = Math.round((canvas.clientWidth * canvas.clientHeight) / 16000)
+    stars = Array.from({ length: Math.min(count, 70) }, () => ({
+      x: Math.random() * canvas.clientWidth,
+      y: Math.random() * canvas.clientHeight,
+      r: 0.8 + Math.random() * 1.8,
+      vy: 0.06 + Math.random() * 0.22,
+      vx: (Math.random() - 0.5) * 0.08,
+      ph: Math.random() * Math.PI * 2,
+      green: Math.random() < 0.22,
+    }))
+  }
+  resize()
+  window.addEventListener('resize', resize)
+  const tick = (t) => {
+    if (!document.body.contains(canvas)) return
+    const w = canvas.clientWidth
+    const hgt = canvas.clientHeight
+    ctx.clearRect(0, 0, w, hgt)
+    for (const s of stars) {
+      s.y -= s.vy
+      s.x += s.vx
+      if (s.y < -4) { s.y = hgt + 4; s.x = Math.random() * w }
+      if (s.x < -4) s.x = w + 4
+      if (s.x > w + 4) s.x = -4
+      const a = 0.16 + 0.42 * (0.5 + 0.5 * Math.sin(t * 0.0012 + s.ph))
+      ctx.beginPath()
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+      ctx.globalAlpha = a
+      ctx.fillStyle = s.green ? 'rgb(96,232,168)' : 'rgb(120,196,255)'
+      ctx.fill()
     }
-  })
-  root.querySelectorAll('[data-home-scroll]').forEach((a) =>
-    a.addEventListener('click', (e) => {
-      e.preventDefault()
-      scroll(a.dataset.homeScroll)
-      closeMenu()
-    }),
-  )
-  root
-    .querySelectorAll('[data-enter-crystal]')
-    .forEach((a) => a.addEventListener('click', () => setUiTheme('crystal')))
-  const motionButton = root.querySelector('.ice-motion')
-  motionButton.hidden = true
-  root
-    .querySelector('[data-crystal-scene]')
-    .addEventListener('crystal-state', (event) => {
-      motionButton.hidden =
-        event.currentTarget.dataset.renderer !== 'webgl' ||
-        Boolean(
-          window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches,
-        )
-    })
-  motionButton.addEventListener('click', () => {
-    const paused = motionButton.getAttribute('aria-pressed') !== 'true'
-    scene.setMotion(!paused)
-    motionButton.setAttribute('aria-pressed', String(paused))
-    motionButton.textContent = t(paused ? '播放动效' : '暂停动效')
-  })
-  function selectStep(index) {
-    const step = STEPS[index],
-      panel = root.querySelector('#ice-step-panel')
-    root.querySelectorAll('[data-step]').forEach((b) => {
-      const active = Number(b.dataset.step) === index
-      b.setAttribute('aria-selected', String(active))
-      b.tabIndex = active ? 0 : -1
-    })
-    panel.setAttribute('aria-labelledby', `ice-step-${index}`)
-    panel.innerHTML = `<div class="ice-step-story"><span class="ice-detail-kicker">0${index + 1} / ${text(step.name)}</span><h3>${text(step.title)}</h3><p>${text(step.desc)}</p><a class="ice-text-link" href="#/${step.route}">${text('在工作台中查看')} ↗</a></div><div class="ice-scenario"><div class="ice-scenario-head"><i></i>${text(step.tag)}</div><div class="ice-scenario-row">${glyph(step.icon, 22)}<b>${text(step.input)}</b></div><div class="ice-scenario-line"></div><div class="ice-scenario-row">${glyph('fileCheck', 22)}<b>${text(step.output)}</b></div><div class="ice-scenario-foot">${glyph('users', 15)}${text(step.role)}</div></div>`
-    panel
-      .querySelector('a')
-      .addEventListener('click', () => setUiTheme('crystal'))
-    scene.focus(index)
+    requestAnimationFrame(tick)
   }
-  function selectCapability(index) {
-    const c = CAPABILITIES[index],
-      panel = root.querySelector('#ice-cap-panel')
-    root.querySelectorAll('[data-capability]').forEach((b) => {
-      const active = Number(b.dataset.capability) === index
-      b.setAttribute('aria-selected', String(active))
-      b.tabIndex = active ? 0 : -1
-    })
-    panel.setAttribute('aria-labelledby', `ice-cap-${index}`)
-    panel.innerHTML = `<div class="ice-detail-kicker">${text(c.name)}</div><h3>${text(c.title)}</h3><p>${text(c.desc)}</p><div class="ice-tags">${c.tags.map((tag) => `<span>${text(tag)}</span>`).join('')}</div><a class="ice-text-link" href="#/${c.route}">${text('在工作台中查看')} ↗</a><div class="ice-cap-emblem" aria-hidden="true">${icon(c.icon, 100)}</div>`
-    panel
-      .querySelector('a')
-      .addEventListener('click', () => setUiTheme('crystal'))
-    scene.focus(index)
-  }
-  function bindTabs(selector, key, select) {
-    const buttons = [...root.querySelectorAll(selector)]
-    buttons.forEach((button, i) => {
-      button.addEventListener('click', () =>
-        select(Number(button.dataset[key])),
-      )
-      button.addEventListener('keydown', (e) => {
-        let index
-        if (e.key === 'ArrowRight' || e.key === 'ArrowDown')
-          index = (i + 1) % buttons.length
-        else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')
-          index = (i + buttons.length - 1) % buttons.length
-        else if (e.key === 'Home') index = 0
-        else if (e.key === 'End') index = buttons.length - 1
-        if (index !== undefined) {
-          e.preventDefault()
-          select(index)
-          buttons[index].focus()
+  requestAnimationFrame(tick)
+}
+
+/* ---------- 资源生态树：生长动画 + 绿色流转脉冲 + 悬停依赖链高亮 ---------- */
+function mountTree(canvas) {
+  if (!canvas) return
+  // canvas 缺席守卫（headless/jsdom 或 canvas 被禁用的环境）：跳过生态树动画，页面结构照常渲染
+  const ctx = canvas.getContext ? canvas.getContext('2d') : null
+  if (!ctx) return
+  const BLUE = '#1466CF'
+  const CYAN = '#28B5EC'
+  const LIGHT = '#C4DBFF'
+  const GREEN = '#07C160'
+
+  // 节点模型：id 用于链路高亮；node = {id, label, x, y, r, depth, parent, appearAt}
+  let nodes = []
+  let edges = []
+  let pulses = []
+  let ripples = []
+  let hover = null
+  let start = 0
+
+  const layout = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const w = canvas.clientWidth
+    const hgt = canvas.clientHeight
+    canvas.width = w * dpr
+    canvas.height = hgt * dpr
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    nodes = []
+    edges = []
+    const root = { id: '根', label: TREE.label, x: w / 2, y: 46, r: 15, depth: 0, parent: null, appearAt: 0 }
+    nodes.push(root)
+    TREE.children.forEach((domain, di) => {
+      const dx = w * (0.5 + (di - 1) * 0.32)
+      const dn = { id: `域${di}`, label: domain.label, x: dx, y: 128, r: 10.5, depth: 1, parent: root, appearAt: 0.16 + di * 0.1 }
+      nodes.push(dn)
+      edges.push({ from: root, to: dn, start: 0.05 + di * 0.09, end: 0.16 + di * 0.09 })
+      const step = Math.min(42, (hgt - 210) / domain.children.length)
+      domain.children.forEach((leaf, ci) => {
+        const ln = {
+          id: `域${di}叶${ci}`, label: leaf, x: dx, y: 196 + ci * step + 14,
+          r: 4.5, depth: 2, parent: dn, appearAt: 0.3 + di * 0.06 + ci * 0.045,
         }
+        nodes.push(ln)
+        edges.push({ from: dn, to: ln, start: 0.24 + di * 0.06 + ci * 0.04, end: 0.3 + di * 0.06 + ci * 0.045 })
       })
     })
   }
-  bindTabs('[data-step]', 'step', selectStep)
-  bindTabs('[data-capability]', 'capability', selectCapability)
-  selectStep(0)
-  selectCapability(0)
-  const observer = new MutationObserver(() => {
-    if (!root.isConnected) disposeHome()
-  })
-  observer.observe(app, { childList: true })
-  cleanup = () => {
-    scene.destroy()
-    observer.disconnect()
+  layout()
+  window.addEventListener('resize', layout)
+
+  const ease = (t) => 1 - Math.pow(1 - t, 3)
+  const bez = (p0, p1, p2, p3, t) => {
+    const u = 1 - t
+    return {
+      x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
+      y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
+    }
   }
-  const section = new URLSearchParams(location.hash.split('?')[1] || '').get(
-    'section',
-  )
-  if (['ice-workflow', 'ice-capabilities', 'ice-governance'].includes(section))
-    scroll(section)
+  // 垂直方向连接的贝塞尔控制点（同 x 时退化为平滑直线，跨列时自然弯曲）
+  const ctrl = (a, b) => {
+    const mid = (a.y + b.y) / 2
+    return [{ x: a.x, y: mid }, { x: b.x, y: mid }]
+  }
+  const edgePoints = (e) => {
+    const [c1, c2] = ctrl(e.from, e.to)
+    return { p0: { x: e.from.x, y: e.from.y + e.from.r + 3 }, c1, c2, p3: { x: e.to.x, y: e.to.y - e.to.r - 3 } }
+  }
+  const pointAt = (e, t) => { const { p0, c1, c2, p3 } = edgePoints(e); return bez(p0, c1, c2, p3, t) }
+  const pathOf = (leaf) => {
+    const chain = []
+    for (let n = leaf; n; n = n.parent) chain.unshift(n)
+    const segs = []
+    for (let i = 0; i < chain.length - 1; i++) {
+      segs.push(edges.find((e) => e.from === chain[i] && e.to === chain[i + 1]))
+    }
+    return { chain, segs }
+  }
+
+  // 悬停：命中叶子 → 高亮 根→叶 链路（依赖穿透语义）
+  canvas.addEventListener('pointermove', (ev) => {
+    const rect = canvas.getBoundingClientRect()
+    const mx = ev.clientX - rect.left
+    const my = ev.clientY - rect.top
+    hover = null
+    for (const n of nodes) {
+      if (n.depth === 2 && Math.hypot(n.x - mx, n.y - my) < 18) { hover = n; break }
+    }
+    canvas.style.cursor = hover ? 'pointer' : 'default'
+  })
+  canvas.addEventListener('pointerleave', () => { hover = null })
+
+  const spawnPulse = (now) => {
+    const leaves = nodes.filter((n) => n.depth === 2)
+    const leaf = leaves[Math.floor(Math.random() * leaves.length)]
+    if (!leaf) return
+    pulses.push({ segs: pathOf(leaf).segs, t: 0, speed: 0.55 + Math.random() * 0.3, leaf, born: now })
+  }
+
+  const draw = (now) => {
+    if (!document.body.contains(canvas)) return
+    if (!start) start = now
+    const grow = ease(Math.min((now - start) / 2100, 1))
+    const w = canvas.clientWidth
+    const hgt = canvas.clientHeight
+    const sway = Math.sin(now * 0.0011) * 3
+    ctx.clearRect(0, 0, w, hgt)
+    ctx.save()
+    ctx.translate(0, sway)
+
+    const hoverChain = hover ? new Set(pathOf(hover).chain) : null
+
+    // 连线
+    for (const e of edges) {
+      const local = Math.max(0, Math.min(1, (grow - e.start) / Math.max(0.001, e.end - e.start)))
+      if (local <= 0) continue
+      const { p0, c1, c2, p3 } = edgePoints(e)
+      const lit = hoverChain && (hoverChain.has(e.from) && hoverChain.has(e.to))
+      const dim = hoverChain && !lit
+      const steps = 26
+      const upto = Math.max(1, Math.round(steps * local))
+      ctx.beginPath()
+      ctx.moveTo(p0.x, p0.y)
+      for (let i = 1; i <= upto; i++) {
+        const p = bez(p0, c1, c2, p3, (i / upto) * local)
+        ctx.lineTo(p.x, p.y)
+      }
+      ctx.strokeStyle = lit ? 'rgba(111,212,255,0.95)' : 'rgba(40,181,236,0.34)'
+      ctx.globalAlpha = dim ? 0.4 : 1
+      ctx.lineWidth = lit ? 2.2 : 1.2
+      ctx.stroke()
+      ctx.globalAlpha = 1
+    }
+
+    // 节点
+    for (const n of nodes) {
+      const local = Math.max(0, Math.min(1, (grow - n.appearAt) / 0.22))
+      if (local <= 0) continue
+      const scale = 0.6 + 0.4 * ease(local) + (local >= 1 ? 0 : 0)
+      const lit = !hoverChain || hoverChain.has(n)
+      const alpha = hoverChain && !hoverChain.has(n) ? 0.45 : 1
+      ctx.globalAlpha = alpha
+
+      if (n.depth === 0) {  // 根：六边形平台节点（呼应 logo）
+        ctx.beginPath()
+        for (let i = 0; i < 6; i++) {
+          const a = Math.PI / 6 + (i * Math.PI) / 3
+          const px = n.x + Math.cos(a) * (n.r + 5) * scale
+          const py = n.y + Math.sin(a) * (n.r + 5) * scale
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)
+        }
+        ctx.closePath()
+        const g = ctx.createLinearGradient(n.x - 16, n.y - 16, n.x + 16, n.y + 16)
+        g.addColorStop(0, BLUE)
+        g.addColorStop(1, CYAN)
+        ctx.fillStyle = g
+        ctx.shadowColor = 'rgba(40,181,236,0.65)'
+        ctx.shadowBlur = 16
+        ctx.fill()
+        ctx.shadowBlur = 0
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      } else if (n.depth === 1) {  // 域：实心青蓝圆
+        ctx.beginPath()
+        ctx.arc(n.x, n.y, n.r * scale, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(20,102,207,0.9)'
+        ctx.shadowColor = 'rgba(40,181,236,0.55)'
+        ctx.shadowBlur = 10
+        ctx.fill()
+        ctx.shadowBlur = 0
+        ctx.strokeStyle = 'rgba(111,212,255,0.9)'
+        ctx.lineWidth = 1.4
+        ctx.stroke()
+      } else {  // 叶：小圆点 + 右侧标签
+        ctx.beginPath()
+        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2)
+        ctx.fillStyle = hover === n ? GREEN : 'rgba(159,196,255,0.9)'
+        ctx.shadowColor = hover === n ? 'rgba(7,193,96,0.8)' : 'rgba(0,0,0,0)'
+        ctx.shadowBlur = hover === n ? 9 : 0
+        ctx.fill()
+        ctx.shadowBlur = 0
+      }
+      ctx.globalAlpha = 1
+
+      // 标签
+      ctx.font = n.depth === 0
+        ? '600 14px ' + getComputedStyle(document.body).fontFamily
+        : n.depth === 1 ? '600 12.5px ' + getComputedStyle(document.body).fontFamily
+          : '12px ' + getComputedStyle(document.body).fontFamily
+      ctx.globalAlpha = alpha * local
+      ctx.fillStyle = n.depth === 2 ? LIGHT : '#FFFFFF'
+      if (n.depth === 0) {
+        ctx.textAlign = 'center'
+        ctx.fillText(n.label, n.x, n.y - n.r - 14)
+      } else if (n.depth === 1) {
+        ctx.textAlign = 'center'
+        ctx.fillText(n.label, n.x, n.y - n.r - 9)
+      } else {
+        ctx.textAlign = 'left'
+        ctx.fillStyle = hover === n ? '#7CF0AE' : lit ? LIGHT : 'rgba(187,211,255,0.75)'
+        ctx.fillText(n.label, n.x + 11, n.y + 4)
+      }
+      ctx.globalAlpha = 1
+    }
+
+    // 生长完成后：绿色流转脉冲（根 → 域 → 叶，象征审批/授权/调用在链路上流转）
+    if (grow >= 1) {
+      if (!draw.lastSpawn || now - draw.lastSpawn > 720) {
+        spawnPulse(now)
+        draw.lastSpawn = now
+      }
+      pulses = pulses.filter((p) => p.t <= 1)
+      for (const p of pulses) {
+        p.t += 0.0065 * p.speed
+        const tt = Math.max(0, Math.min(0.999, p.t))
+        const seg = p.segs[Math.min(p.segs.length - 1, Math.floor(tt * p.segs.length))]
+        const local = tt * p.segs.length - Math.floor(tt * p.segs.length)
+        const pos = pointAt(seg, local)
+        // 拖尾
+        for (let k = 1; k <= 4; k++) {
+          const tp = Math.max(0, tt - k * 0.018)
+          const sg = p.segs[Math.min(p.segs.length - 1, Math.floor(tp * p.segs.length))]
+          const lp = tp * p.segs.length - Math.floor(tp * p.segs.length)
+          const pos2 = pointAt(sg, lp)
+          ctx.beginPath()
+          ctx.arc(pos2.x, pos2.y, 2.4 - k * 0.45, 0, Math.PI * 2)
+          ctx.globalAlpha = 0.28 - k * 0.06
+          ctx.fillStyle = 'rgb(7,193,96)'
+          ctx.fill()
+        }
+        ctx.beginPath()
+        ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2)
+        ctx.globalAlpha = 1
+        ctx.fillStyle = GREEN
+        ctx.shadowColor = 'rgba(7,193,96,0.95)'
+        ctx.shadowBlur = 10
+        ctx.fill()
+        ctx.shadowBlur = 0
+        if (p.t >= 1) ripples.push({ x: p.leaf.x, y: p.leaf.y, r: 4, a: 0.8 })
+      }
+    }
+
+    // 抵达涟漪
+    ripples = ripples.filter((rp) => rp.a > 0.02)
+    for (const rp of ripples) {
+      rp.r += 0.55
+      rp.a *= 0.94
+      ctx.beginPath()
+      ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2)
+      ctx.globalAlpha = rp.a
+      ctx.strokeStyle = 'rgb(78,229,155)'
+      ctx.lineWidth = 1.4
+      ctx.stroke()
+      ctx.globalAlpha = 1
+    }
+
+    ctx.restore()
+    requestAnimationFrame(draw)
+  }
+  requestAnimationFrame(draw)
+}
+
+/* ---------- 数字滚动 ---------- */
+function mountCounters() {
+  const els = $$('.home-stat-num')
+  if (!els.length) return
+  const animate = (el) => {
+    const target = Number(el.dataset.n ?? 0)
+    const unit = el.querySelector('.unit')
+    // 动画帧缺席守卫（headless/jsdom / 老浏览器）：直接落终值，不做补间
+    if (typeof requestAnimationFrame !== 'function') {
+      el.innerHTML = `${target.toLocaleString('zh-CN')}<span class="unit">${unit?.textContent ?? ''}</span>`
+      return
+    }
+    const t0 = performance.now()
+    const dur = 1300
+    const step = (now) => {
+      if (!document.body.contains(el)) return
+      const p = Math.min((now - t0) / dur, 1)
+      const val = Math.round(target * (1 - Math.pow(1 - p, 3)))
+      el.innerHTML = `${val.toLocaleString('zh-CN')}<span class="unit">${unit?.textContent ?? ''}</span>`
+      if (p < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  }
+  // 观察者缺席守卫（headless/jsdom / 老浏览器）：直接落终值，不留空白数字
+  if (typeof IntersectionObserver === 'undefined') {
+    els.forEach((el) => animate(el))
+    return
+  }
+  const io = new IntersectionObserver((entries) => {
+    for (const en of entries) {
+      if (en.isIntersecting) { animate(en.target); io.unobserve(en.target) }
+    }
+  }, { threshold: 0.4 })
+  els.forEach((el) => io.observe(el))
+}
+
+/* ---------- 滚动显现 ---------- */
+function mountReveal() {
+  const els = $$('.home-reveal')
+  if (!els.length) return
+  // 观察者缺席守卫：直接置终态（.in），绝不让内容因缺少观察者而永久隐藏
+  if (typeof IntersectionObserver === 'undefined') {
+    els.forEach((el) => el.classList.add('in'))
+    return
+  }
+  const io = new IntersectionObserver((entries) => {
+    for (const en of entries) {
+      if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target) }
+    }
+  }, { threshold: 0.12 })
+  els.forEach((el) => io.observe(el))
 }
