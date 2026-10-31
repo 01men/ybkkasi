@@ -88,7 +88,7 @@ npm start
 
 ## 接入 dsh
 
-项目提供 dsh `web` profile 的插件包；仓库声明的兼容范围为 `>=0.1.0-rc.7 <0.2.0`。dsh 挂载仍属实验性接入，请先在隔离环境验证所用版本。
+项目提供 dsh `web` profile 的插件包；仓库声明的兼容范围为 `>=0.1.0-rc.7 <0.3.0`，逐版本登记见 `package.json` 的 `dsh.compatibility.dshReleases`（已实测 `0.1.0-rc.7`、`0.2.1-rc.5`）。dsh 挂载仍属实验性接入，请先在隔离环境验证所用版本。
 
 ```bash
 dsh plugin --profile web add github:01men/ybkkasi

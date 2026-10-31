@@ -91,7 +91,7 @@ This is why governance is not a layer bolted onto the platform: organization, id
 
 ## Mounting into dsh
 
-The project ships a plugin bundle for the dsh `web` profile; the declared compatibility range is `>=0.1.0-rc.7 <0.2.0`. Mounting into dsh is still experimental — verify the version you use in an isolated environment first.
+The project ships a plugin bundle for the dsh `web` profile; the declared compatibility range is `>=0.1.0-rc.7 <0.3.0`, with per-release approvals recorded in `dsh.compatibility.dshReleases` (verified: `0.1.0-rc.7`, `0.2.1-rc.5`). Mounting into dsh is still experimental — verify the version you use in an isolated environment first.
 
 ```bash
 dsh plugin --profile web add github:01men/ybkkasi
