@@ -9633,6 +9633,20 @@ try {
   await rm(DATA_DIR, { recursive: true, force: true }).catch(() => {})
 }
 
+// ================================================================ 断言数自校验（落地页对外承诺）
+// 落地页写「N assertions green」，N 必须等于本次实际断言总数。本条自身也计入 results，
+// 因此比较对象是 results.length + 1。断言数随每次新增断言变化，这是唯一不会说谎的口径。
+section('落地页对外数字（与本次实际断言数自校验）')
+{
+  const { readFileSync: readLaunch } = await import('node:fs')
+  const { join: joinPath } = await import('node:path')
+  const launchHtml = readLaunch(joinPath(process.cwd(), 'packages/plugin-console/public/launch/index.html'), 'utf8')
+  const claimed = Number(launchHtml.match(/<b>(\d+)<\/b><span>assertions green<\/span>/)?.[1] ?? NaN)
+  const actual = results.length + 1
+  check(`落地页断言数 ${Number.isNaN(claimed) ? '缺失' : claimed} = 本次实际断言总数 ${actual}（断言数防漂移）`,
+    claimed === actual, `落地页=${claimed} 实际=${actual}`)
+}
+
 // ================================================================ 汇总
 const failed = results.filter((item) => !item.pass)
 console.log(`\n${'━'.repeat(46)}`)
