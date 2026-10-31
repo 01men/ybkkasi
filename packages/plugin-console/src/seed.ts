@@ -238,6 +238,14 @@ async function seedDemo(ctx: Context): Promise<void> {
   })
   // W1-T2（契约 §6）凭证引用演示：env: 形态——seed 不落任何明文，取值来自进程环境变量
   // TICKET_MCP_TOKEN（未设置时 resolve 自然 miss 返回 null，调用链不受影响）。
+  // P1-04：演示种子自行把该变量名并入 env 凭证白名单（仅本进程内存），与白名单 fail-closed 兼容。
+  if (process.env.DEMO_SEED === '1') {
+    const allowKey = 'MCP_ENV_SECRET_ALLOWLIST'
+    const current = String(process.env[allowKey] ?? '').split(',').map((item) => item.trim()).filter(Boolean)
+    if (!current.includes('TICKET_MCP_TOKEN')) {
+      process.env[allowKey] = [...current, 'TICKET_MCP_TOKEN'].join(',')
+    }
+  }
   try {
     ctx.mcpRegistry.secretBroker()?.put({
       serviceId: ticket.id, credentialRef: 'env:TICKET_MCP_TOKEN', headerName: 'Authorization',

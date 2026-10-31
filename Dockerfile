@@ -30,6 +30,12 @@ RUN npm ci --no-audit --no-fund --include=dev
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
+# 非 root 运行（安全审查 P2-5，2026-10-31）：容器内代码被入侵执行时不再拥有 root，
+# 缩小对容器层与挂载卷的破坏半径。node 基础镜像自带 uid=1000 的 node 用户；
+# /app 需属主可写（数据目录 + npm 运行时缓存），挂载卷属主由部署侧保证可写。
+RUN chown -R node:node /app
+USER node
+
 # 生产部署挂 ADMIN_PASSWORD + 自建 volume，且**不要**带 DEMO_* 变量（见 README「生产部署」）；
 # DEMO_MODE=1 会把实例的全部只读视图开放给免登访客，仅限演示种子数据实例。
 EXPOSE 7300

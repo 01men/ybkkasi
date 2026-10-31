@@ -30,6 +30,7 @@ export type BusListener = (payload: unknown, event: PlatformEvent) => void
 export const PlatformEvents = {
   UserFrozen: 'iam.user.frozen',
   UserActivated: 'iam.user.activated',
+  UserPasswordReset: 'iam.user.password-reset',
   OrgChanged: 'iam.org.changed',
   PermissionChanged: 'iam.permission.changed',
   TokenIssued: 'authn.token.issued',

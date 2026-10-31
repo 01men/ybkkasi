@@ -285,7 +285,7 @@ export class NasRegistryService extends Service {
       await writeFile(stagingFile, input.buffer)
       sizeBytes = input.buffer.length
     } else if (input.localFile) {
-      stagingFile = input.localFile
+      stagingFile = this.assertLocalFileInScope(nas, input.localFile)
       sizeBytes = (await readFile(stagingFile)).length
     } else {
       throw new Error(t('uploadFile 需要 buffer 或 localFile 之一'))
@@ -298,7 +298,39 @@ export class NasRegistryService extends Service {
     return { path: input.destPath, sizeBytes }
   }
 
-  /** 从 NAS 下载到平台 staging（网关 fs_download 在网关侧落盘到 dest_dir）。返回本地绝对路径 + 字节数。 */
+  /**
+   * localFile 读取边界（安全审查 P0-04，2026-10-31）：localFile 上传让平台进程读取服务器
+   * 本地文件——不收敛即构成「有 NAS 写权限即可外传任意本地文件」的越权读取面。仅允许
+   * ① 本 NAS staging 目录（平台自产文件），② workforce 受控 artifact 区（受管数字员工
+   * 经受控上传接口落盘的文件）。realpath 解析后做前缀比对，符号链接指向边界外同样拒绝。
+   */
+  private async assertLocalFileInScope(nas: ResourceEntity, localFile: string): Promise<string> {
+    const { resolve, sep } = await import('node:path')
+    const candidate = resolve(String(localFile))
+    const realpathOf = async (path: string): Promise<string> => {
+      try {
+        return await import('node:fs/promises').then((m) => m.realpath(path))
+      } catch {
+        return path
+      }
+    }
+    const roots = [await realpathOf(this.stagingDir(nas))]
+    const workforceRoot = await realpathOf(WORKFORCE_ARTIFACTS_ROOT)
+    const inside = async (root: string): Promise<boolean> => {
+      const real = await realpathOf(candidate)
+      return real === root || real.startsWith(`${root}${sep}`)
+    }
+    if (await inside(roots[0]!)) return candidate
+    if (await inside(workforceRoot)) return candidate
+    throw new Error(t('上传被拒绝（LOCAL_FILE_SCOPE_DENIED）：localFile 仅允许本 NAS staging 目录或 workforce 受控 artifact 区，不接受平台任意本地路径（安全审查 P0-04）'))
+  }
+
+  /**
+   * 从 NAS 下载到平台 staging（网关 fs_download 在网关侧落盘到 dest_dir）。返回本地绝对路径 + 字节数。
+   * 安全审查 P0-04：网关回执的 saved_to 不再被信任为读取路径——仅当其 realpath 落在本 NAS
+   * staging/downloads 目录内才采信，否则忽略并按「预期落盘名」解析；防恶意网关借回执让平台
+   * 流出任意本地文件。符号链接解析（realpath）后仍在边界内方可读取。
+   */
   async downloadFile(id: string, path: string, actor: NasFsActor, opts?: NasFsCallOptions): Promise<{ localFile: string; bytes: number; savedTo?: string }> {
     const nas = this.requireNas(id)
     const dir = join(this.stagingDir(nas), 'downloads')
@@ -308,13 +340,28 @@ export class NasRegistryService extends Service {
     const parsed = extractFirstJson(result)
     const baseName = fullPath.split('/').filter(Boolean).pop() ?? 'file'
     const declared = typeof parsed?.saved_to === 'string' ? parsed.saved_to : undefined
-    const candidate = declared ?? join(dir, baseName)
+    const withinStaging = async (candidate: string): Promise<boolean> => {
+      try {
+        const fsp = await import('node:fs/promises')
+        const real = await fsp.realpath(candidate)
+        const realDir = await fsp.realpath(dir)
+        return (real === realDir || real.startsWith(`${realDir}${sep}`)) && real !== realDir
+      } catch {
+        return false
+      }
+    }
+    let candidate = join(dir, baseName)
+    let savedToOut: string | undefined
+    if (declared !== undefined && await withinStaging(declared)) {
+      candidate = declared
+      savedToOut = declared
+    }
     let bytes = Number(parsed?.bytes ?? 0)
     try {
       const stat = await import('node:fs/promises').then((m) => m.stat(candidate))
       if (stat.isFile() && stat.size > 0) bytes = stat.size
       this.fsAudit(actor, 'nas.fs.download', id, `${path} → ${candidate}（${bytes}B）`)
-      return { localFile: candidate, bytes, ...(declared ? { savedTo: declared } : {}) }
+      return { localFile: candidate, bytes, ...(savedToOut ? { savedTo: savedToOut } : {}) }
     } catch {
       this.fsAudit(actor, 'nas.fs.download', id, `${path} → ${candidate}（文件未落盘）`)
       return { localFile: candidate, bytes }

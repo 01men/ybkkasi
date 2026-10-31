@@ -223,6 +223,16 @@ export class AuthnService extends Service {
       const principal = this.humanPrincipal(userId)
       if (principal) this.revokePrincipalTokens(principal.id, t('账号冻结联动：{reason}', { reason }))
     })
+    // 口令重置联动（安全审查 P1-08，2026-10-31）：重置后既有 access/refresh 全部吊销——
+    // 旧 refresh 不得再换新令牌；sub=该用户的委托令牌同批失效。可审计（吊销原因机器可检索）。
+    ctx.platformBus.on(PlatformEvents.UserPasswordReset, (payload) => {
+      const { userId } = payload as { userId: string }
+      for (const token of this.tokens().find((item) => item.delegatedUserId === userId && !item.revokedAt)) {
+        this.revokeToken(token.jti, 'password-reset-delegation')
+      }
+      const principal = this.humanPrincipal(userId)
+      if (principal) this.revokePrincipalTokens(principal.id, t('口令重置联动：既有会话全部失效，请重新登录'))
+    })
     ctx.platformBus.on(PlatformEvents.AgentOfflined, (payload) => {
       const { id } = payload as { id: string }
       for (const principal of this.principals().find((item) => item.refType === 'agent' && item.refId === id)) {

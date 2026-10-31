@@ -75,6 +75,12 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
     const id = exchange.params['id']!
     const app = ctx.resourceCore.get('app', id)
     if (!app) throw new Error(t('应用不存在：{id}', { id }))
+    // P1-02（安全审查 2026-10-31）：详情与列表同规的对象级组织校验（与 agents/:id 同口径）
+    const orgFilter = scopedOrgFilterOf(ctx, caller, exchange)
+    if (orgFilter && !orgFilter(app.orgId)) {
+      exchange.fail(403, 'FORBIDDEN', t('目标应用不在你的组织子树内（组织隔离）'))
+      return
+    }
     // SSO 配置块（不含 secret；供详情页「SSO 配置」tab 与门禁提示使用）
     const ssoClients = ctx.oidc.clientsForApp(id)
     const ssoClient = ssoClients[0]

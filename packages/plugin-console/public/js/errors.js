@@ -217,6 +217,19 @@ const COPY = {
   },
 
   // ── 票据与绑定（内联载荷码 + fail 码）─────────────────────────────────
+  // 安全审查批次（2026-10-31）新增原因码
+  ENV_CREDENTIAL_NOT_ALLOWED: {
+    tone: 'warn',
+    title: '凭证引用未登记白名单',
+    message: 'env: 凭证引用未在 MCP_ENV_SECRET_ALLOWLIST 白名单登记，已被拒绝注入（防进程密钥外传）。请联系管理员在部署环境登记该变量名后重试。',
+    action: { label: '查看 MCP 凭证治理', href: '#/mcp' },
+  },
+  TOKEN_AUDIENCE_MISMATCH: {
+    tone: 'warn',
+    title: '令牌用途不匹配',
+    message: '该令牌绑定了专用受众（MCP 服务/插件），不能用于控制台通用接口。请使用登录会话令牌，或经对应服务的专用端点调用。',
+    action: { label: '返回登录', href: '#/login' },
+  },
   ENTRY_TICKET_INVALID: {
     tone: 'danger',
     title: '入场票据无效或已过期',

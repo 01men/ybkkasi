@@ -125,15 +125,21 @@ function copyTextFallback(text) {
 }
 
 // ---------- Drawer ----------
-export function openDrawer({ title, sub, body, foot, wide, onClose }) {
+/**
+ * 抽屉头默认按纯文本渲染 title/sub（安全审查 P1-01，2026-10-31）：名称/描述等数据库字段
+ * 此前被直接拼进 innerHTML，攻击者创建含脚本字段名的资源即可在打开详情的管理员浏览器里
+ * 执行脚本（存储型 XSS，令牌存于 localStorage 可被读走）。确需富文本（徽标/等宽 span）的
+ * 调用方改传 titleHtml / subHtml（内容必须已 esc()），普通字段一律走 title / sub。
+ */
+export function openDrawer({ title, sub, titleHtml, subHtml, body, foot, wide, onClose }) {
   closeDrawer()
   const mask = h('<div class="drawer-mask"></div>')
   const drawer = h(`
     <div class="drawer ${wide ? 'drawer-wide' : ''}">
       <div class="drawer-head">
         <div class="grow">
-          <div class="drawer-title">${title}</div>
-          ${sub ? `<div class="drawer-sub">${sub}</div>` : ''}
+          <div class="drawer-title">${titleHtml ?? esc(title ?? '')}</div>
+          ${(titleHtml || subHtml || sub) ? `<div class="drawer-sub">${subHtml ?? esc(sub ?? '')}</div>` : ''}
         </div>
         <button class="drawer-close" title="关闭">${icon('x')}</button>
       </div>
@@ -166,12 +172,13 @@ export function closeDrawer() {
 }
 
 // ---------- Modal ----------
-export function openModal({ title, body, foot, wide, onClose }) {
+/** openModal 与 openDrawer 同规（P1-01）：title 默认纯文本转义，富文本走 titleHtml（内容须已 esc）。 */
+export function openModal({ title, titleHtml, body, foot, wide, onClose }) {
   closeModal()
   const mask = h('<div class="modal-mask"></div>')
   const modal = h(`
     <div class="modal ${wide ? 'modal-lg' : ''}">
-      <div class="modal-head"><div class="modal-title">${title}</div></div>
+      <div class="modal-head"><div class="modal-title">${titleHtml ?? esc(title ?? '')}</div></div>
       <div class="modal-body"></div>
       ${foot ? '<div class="modal-foot"></div>' : '<div style="height:14px"></div>'}
     </div>`)

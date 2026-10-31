@@ -193,7 +193,10 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
 
   /**
    * 发起绑定授权（须登录）。缺省绑定当前登录账号本人；
-   * 指定 targetUserId 为他人绑定（需 iam.user.write，扫码人即被绑定的钉钉身份）。
+   * 指定 targetUserId 为他人绑定需平台超级管理员（'*'）。
+   * 安全审查 P1-05（2026-10-31）：扫码绑定写入的是「扫码人自己的三方身份」——此前
+   * iam.user.write 持有者即可为任意存在账号发起，等于可把自己的身份挂到他人（含超管）
+   * 账号后经三方登录接管。收敛后仅平台超管可代操作（代运维场景），组织管理员只能自绑。
    */
   http.register('POST', '/api/auth/sso/bind/authorize', async (exchange) => {
     const { provider, targetUserId, configId } = body<{ provider?: string; targetUserId?: string; configId?: string }>(exchange)
@@ -203,8 +206,8 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
       exchange.fail(401, 'UNAUTHORIZED', t('仅平台账号（人）可发起三方身份绑定'))
       return
     }
-    if (userId !== info.userId && !info.permissions.includes('*') && !info.permissions.includes('iam.user.write')) {
-      exchange.fail(403, 'FORBIDDEN', t('为其他账号发起绑定需要 iam.user.write 权限'))
+    if (userId !== info.userId && !info.permissions.includes('*')) {
+      exchange.fail(403, 'FORBIDDEN', t('为其他账号发起绑定仅限平台超级管理员（扫码绑定的身份=扫码人本人，防借扫码接管他人账号，安全审查 P1-05）'))
       return
     }
     if (!ctx.iam.users().get(userId)) {
@@ -259,6 +262,13 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
     const code = exchange.query.get('authCode') ?? exchange.query.get('code') ?? ''
     const state = exchange.query.get('state') ?? ''
     const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!)
+    // P1-01（安全审查 2026-10-31）：内嵌 <script> 的 JSON 安全编码——JSON.stringify 不转义
+    // `<`，值中出现 `</script>` 可提前闭合脚本注入标记；U+2028/U+2029 会使 JS 字面量解析失败。
+    const safeJson = (value: unknown): string => JSON.stringify(value)
+      .replace(/</g, '\\u003c')
+      .replace(/>/g, '\\u003e')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029')
     const webBase = ctx.httpServer?.externalBase ?? ''
     const render = (title: string, bodyHtml: string, script = ''): void => {
       exchange.res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -291,7 +301,7 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
       if (result.kind === 'pending') {
         // 未命中身份链接：回登录页走「绑定已有账号 / 注册新账号」分支
         render(t('首次登录'), `<h2>${t('首次使用该三方身份')}</h2><p>${t('正在返回登录页完成绑定/注册…')}</p>`,
-          `<script>localStorage.setItem('heng_ops_sso_pending', JSON.stringify({ pendingTicket: ${JSON.stringify(result.pendingTicket)}, profileName: ${JSON.stringify(result.profileName)} })); location.replace('${webBase}/#/login')</script>`)
+          `<script>localStorage.setItem('heng_ops_sso_pending', JSON.stringify({ pendingTicket: ${safeJson(result.pendingTicket)}, profileName: ${safeJson(result.profileName)} })); location.replace('${webBase}/#/login')</script>`)
         return
       }
       const user = ctx.iam.users().get(result.userId)!
@@ -304,7 +314,7 @@ export function registerAuthRoutes(ctx: Context, deps: AuthRouteDeps): void {
       // 登录成功落库后按暂存的 OIDC 授权请求（heng_ops_sso_oidc_req，与授权请求同为 5 分钟有效）回到
       // 授权页继续 consent——AI 应用发起的「先登录再授权」流才能闭环；无暂存则进控制台
       render(t('登录成功'), `<div class="ok">✓</div><h2>${t('欢迎回来，{name}', { name: escapeHtml(user.displayName) })}</h2><p>${t('正在继续…')}</p>`,
-        `<script>localStorage.setItem('heng_ops_token', ${JSON.stringify(result.session.token)}); localStorage.setItem('heng_ops_refresh', ${JSON.stringify(result.session.refreshToken)}); localStorage.setItem('heng_ops_user', ${JSON.stringify(JSON.stringify(sessionUser))});
+        `<script>localStorage.setItem('heng_ops_token', ${safeJson(result.session.token)}); localStorage.setItem('heng_ops_refresh', ${safeJson(result.session.refreshToken)}); localStorage.setItem('heng_ops_user', ${safeJson(JSON.stringify(sessionUser))});
 var resume=null;try{resume=JSON.parse(localStorage.getItem('heng_ops_sso_oidc_req')||'null')}catch(e){resume=null}
 localStorage.removeItem('heng_ops_sso_oidc_req');
 // 跨源自举回跳（交接清单 G1）：登录页在整页跳转钉钉授权前暂存的 next（仅回环/私网 http(s)，

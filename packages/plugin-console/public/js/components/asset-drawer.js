@@ -204,8 +204,8 @@ function num(v) {
 export function openAssetDrawer(asset) {
   if (!asset) return
   const drawer = openDrawer({
-    title: esc(asset.name),
-    sub: `<span class="mono">${esc(asset.key)}</span>`,
+    titleHtml: esc(asset.name),
+    subHtml: `<span class="mono">${esc(asset.key)}</span>`,
     wide: true,
     body: `
       <div class="flex mb-14" style="gap:10px;flex-wrap:wrap;align-items:center">

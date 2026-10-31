@@ -181,8 +181,8 @@ async function openSkillDetail(id, ctx, refresh, heatState) {
   }
 
   const drawer = openDrawer({
-    title: esc(skill.name),
-    sub: `${esc(skill.category)} · v${esc(skill.currentVersion)} · ${esc(rqI18n.t('发布者 {name}', { name: skill.authorName }))}`,
+    title: skill.name,
+    sub: `${skill.category} · v${skill.currentVersion} · ${rqI18n.t('发布者 {name}', { name: skill.authorName })}`,
     wide: true,
     body: `
       <div class="flex mb-8" style="gap:8px;flex-wrap:wrap;align-items:center">

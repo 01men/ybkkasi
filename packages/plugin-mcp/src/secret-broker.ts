@@ -22,6 +22,23 @@ import { t } from '../../platform-i18n/src/index.ts'
 /** 敏感头判定口径（契约 §6）：与 console maskServiceHeaders 完全一致。 */
 export const SENSITIVE_HEADER_RE = /authorization|token|secret|key/i
 
+/**
+ * env: 凭证引用白名单（安全审查 P1-04，2026-10-31）：MCP_ENV_SECRET_ALLOWLIST（逗号分隔
+ * 变量名）。持有 mcp.service.write 的用户可同时指定服务地址与 env: 引用——若进程环境变量
+ * 任取，密钥代理会把任意进程密钥注入对该服务的外呼头（外呼地址可指向攻击者服务器），
+ * 构成「借服务外呼窃取进程密钥」链路。现收敛为：env: 引用仅允许显式登记的变量名，
+ * 白名单缺省为空（fail-closed，全部拒绝）；部署方按需在环境里登记，如
+ * MCP_ENV_SECRET_ALLOWLIST=TICKET_MCP_TOKEN,GITHUB_TOKEN。
+ */
+export function envSecretAllowlist(): Set<string> {
+  return new Set(String(process.env.MCP_ENV_SECRET_ALLOWLIST ?? '')
+    .split(',').map((item) => item.trim()).filter(Boolean))
+}
+
+export function envSecretAllowed(varName: string): boolean {
+  return envSecretAllowlist().has(varName)
+}
+
 /** 服务记录 headers 中的敏感键清单（migrate 扫描与治理待办 plainHeaderServices 共用）。 */
 export function sensitiveHeaderKeys(headers?: Record<string, string>): string[] {
   if (!headers) return []
@@ -191,7 +208,13 @@ export class SecretBroker extends Service {
     }
     if (isEnv) {
       const varName = credentialRef.slice(4).trim()
-      const value = varName ? process.env[varName] : undefined
+      // P1-04：白名单外的 env: 引用按「凭证缺失」处理（fail-closed 不注入），留访问审计
+      if (!varName || !envSecretAllowed(varName)) {
+        this.ctx.logger('mcp-secret-broker').warn(`env: 凭证引用未登记白名单（MCP_ENV_SECRET_ALLOWLIST），拒绝注入：service=${serviceId} ref=${credentialRef}`)
+        emit('missing')
+        return null
+      }
+      const value = process.env[varName]
       if (!value) {
         emit('missing')
         return null

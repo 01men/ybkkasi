@@ -282,6 +282,13 @@ export function registerAgentRoutes(ctx: Context, deps: AgentRouteDeps): void {
     const id = exchange.params['id']!
     const agent = ctx.resourceCore.get('agent', id)
     if (!agent) throw new Error(t('Agent 不存在：{id}', { id }))
+    // P1-02（安全审查 2026-10-31）：详情与列表同规的对象级组织校验——列表按组织过滤但
+    // 详情按 ID 直读时未复核，跨组织账号可凭 ID 越界读取（含指标/绑定/SSO/审计）。
+    const orgFilter = scopedOrgFilterOf(ctx, caller, exchange)
+    if (orgFilter && !orgFilter(agent.orgId)) {
+      exchange.fail(403, 'FORBIDDEN', t('目标 Agent 不在你的组织子树内（组织隔离）'))
+      return
+    }
     machineAudit(exchange, id, agent.name)
     const principal = ctx.agentRegistry.machinePrincipal(id)
     return {

@@ -296,12 +296,16 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
   })
 
   guarded('POST', '/api/nas/:id/fs/upload', 'nas.write', async (exchange) => {
+    // 安全审查 P0-04：HTTP 面不再接受 localFile（服务器本地路径）——该形态让 NAS 写权限
+    // 持有者驱动平台进程读取任意本地文件并外传。REST 面只收内容（contentBase64）；
+    // 服务层 localFile 保留给平台内部链路（受 assertLocalFileInScope 边界约束）。
     const input = body<{ localFile?: string; contentBase64?: string; destPath: string }>(exchange)
+    if (input.localFile) throw new Error(t('HTTP 上传不接受 localFile（服务器本地路径），请改用 contentBase64 传内容'))
+    if (!input.contentBase64) throw new Error(t('缺少 contentBase64'))
     const info = caller(exchange)
-    if (input.localFile && input.contentBase64) throw new Error(t('localFile 与 contentBase64 二选一'))
-    const buffer = input.contentBase64 !== undefined ? Buffer.from(input.contentBase64, 'base64') : undefined
+    const buffer = Buffer.from(input.contentBase64, 'base64')
     const result = await ctx.nasRegistry.uploadFile(exchange.params['id']!, {
-      ...(buffer !== undefined ? { buffer } : { localFile: input.localFile }),
+      buffer,
       destPath: input.destPath,
       actor: { id: info.userId ?? info.principalId, name: info.name },
     })
@@ -589,7 +593,8 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     }
     let resolved: { localFile: string; bytes: number }
     try {
-      // 先经网关 fs_download 落盘到平台 staging（幂等覆盖写），再基于网关回执的 saved_to 解析本地文件
+      // 先经网关 fs_download 落盘到平台 staging，再解析本地文件（网关回执 saved_to 已在
+      // 服务层做 realpath staging 边界校验，越界/符号链接逃逸的路径一律不采信，P0-04）
       const downloaded = await ctx.nasRegistry.downloadFile(id, filePath, { id: info.userId ?? info.principalId, name: info.name })
       const fresh = await import('node:fs/promises').then((m) => m.stat(downloaded.localFile).catch(() => null))
       if (!fresh?.isFile()) throw new Error(t('下载后仍无法读取落盘文件：{file}', { file: downloaded.localFile }))
@@ -600,13 +605,19 @@ export function registerNasRoutes(ctx: Context, deps: NasRouteDeps): void {
     }
     const filename = filePath.split('/').filter(Boolean).pop() || 'file'
     const ext = extname(filename).toLowerCase()
-    const type = NAS_DOWNLOAD_MIME[ext] ?? 'application/octet-stream'
-    const disposition = `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(filename)}`
+    // P1-01（安全审查 2026-10-31）：HTML/SVG/XML/脚本等主动内容一律强制附件下载——
+    // 以平台同源 inline 打开时，其中的脚本将以平台身份执行（存储型 XSS）。预览（inline）
+    // 仅保留静态安全类型（图片/文本/PDF/Office/压缩包/音视频）。
+    const ACTIVE_CONTENT_EXTS = new Set(['.html', '.htm', '.svg', '.xml', '.xhtml', '.xht', '.shtml', '.js', '.mjs', '.css'])
+    const effectiveInline = inline && !ACTIVE_CONTENT_EXTS.has(ext)
+    const type = ACTIVE_CONTENT_EXTS.has(ext) ? 'application/octet-stream' : (NAS_DOWNLOAD_MIME[ext] ?? 'application/octet-stream')
+    const disposition = `${effectiveInline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(filename)}`
     exchange.res.writeHead(200, {
       'content-type': type,
       'content-length': String(resolved.bytes),
       'content-disposition': disposition,
       'cache-control': 'no-cache',
+      'x-content-type-options': 'nosniff',
     })
     createReadStream(resolved.localFile).pipe(exchange.res)
   }, { access: 'public', selfValidated: true })

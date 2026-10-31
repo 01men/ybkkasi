@@ -10,7 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CallerInfo, HttpExchange, UnifiedPrincipal } from '../../../platform-core/src/index.ts'
 import { toInvokeCaller } from '../../../platform-core/src/index.ts'
 import { workRefFromArgs } from '../../../plugin-mcp/src/tools.ts'
-import { plainSensitiveHeaderViolation } from '../../../plugin-mcp/src/secret-broker.ts'
+import { envSecretAllowed, plainSensitiveHeaderViolation } from '../../../plugin-mcp/src/secret-broker.ts'
 import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
@@ -234,6 +234,17 @@ export function registerMcpRoutes(ctx: Context, deps: McpRouteDeps): void {
     const service = ctx.mcpRegistry.services().get(id)
     if (!service) throw new Error(t('MCP 服务不存在：{id}', { id }))
     const input = body<{ credentialRef?: string; headerName?: string; secret?: string }>(exchange)
+    // P1-04（安全审查 2026-10-31）：env: 引用须命中 MCP_ENV_SECRET_ALLOWLIST 白名单——
+    // 凭证引用与外呼地址同由 mcp.service.write 持有者指定，不加白名单即构成
+    // 「把任意进程环境变量注入自选外呼头」的密钥外传链路。拒绝时给出登记指引。
+    const ref = input.credentialRef?.trim() ?? ''
+    if (ref.startsWith('env:')) {
+      const varName = ref.slice(4).trim()
+      if (!varName || !envSecretAllowed(varName)) {
+        exchange.fail(400, 'ENV_CREDENTIAL_NOT_ALLOWED', t('env: 凭证引用「{ref}」未登记 MCP_ENV_SECRET_ALLOWLIST 白名单，已拒绝（防进程密钥外传）；请在部署环境登记该变量名后重试', { ref }))
+        return
+      }
+    }
     if (!input.credentialRef?.trim() && !input.secret?.trim()) {
       credentials().delete(id)
       ctx.mcpRegistry.services().update(id, { credentialRef: undefined })

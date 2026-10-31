@@ -631,6 +631,9 @@ const proc = spawn(process.execPath, ['src/main.ts', '--port', String(PORT), '--
     A2A_SYNC_WAIT_MS: '800',
     // 门户 downloadUrl 生成基址指向自测实例：门户技能包下载断言可直连验证
     PORTAL_PUBLIC_BASE: `http://127.0.0.1:${PORT}`,
+    // P1-06（安全审查 2026-10-31）：请求派生 issuer 需显式可信主机白名单（fail-closed）——
+    // 自测把 ybkkasi.example 登记为可信主机，覆盖 #15 派生语义的正反两路断言
+    OIDC_TRUSTED_HOSTS: 'ybkkasi.example',
   },
 })
 const serverLogChunks = []
@@ -2024,6 +2027,11 @@ try {
   check('#15：同请求面自洽——默认环回请求 issuer 落在本机（discovery/签发/校验同源）',
     disco.issuer === `http://127.0.0.1:${PORT}`,
     JSON.stringify(disco.issuer))
+  // P1-06：白名单外伪造 forwarded-host 不再改写 discovery（fail-closed 回落环回）
+  const discoForged = jsonBody(await rawReq('GET', '/.well-known/openid-configuration', { headers: { host: '127.0.0.1', 'x-forwarded-host': 'evil.example' } }))
+  check('P1-06：白名单外 x-forwarded-host 不改写 issuer（回落本机，防伪造头投毒）',
+    discoForged.issuer === `http://127.0.0.1:${PORT}`,
+    JSON.stringify(discoForged.issuer))
 
   const oidcClient = await api('POST', '/api/authn/oidc/clients', { token: admin, body: { name: '外部 CRM 应用', redirectUris: ['https://crm.partner.example/cb'], consentRequired: false } })
   check('登记 OIDC 客户端（secret 一次性返回）', oidcClient.ok && oidcClient.data.clientId.startsWith('oc-') && oidcClient.data.clientSecret.startsWith('ocs'))
@@ -3638,35 +3646,56 @@ try {
   check('MCP 注册：自测服务清理', mcpNoOrgCleanup.ok, JSON.stringify(mcpNoOrgCleanup.error))
 
   // ================================================================ AI 应用 ↔ SSO 打通（MVP 闭环）
-  section('console ticket redeem（WP-02：票据免登控制台，零二次登录）')
+  section('console ticket redeem（WP-02 + 安全审查 P0-01：票据用途隔离）')
   {
-    const issue = await api('POST', `/api/agents/${selfAgent.id}/entry-ticket`, { token: admin, body: {} })
-    check('免登：领票（复用既有签发端点，一次性 etk_ 票据）', issue.ok && issue.data.ticket.startsWith('etk_'), JSON.stringify(issue.error))
+    // P0-01（2026-10-31）：app/agent 票据的接收方是不可控第三方前端，不得兑换控制台会话
+    //（旧用例把 agent 票换会话当成功路径，正是外部审查点名的提权链）；免登控制台会话
+    // 仅接受 refType='self' 的自助票（G1 跨源自举回跳/面板直通，签发人=领取人）。
+    const agentTicket = await api('POST', `/api/agents/${selfAgent.id}/entry-ticket`, { token: admin, body: {} })
+    check('免登：领票（复用既有签发端点，一次性 etk_ 票据）', agentTicket.ok && agentTicket.data.ticket.startsWith('etk_'), JSON.stringify(agentTicket.error))
+    const agentRedeem = await rawReq('POST', '/api/auth/entry-ticket-session', {
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ticket: agentTicket.data.ticket }),
+    })
+    check('P0-01：Agent 票据拒绝兑换控制台会话（仅交付资源侧身份）', agentRedeem.status === 400, String(agentRedeem.status))
+    const appTicket = await api('POST', `/api/apps/${appAvatarCreate.data.app.id}/entry-ticket`, { token: admin, body: {} })
+    check('P0-01：应用票据可正常签发', appTicket.ok && appTicket.data.ticket.startsWith('etk_'), JSON.stringify(appTicket.error))
+    const appRedeem = await rawReq('POST', '/api/auth/entry-ticket-session', {
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ticket: appTicket.data.ticket }),
+    })
+    check('P0-01：应用票据拒绝兑换控制台会话', appRedeem.status === 400, String(appRedeem.status))
+    const selfTicket = await api('POST', '/api/auth/entry-tickets/self', { token: admin, body: {} })
+    check('免登：自助票可签发（console.login 权限面）', selfTicket.ok && selfTicket.data.ticket.startsWith('etk_'), JSON.stringify(selfTicket.error))
     const redeemSession = await rawReq('POST', '/api/auth/entry-ticket-session', {
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ticket: issue.data.ticket }),
+      body: JSON.stringify({ ticket: selfTicket.data.ticket }),
     })
     const sessionBody = jsonBody(redeemSession)
-    check('免登：票据兑换成功建立控制台会话（dst1 令牌 + refresh + 用户档案）',
+    check('免登：自助票兑换成功建立控制台会话（dst1 令牌 + refresh + 用户档案）',
       redeemSession.status === 200 && typeof sessionBody.data?.token === 'string' && sessionBody.data.token.startsWith('dst1.')
       && Boolean(sessionBody.data?.refreshToken) && Boolean(sessionBody.data?.user?.id),
       `${redeemSession.status} ${JSON.stringify(sessionBody).slice(0, 200)}`)
-    const freeOverview = await api('GET', '/api/overview', { token: sessionBody.data.token })
+    const freeOverview = sessionBody.data?.token ? await api('GET', '/api/overview', { token: sessionBody.data.token }) : { ok: false }
     check('免登：兑换所得会话可直接调用工作台聚合（打开即工作台）', freeOverview.ok, JSON.stringify(freeOverview.error))
     const sessionReplay = await rawReq('POST', '/api/auth/entry-ticket-session', {
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ticket: issue.data.ticket }),
+      body: JSON.stringify({ ticket: selfTicket.data.ticket }),
     })
     check('免登：重放票据被拒（一次性消费防重放）', sessionReplay.status === 400, String(sessionReplay.status))
     const sessionForged = await api('POST', '/api/auth/entry-ticket-session', { body: { ticket: 'etk_forged_0000000000000000000000000000000000000000' } })
     check('免登：伪造票据被拒', sessionForged.status === 400)
     await new Promise((resolve) => setTimeout(resolve, 300))
     const serverLog = serverLogChunks.join('')
-    check('免登：票据本体零进服务端日志（stdout/stderr 全量扫描）', Boolean(issue.data.ticket) && !serverLog.includes(issue.data.ticket), '票据本体出现在服务端日志')
+    check('免登：票据本体零进服务端日志（stdout/stderr 全量扫描）', Boolean(agentTicket.data.ticket) && !serverLog.includes(agentTicket.data.ticket) && !serverLog.includes(selfTicket.data.ticket), '票据本体出现在服务端日志')
     const auditSession = await api('GET', '/api/audit/logs?q=' + encodeURIComponent('entry.ticket.session'), { token: admin })
     check('免登：兑换入审计（*.entry.ticket.session 可检索，且审计不含票据本体）',
-      auditSession.ok && (auditSession.data.items ?? []).some((log) => log.action === 'agent.entry.ticket.session' && !JSON.stringify(log).includes(issue.data.ticket)),
+      auditSession.ok && (auditSession.data.items ?? []).some((log) => log.action === 'self.entry.ticket.session' && !JSON.stringify(log).includes(selfTicket.data.ticket)),
       JSON.stringify(auditSession.error ?? auditSession.data?.total))
+    const auditDenied = await api('GET', '/api/audit/logs?q=' + encodeURIComponent('entry.ticket.session.denied'), { token: admin })
+    check('P0-01：非自助票兑换被拒入审计（*.denied 可检索）',
+      auditDenied.ok && (auditDenied.data.items ?? []).some((log) => String(log.action ?? '').endsWith('entry.ticket.session.denied')),
+      JSON.stringify(auditDenied.error ?? auditDenied.data?.total))
   }
   section('自助入场票据与跨源回跳（G1：self 票种 / TTL ≤120s / 一次性 / 审计闭环）')
   {
@@ -3694,6 +3723,94 @@ try {
       && (selfAudit.data.items ?? []).some((log) => log.action === 'self.entry.ticket.session')
       && !JSON.stringify(selfAudit.data.items).includes(selfIssued.data.ticket),
       JSON.stringify(selfAudit.error ?? selfAudit.data?.items?.map((item) => item.action)))
+  }
+
+  // ================================================================ 安全审查 2026-10-30 整改回归
+  // 对应《元冰可 AIOS 产品发布前安全审查报告》P0/P1 各项的服务端负向验证（修复语义锁死）。
+  section('安全审查整改回归（P0-02 提权 / P1-02 组织边界 / P1-05 SSO 绑定 / P1-07 受众 / P1-08 口令重置吊销）')
+  {
+    const hrLogin = await api('POST', '/api/auth/login', { body: { username: 'hr', password: 'Ybk@2026' } })
+    check('整改回归：组织管理员（hr）登录', hrLogin.ok && hrLogin.data.user.permissions.includes('iam.user.write'), JSON.stringify(hrLogin.error))
+    const hr = hrLogin.data.token
+    const hrUid = hrLogin.data.user.id
+    const roleIds = ((await api('GET', '/api/iam/roles', { token: hr })).data.roles ?? [])
+    const roleSuper = roleIds.find((r) => r.code === 'super_admin')
+    const roleResource = roleIds.find((r) => r.code === 'resource_admin')
+    // P0-02a：给自己分配 super_admin（解析即 ['*']）→ 403
+    const p0SelfEscalate = await api('PATCH', `/api/iam/users/${hrUid}`, { token: hr, body: { roleIds: [roleSuper.id] } })
+    check('P0-02：组织管理员自提权 super_admin 被拒 403（可授权上限）', p0SelfEscalate.status === 403, JSON.stringify(p0SelfEscalate.error ?? p0SelfEscalate.data?.permissions))
+    // P0-02b：给本组织他人分配 resource_admin（超出 hr 自身权限集）→ 403
+    const hrOrgUsers = (await api('GET', '/api/iam/users?q=' + encodeURIComponent('yqz'), { token: hr })).data.users ?? []
+    const p0CrossCeil = hrOrgUsers[0]
+      ? await api('PATCH', `/api/iam/users/${hrOrgUsers[0].id}`, { token: hr, body: { roleIds: [roleResource.id] } })
+      : { status: 404 }
+    check('P0-02：组织管理员分配超出自身权限集的角色被拒 403', p0CrossCeil.status === 403, JSON.stringify(p0CrossCeil.error))
+    // P0-02c：创建含 '*' 的角色 → 403；创建仅含自身持有点的角色 → 200（正路不受影响）
+    const p0StarRole = await api('POST', '/api/iam/roles', { token: hr, body: { code: 'p0_star_probe', name: '提权探针', permissions: ['*'] } })
+    check('P0-02：组织管理员创建全量权限（*）角色被拒 403', p0StarRole.status === 403, JSON.stringify(p0StarRole.error))
+    const p0OkRole = await api('POST', '/api/iam/roles', { token: hr, body: { code: 'p0_inscope_probe', name: '组织内权限探针', permissions: ['iam.user.write', 'iam.org.read'] } })
+    check('P0-02：组织管理员创建自身权限集内的角色放行（正路不回归）', p0OkRole.ok, JSON.stringify(p0OkRole.error))
+    if (p0OkRole.ok) await api('DELETE', `/api/iam/roles/${p0OkRole.data.id}`, { token: hr })
+    // P0-02d：改内置 super_admin 角色权限 → 400（内置不可改，既有护栏回归）
+    const p0EditBuiltin = await api('PATCH', `/api/iam/roles/${roleSuper.id}`, { token: admin, body: { permissions: ['iam.user.read'] } })
+    check('P0-02：内置角色权限不可修改（既有护栏仍在）', p0EditBuiltin.status === 400, JSON.stringify(p0EditBuiltin.error))
+
+    // P1-02a：跨组织 Agent 详情 → 403（详情与列表同规）：第二公司账号注册 Agent，dev（第一公司）直读
+    const org2 = await api('POST', '/api/iam/orgs', { token: admin, body: { name: '整改回归第二公司' } })
+    const roleDev = ((await api('GET', '/api/iam/roles', { token: admin })).data.roles ?? []).find((r) => r.code === 'developer')
+    await api('POST', '/api/iam/users', { token: admin, body: { username: 'p1org2', displayName: '第二公司探针员', orgId: org2.data.id, password: 'P1org2@2026', roleIds: [roleDev.id] } })
+    const org2Login = await api('POST', '/api/auth/login', { body: { username: 'p1org2', password: 'P1org2@2026' } })
+    check('整改回归：第二公司账号登录（跨组织夹具就绪）', org2Login.ok, JSON.stringify(org2Login.error))
+    const org2Agent = await api('POST', '/api/agents', { token: org2Login.data.token, body: { name: '第二公司隔离探针 Agent', attrs: { description: 'P1-02 详情组织校验探针', model: 'deepseek-chat', riskLevel: 'low' } } })
+    check('整改回归：第二公司 Agent 注册（归属第二公司）', org2Agent.ok && Boolean(org2Agent.data?.agent?.id), JSON.stringify(org2Agent.error))
+    const p1CrossAgent = await api('GET', `/api/agents/${org2Agent.data.agent.id}`, { token: dev })
+    check('P1-02：跨组织 Agent 详情被拒 403（对象级组织校验）', p1CrossAgent.status === 403, JSON.stringify(p1CrossAgent.error))
+    const p1OwnAgent = await api('GET', `/api/agents/${org2Agent.data.agent.id}`, { token: admin })
+    check('P1-02：平台管理员跨组织详情照常可达（全量豁免不回归）', p1OwnAgent.ok, JSON.stringify(p1OwnAgent.error))
+    await api('POST', `/api/agents/${org2Agent.data.agent.id}/transition`, { token: org2Login.data.token, body: { action: 'archive' } })
+    // P1-05：组织管理员为他人手工绑定三方身份 → 403（目标取 hr 组织子树内的在编账号）
+    const hrSubUid = (await api('GET', '/api/iam/users?q=' + encodeURIComponent('yqz'), { token: hr })).data.users?.[0]?.id
+    const p1BindOther = hrSubUid ? await api('POST', `/api/iam/users/${hrSubUid}/bindings`, { token: hr, body: { provider: 'dingtalk', unionId: 'p1_attacker_union_id', displayName: '攻击探针' } }) : { status: 404 }
+    check('P1-05：组织管理员为他人手工绑定三方身份被拒 403（仅平台超管）', p1BindOther.status === 403, JSON.stringify(p1BindOther.error))
+
+    // P1-07：受众绑定委托令牌拒绝触达控制台写面（身份自省白名单端点不受影响）
+    const govAgentRes = await api('POST', '/api/agents', { token: admin, body: { name: '受众边界探针 Agent', attrs: { description: 'P1-07 探针', model: 'deepseek-chat', riskLevel: 'low' } } })
+    check('整改回归：P1-07 探针 Agent 注册', govAgentRes.ok && Boolean(govAgentRes.data?.agent?.id), JSON.stringify(govAgentRes.error))
+    const govPrincipals = (await api('GET', '/api/authn/principals', { token: admin })).data.principals
+    const govAgentPrincipal = govPrincipals.find((p) => p.refType === 'agent' && p.refId === govAgentRes.data.agent.id)
+    await api('POST', `/api/agents/${govAgentRes.data.agent.id}/bindings`, { token: admin, body: { userId: (await api('GET', '/api/auth/me', { token: admin })).data.userId } })
+    const govExchange = await api('POST', '/api/authn/token/exchange', { token: admin, body: { targetPrincipalId: govAgentPrincipal.id, audience: 'mcp:service:p1-audit-probe', scopes: ['exec.write'] } })
+    const govDelegated = govExchange.data?.access_token
+    const p1AudWrite = await api('POST', '/api/exec/goals', { token: govDelegated, body: { name: '受众越界探针' } })
+    check('P1-07：带受众委托令牌触达控制台写面被拒 403 TOKEN_AUDIENCE_MISMATCH',
+      p1AudWrite.status === 403 && p1AudWrite.error?.code === 'TOKEN_AUDIENCE_MISMATCH', JSON.stringify(p1AudWrite.error))
+    const p1AudMe = await api('GET', '/api/auth/me', { token: govDelegated })
+    check('P1-07：身份自省白名单端点照常可达（委托身份链语义保留）', p1AudMe.ok, JSON.stringify(p1AudMe.error))
+    await api('POST', `/api/agents/${govAgentRes.data.agent.id}/transition`, { token: admin, body: { action: 'archive' } })
+
+    // P1-08：重置口令联动吊销既有会话（旧 access 即时失效）。用专用账号，不触碰
+    // 后续用例依赖的既有账号（linxm 等的会话在后续 QA 段仍被引用）
+    await api('POST', '/api/iam/users', { token: admin, body: { username: 'p1reset', displayName: '口令重置探针员', orgId: org2.data.id, password: 'P1reset@2026', roleIds: [roleDev.id] } })
+    const p1DevLogin = await api('POST', '/api/auth/login', { body: { username: 'p1reset', password: 'P1reset@2026' } })
+    check('整改回归：口令重置探针账号登录', p1DevLogin.ok, JSON.stringify(p1DevLogin.error))
+    const p1OldToken = p1DevLogin.data.token
+    const p1ResetUid = p1DevLogin.data.user.id
+    const p1Reset = await api('POST', `/api/iam/users/${p1ResetUid}/reset-password`, { token: admin, body: {} })
+    check('P1-08：管理员重置口令成功（随机初始口令回显）', p1Reset.ok && Boolean(p1Reset.data.initialPassword), JSON.stringify(p1Reset.error))
+    const p1OldMe = await api('GET', '/api/auth/me', { token: p1OldToken })
+    check('P1-08：重置后既有会话即时失效（旧 access 401）', p1OldMe.status === 401, String(p1OldMe.status))
+    const p1ReLogin = await api('POST', '/api/auth/login', { body: { username: 'p1reset', password: p1Reset.data.initialPassword } })
+    check('P1-08：新口令可正常登录（联动不伤正常链路）', p1ReLogin.ok, JSON.stringify(p1ReLogin.error))
+
+    // P1-04：env: 凭证引用白名单（自测实例未设 MCP_ENV_SECRET_ALLOWLIST → fail-closed 拒绝）
+    const p1Mcp = await api('POST', '/api/mcp/services', { token: admin, body: { name: 'P1-04 凭证探针', description: 'env 白名单探针', endpoint: 'https://mcp.example.com/mcp', transport: 'http', mode: 'external' } })
+    const p1Cred = await api('PUT', `/api/mcp/services/${p1Mcp.data?.id}/credential`, { token: admin, body: { credentialRef: 'env:P1_NOT_REGISTERED_VAR' } })
+    check('P1-04：白名单外 env: 凭证引用被拒 400 ENV_CREDENTIAL_NOT_ALLOWED',
+      p1Cred.status === 400 && p1Cred.error?.code === 'ENV_CREDENTIAL_NOT_ALLOWED', JSON.stringify(p1Cred.error))
+    if (p1Mcp.data?.id) {
+      await api('POST', `/api/mcp/services/${p1Mcp.data.id}/offline`, { token: admin, body: { reason: '自测清理', viaApproval: false } })
+      await api('DELETE', `/api/mcp/services/${p1Mcp.data.id}`, { token: admin })
+    }
   }
   section('Agent ↔ SSO 打通（OIDC-agent 关联，dev-plan-agent-host-unification M2）')
   const oidcAgentCreate = await api('POST', '/api/agents', { token: ops, body: { name: 'SSO 自测机器人', attrs: { description: 'OIDC-agent 关联自测', model: 'deepseek-chat', riskLevel: 'low', avatar: '🔑' } } })
@@ -6204,20 +6321,35 @@ try {
   const portalApps = await portalJson('/apps', { origin: portalOrigin })
   check('契约包装 {code:0, message, data} + no-cache（刷新即可见）', portalApps.status === 200 && portalApps.body.code === 0 && portalApps.body.message === 'ok' && Array.isArray(portalApps.body.data) && portalApps.headers['cache-control'] === 'no-cache')
   check('CORS 放行生产门户来源', portalApps.headers['access-control-allow-origin'] === portalOrigin)
-  // 全链路：注册 → L4 审批上线 → 门户拉取即可见（miniapp 形态不走 SSO 门禁）
-  const portalProbe = await api('POST', '/api/apps', { token: admin, body: { name: '门户拉取探针应用', attrs: { description: '门户数据通道验收：上线即对门户可见', appType: 'miniapp', url: 'http://192.168.0.8:9000/', riskLevel: 'low', dataClass: 'internal' } } })
+  // 全链路：注册 → L4 审批上线 → 门户拉取即可见（miniapp 形态不走 SSO 门禁）。
+  // P1-03（安全审查 2026-10-31）：匿名门户默认脱敏——公网 URL 照常透出；私网/回环 link
+  // 脱敏为空串；机密级（confidential）默认不进匿名清单（PORTAL_HIDE_CONFIDENTIAL=0 可关）。
+  const portalProbe = await api('POST', '/api/apps', { token: admin, body: { name: '门户拉取探针应用', attrs: { description: '门户数据通道验收：上线即对门户可见', appType: 'miniapp', url: 'https://portal-probe.example.com/', riskLevel: 'low', dataClass: 'internal' } } })
   const portalProbeReq = await api('POST', `/api/apps/${portalProbe.data.app.id}/transition`, { token: admin, body: { action: 'online' } })
   await api('POST', `/api/approvals/${portalProbeReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '门户可见性验收', confirmed: true } })
+  // 私网链接探针 + 机密级探针（P1-03 负向断言夹具）
+  const portalPrivate = await api('POST', '/api/apps', { token: admin, body: { name: '私网链接探针应用', attrs: { description: 'P1-03：私网 link 不进匿名清单', appType: 'miniapp', url: 'http://192.168.0.8:9000/', riskLevel: 'low', dataClass: 'internal' } } })
+  const portalPrivateReq = await api('POST', `/api/apps/${portalPrivate.data.app.id}/transition`, { token: admin, body: { action: 'online' } })
+  await api('POST', `/api/approvals/${portalPrivateReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: 'P1-03 验收', confirmed: true } })
+  const portalConf = await api('POST', '/api/apps', { token: admin, body: { name: '机密级探针应用', attrs: { description: 'P1-03：机密级默认不出匿名门户', appType: 'miniapp', url: 'https://conf.example.com/', riskLevel: 'medium', dataClass: 'confidential' } } })
+  const portalConfReq = await api('POST', `/api/apps/${portalConf.data.app.id}/transition`, { token: admin, body: { action: 'online' } })
+  await api('POST', `/api/approvals/${portalConfReq.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: 'P1-03 验收', confirmed: true } })
   const portalAppsAfter = await portalJson('/apps', { origin: portalOrigin })
   const portalApp = portalAppsAfter.body.data.find((item) => item.id === portalProbe.data.app.id)
   check('已上线应用进入 /apps（link=访问地址，tag/version/accent 契约齐全）',
-    portalApp && portalApp.name === '门户拉取探针应用' && portalApp.link === 'http://192.168.0.8:9000/'
+    portalApp && portalApp.name === '门户拉取探针应用' && portalApp.link === 'https://portal-probe.example.com/'
     && portalApp.tag === '小程序' && portalApp.desc === '门户数据通道验收：上线即对门户可见'
     && typeof portalApp.accent === 'string' && /^#[0-9A-Fa-f]{6}$/.test(portalApp.accent))
   check('launchDate 为上线当日（YYYY-MM-DD）', /^\d{4}-\d{2}-\d{2}$/.test(portalApp?.launchDate ?? '') && portalApp.launchDate === new Date().toISOString().slice(0, 10))
+  const portalPrivateApp = portalAppsAfter.body.data.find((item) => item.id === portalPrivate.data.app.id)
+  check('P1-03：私网/内网地址 link 脱敏为空（防公网访客枚举内网拓扑）',
+    portalPrivateApp && portalPrivateApp.link === '', JSON.stringify(portalPrivateApp))
+  const portalConfApp = portalAppsAfter.body.data.find((item) => item.id === portalConf.data.app.id)
+  check('P1-03：机密级（confidential）默认不出匿名门户（默认脱敏，opt-out 显式关闭）',
+    portalConfApp === undefined, JSON.stringify(portalConfApp))
   const adminApps = (await api('GET', '/api/apps', { token: admin })).data.apps
-  const expectedOnline = adminApps.filter((item) => item.status === 'online')
-  check('/apps 与平台已上线应用一致（仅 online 进入门户，未上线/下架不出现）',
+  const expectedOnline = adminApps.filter((item) => item.status === 'online' && item.attrs['dataClass'] !== 'confidential')
+  check('/apps 与平台已上线应用一致（仅 online+非机密 进入门户，未上线/下架/机密不出现）',
     portalAppsAfter.body.data.length === expectedOnline.length
     && expectedOnline.every((item) => portalAppsAfter.body.data.some((entry) => entry.id === item.id)))
   const portalEmployees = await portalJson('/employees', { origin: 'http://192.168.0.8:8443' })
@@ -8762,17 +8894,20 @@ try {
       check('演示态匿名写请求 405 DEMO_READONLY（纵深防御第二道闸）',
         demoAnonPost.status === 405 && demoAnonPost.json?.error?.code === 'DEMO_READONLY',
         JSON.stringify(demoAnonPost.json?.error ?? {}).slice(0, 160))
-      // Bearer 路径完全不变：真实登录在演示实例照常可用，写操作对真实用户照常放行
+      // 安全审查 P0-03（2026-10-31）：演示只读闸门覆盖真实登录会话——演示种子口令为公开
+      // 仓库常量（Ybk@2026），登录态写能力即公网写能力。现约定：登录可用（读=匿名访客同款），
+      // 写方法对 Bearer 会话同样 405，种子管理员亦无写权限（生产基线实例不受影响）。
       const demoLogin = await demoApi('POST', '/api/auth/login', { body: { username: 'admin', password: 'Ybk@2026' } })
       check('演示态：登录端点照常可用（PUBLIC_PATHS 先于演示分支，访客仍可注册登录）',
         demoLogin.status === 200 && typeof demoLogin.json?.data?.token === 'string', `status=${demoLogin.status}`)
       const demoToken = demoLogin.json?.data?.token ?? ''
       const demoBearerOverview = await demoApi('GET', '/api/overview', { token: demoToken })
-      check('演示态：带 Bearer 的真实用户照常读工作台（真登录路径不受演示分支影响）',
+      check('演示态：带 Bearer 的真实用户照常读工作台（登录态读面与匿名访客同款）',
         demoBearerOverview.status === 200, `status=${demoBearerOverview.status}`)
       const demoBearerWrite = await demoApi('POST', '/api/notifications/read-cursor', { token: demoToken, body: {} })
-      check('演示态：带 Bearer 的真实用户照常执行写操作（不经 405 闸门）',
-        demoBearerWrite.status === 200, `status=${demoBearerWrite.status}`)
+      check('P0-03：演示态带 Bearer 的真实用户（含种子管理员）写请求同样 405 DEMO_READONLY',
+        demoBearerWrite.status === 405 && demoBearerWrite.json?.error?.code === 'DEMO_READONLY',
+        JSON.stringify(demoBearerWrite.json?.error ?? {}).slice(0, 160))
     }
     demoProc.kill('SIGTERM')
     await new Promise((resolve) => setTimeout(resolve, 300))

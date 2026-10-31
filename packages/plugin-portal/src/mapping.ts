@@ -112,6 +112,28 @@ const APP_TYPE_LABELS: Record<string, string> = {
   api: 'API',
 }
 
+/**
+ * 公开门户链接脱敏（安全审查 P1-03，2026-10-31）：link/entryUrl 指向回环/私网/链路本地
+ * 地址或无点内部主机名时不进匿名清单——防公网访客借门户枚举内网拓扑。返回空串（契约
+ * 允许缺省 link，门户侧展示为「暂无入口」），不影响其余字段。
+ */
+export function publicLink(value: unknown): string {
+  const raw = s(value).trim()
+  if (!raw) return ''
+  let parsed: URL
+  try { parsed = new URL(raw) } catch { return '' }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
+  const host = parsed.hostname.toLowerCase()
+  if (host === 'localhost' || host === '::1' || host.endsWith('.local') || host.endsWith('.internal')
+    || host.endsWith('.lan') || !host.includes('.')) return ''
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+    || /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+    || /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)
+    || host === '0.0.0.0') return ''
+  return raw
+}
+
 /** 卡片主题色调板（契约要求 #RRGGBB；平台无该属性，按 id 稳定散列取色，同应用恒定）。 */
 const ACCENTS = ['#00AECC', '#7C3AED', '#059669', '#D97706', '#DB2777', '#0891B2', '#6366F1', '#F97316']
 
@@ -147,7 +169,7 @@ export function mapApps(entities: ResourceEntity[], mctx: PortalMappingContext):
         dept: mctx.deptName(app.orgId),
         version: s(app.attrs['publishVersion']),
         accent: accentFor(app.id),
-        link: s(app.attrs['url']),
+        link: publicLink(app.attrs['url']),
         launchDate: lastOnlineDate(app),
       }
     })
@@ -157,6 +179,7 @@ export function mapApps(entities: ResourceEntity[], mctx: PortalMappingContext):
 export function mapEmployees(entities: ResourceEntity[], mctx: PortalMappingContext): PortalEmployee[] {
   return entities
     .filter((agent) => agent.status === 'online')
+    .filter((agent) => !mctx.hideConfidential || agent.attrs['dataClass'] !== 'confidential')
     .map((agent) => {
       const skillNames = tags(agent.attrs['skills']).map((id) => mctx.skillName(s(id))).filter(Boolean)
       return {
@@ -166,7 +189,7 @@ export function mapEmployees(entities: ResourceEntity[], mctx: PortalMappingCont
         avatar: s(agent.attrs['avatar']) || '🤖',
         skills: (skillNames.length > 0 ? skillNames : tags(agent.attrs['tags']).map(s)).join(','),
         dept: mctx.deptName(agent.orgId),
-        link: s(agent.attrs['entryUrl']),
+        link: publicLink(agent.attrs['entryUrl']),
         launchDate: lastOnlineDate(agent),
       }
     })

@@ -307,28 +307,30 @@ export function registerIamRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
     return { catalog: permissionCatalogView() }
   })
 
-  guarded('POST', '/api/iam/roles', 'iam.role.write', (exchange) => {
+  guarded('POST', '/api/iam/roles', 'iam.role.write', manageScope((exchange) => {
     const input = body<{ code: string; name: string; description?: string; permissions: string[] }>(exchange)
-    const role = ctx.iam.createRole(input)
+    // P0-02：角色创建/编辑携带可归因操作者，服务层做可授权上限与持有人作用域裁决
+    const role = ctx.iam.createRole(input, manageActor(exchange))
     changeLog(exchange, 'iam.role.create', 'role', role.id, role.name)
     return role
-  })
+  }))
 
-  guarded('PATCH', '/api/iam/roles/:id', 'iam.role.write', (exchange) => {
+  guarded('PATCH', '/api/iam/roles/:id', 'iam.role.write', manageScope((exchange) => {
     const input = body<{ name?: string; description?: string; permissions?: string[] }>(exchange)
-    const role = ctx.iam.updateRole(exchange.params['id']!, input)
+    const role = ctx.iam.updateRole(exchange.params['id']!, input, manageActor(exchange))
     changeLog(exchange, 'iam.role.update', 'role', role.id, role.name)
     return role
-  })
+  }))
 
   // R4 删除面：自定义角色删除（内置角色与仍被挂载角色由服务层护栏拒绝）
-  guarded('DELETE', '/api/iam/roles/:id', 'iam.role.write', (exchange) => {
+  guarded('DELETE', '/api/iam/roles/:id', 'iam.role.write', manageScope((exchange) => {
     const id = exchange.params['id']!
     const role = ctx.iam.roles().get(id)
-    ctx.iam.deleteRole(id)
+    // P0-02：删除同样携带操作者（组织子树外挂载的角色由服务层拒绝，防跨组织治理干扰）
+    ctx.iam.deleteRole(id, manageActor(exchange))
     changeLog(exchange, 'iam.role.delete', 'role', id, role?.name ?? '', '')
     return { deleted: true }
-  })
+  }))
 
   // -- 场景级授权（IAW 交接 6-1：角色 × 场景 ABAC） ------------------------------
   // 策略治理走 iam.org.read/iam.scene.write；自检 checkScene 对 panel.read 持有者开放（面板选择器用）。

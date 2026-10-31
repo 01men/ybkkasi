@@ -53,20 +53,38 @@ function manageActorOf(args: any, exec?: ToolRunContext): { actor: UserManageAct
 export function apply(ctx: Context) {
   const t = ctx.tools
 
+  /**
+   * 调用者可见组织子树（安全审查 P1-02，2026-10-31）：与 REST 面 scopedOrgIdsOf 同口径——
+   * 平台管理员（'*'）返回 null（全量豁免）；其余按操作者组织子树收敛（无归属=fail-closed 空集）。
+   * 工具桥与 REST 共用边界，防止「列表页收窄、工具桥直读全量」的旁路。
+   */
+  const scopedOrgIdsOf = (actor: UserManageActor): string[] | null => {
+    if (actor.permissions.includes('*')) return null
+    const orgId = actor.orgId ?? (actor.userId ? ctx.iam.users().get(actor.userId)?.orgId : undefined)
+    return orgId ? ctx.iam.orgSubtreeIds(orgId) : []
+  }
+
   t.register(defineTool({
     name: 'iam_org_tree',
-    description: '获取组织架构树（含各级子组织与人数统计）。',
+    description: '获取组织架构树（含各级子组织与人数统计）。仅返回调用者组织子树内的部分。',
     permission: 'iam.org.read',
     parameters: {},
     output: { type: 'object', additionalProperties: true },
-    async execute() {
-      const tree = ctx.iam.orgTree()
+    async execute(args, exec) {
+      const { actor } = manageActorOf(args, exec)
+      const scope = scopedOrgIdsOf(actor)
       const decorate = (nodes: any[]): any[] => nodes.map((node) => ({
         id: node.id, name: node.name, status: node.status,
         userCount: ctx.iam.users().find((user) => user.orgId === node.id).length,
         children: decorate(node.children),
       }))
-      return { tree: decorate(tree) }
+      if (scope === null) return { tree: decorate(ctx.iam.orgTree()) }
+      const rootId = scope[0]
+      if (!rootId) return { tree: [] }
+      const prune = (nodes: any[]): any[] => nodes
+        .filter((node) => scope.includes(node.id))
+        .map((node) => ({ ...node, children: prune(node.children ?? []) }))
+      return { tree: prune(ctx.iam.orgTree()) }
     },
   }))
 
@@ -116,13 +134,22 @@ export function apply(ctx: Context) {
       q: { type: 'string', description: '姓名/用户名关键字' },
     },
     output: { type: 'object', additionalProperties: true },
-    async execute(args) {
+    async execute(args, exec) {
+      const { actor } = manageActorOf(args, exec)
+      // P1-02：非平台管理员按调用者组织子树收敛（与 REST /api/iam/users 同口径，
+      // 显式 orgId 落在子树外直接拒绝，不静默返回空集冒充「无此人」）
+      const scope = scopedOrgIdsOf(actor)
+      const allow = scope === null ? null : new Set(scope)
+      if (args.orgId && allow && !allow.has(String(args.orgId))) {
+        throw new Error(translate('查询组织超出调用者的组织子树（组织隔离）'))
+      }
       const users = ctx.iam.users().find((user) => {
         if (args.status && user.status !== args.status) return false
         if (args.q && !`${user.displayName}${user.username}`.includes(args.q)) return false
+        if (allow && !allow.has(user.orgId)) return false
         if (args.orgId) {
-          const scope = new Set(ctx.iam.orgSubtreeIds(args.orgId))
-          if (!scope.has(user.orgId)) return false
+          const orgScope = new Set(ctx.iam.orgSubtreeIds(String(args.orgId)))
+          if (!orgScope.has(user.orgId)) return false
         }
         return true
       })

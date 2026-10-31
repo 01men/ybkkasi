@@ -1264,6 +1264,8 @@ export class IamService extends Service {
     if (this.users().findOne((user) => user.username === input.username)) throw new Error(t('用户名已存在：{username}', { username: input.username }))
     if (!this.orgs().get(input.orgId)) throw new Error(t('组织不存在：{id}', { id: input.orgId }))
     this.assertManageScope(actor, input.orgId, t('创建账号'))
+    // P0-02：建号携带 roleIds 时同样受可授权上限约束（否则绕过 assignRoles 直写角色）
+    if (input.roleIds?.length) this.assertGrantCeiling(actor, this.resolveRolePermissions(input.roleIds), t('创建账号'))
     if (input.password !== undefined) this.assertPasswordStrength(input.password)
     const password = input.password ?? generateSecret('init')
     const user = this.users().insert({
@@ -1295,6 +1297,10 @@ export class IamService extends Service {
     const next = password ?? generateSecret('init')
     // 重置口令的明文会一次性回显给操作者（由人转达），因此视为「已知口令」
     this.users().update(id, { passwordSalt: '', passwordHash: hashPasswordScrypt(next), passwordKnown: true })
+    // P1-08（安全审查 2026-10-31）：重置口令联动撤销该账号全部既有会话——旧 access 即时失效、
+    // 旧 refresh 不得再换新令牌、以其为 sub 的委托令牌同批吊销。经平台事件解耦（跨插件联动
+    // 不直连，authn 侧订阅后执行吊销并落审计），与「冻结即吊销」同一通道。
+    this.ctx.platformBus.emit(PlatformEvents.UserPasswordReset, { userId: id, username: user.username })
     return { user: this.users().get(id)!, initialPassword: next }
   }
 
@@ -1374,12 +1380,23 @@ export class IamService extends Service {
     return this.users().remove(id)
   }
 
-  /** 绑定三方身份：事实源为 identityLinks（引擎级唯一约束），user.bindings 为投影。 */
+  /**
+   * 绑定三方身份：事实源为 identityLinks（引擎级唯一约束），user.bindings 为投影。
+   *
+   * 安全审查 P1-05（2026-10-31）：
+   *   ① 代他人绑定收敛为平台超级管理员（'*'）——手工绑定写入的是调用方声明的任意 unionId，
+   *      组织管理员若能给他人账号挂自己的三方身份，即可经三方登录接管该账号（含超管）。
+   *      组织管理员的合规通道是扫码授权（/api/auth/sso/bind/authorize，被绑定身份=扫码人本人）
+   *      与连接器同步；本端点自绑（id=操作者本人）不受限。
+   *   ② 移除伪「二次验证码」校验——旧逻辑只查 '000000'/6 位格式，从未对应真实挑战
+   *      （验证码形同虚设）。verifyCode 参数保留接收（前端兼容），不再声明安全语义。
+   */
   bindThirdParty(id: string, binding: { provider: ThirdPartyBinding['provider']; unionId: string; displayName: string; corpId?: string; verifyCode?: string }, actor?: UserManageActor): UserRecord {
     const user = this.requireUser(id)
     this.assertManageScope(actor, user.orgId, t('绑定三方身份'))
-    if (binding.verifyCode !== '000000' && binding.verifyCode !== undefined && binding.verifyCode.length !== 6) {
-      throw new Error(t('二次验证码格式不正确'))
+    const selfBind = actor?.userId !== undefined && actor.userId === id
+    if (!selfBind && !actor?.permissions.includes('*')) {
+      throw new OrgScopeDeniedError(t('为其他账号手工绑定三方身份仅限平台超级管理员（防借三方登录接管他人账号，安全审查 P1-05）；请走扫码授权或连接器同步通道'))
     }
     // corpId 缺省取该 provider 已配置主体的 corpId（控制台手工绑定即针对已接入主体），
     // 保证「一人一号」唯一约束（provider|corpId|providerUserId）对存量链接生效。
@@ -1417,11 +1434,14 @@ export class IamService extends Service {
   /**
    * 解除三方绑定（管理面）。corpId 缺省=该 provider 全部主体（管理员显式选择「解绑钉钉」）。
    * 解绑后写入豁免，避免连接器同步把链接自动补回。
+   * 安全审查 P1-05：移除伪验证码校验（旧逻辑只查 6 位格式、从未对应真实挑战）；解绑本身
+   * 不授予访问权（只影响登录方式，且「最后登录方式需先设口令」反锁定护栏在 performUnbind），
+   * 配合 bindThirdParty 收敛为 '*' 后，解绑不再构成账号接管链的一环。
    */
   unbindThirdParty(id: string, provider: ThirdPartyBinding['provider'], verifyCode: string, actor?: UserManageActor, corpId?: string): UserRecord {
     const user = this.requireUser(id)
     this.assertManageScope(actor, user.orgId, t('解绑三方身份'))
-    if (!verifyCode || verifyCode.length !== 6) throw new Error(t('解绑需二次验证（6 位验证码）'))
+    void verifyCode
     return this.performUnbind(user, provider, corpId)
   }
 
@@ -1624,10 +1644,52 @@ export class IamService extends Service {
     return { applied: marker === undefined || touched.length > 0, touched }
   }
 
-  createRole(input: { code: string; name: string; description?: string; permissions: string[] }): RoleRecord {
+  /**
+   * 可授权权限上限（安全审查 P0-02，2026-10-31）：非平台超级管理员（无 '*'）的操作者，
+   * 只能授予/管理自己本身已持有的权限点——组织管理员（iam.*）不得把任何账号提为平台超管、
+   * 不得授予自己没有的跨域能力、不得创建/编辑含 '*' 或超出自身权限集的角色。
+   * actor.permissions 为解析后的字面量点集（'*' 仅平台超管持有）；requested 允许通配形态，
+   * 逐点展开后比对。REST 与工具桥等一切外部入口共用（服务层单点裁决）。
+   */
+  private assertGrantCeiling(actor: UserManageActor | undefined, requested: string[], action: string): void {
+    if (!actor) {
+      throw new OrgScopeDeniedError(t('角色管理操作缺少操作者身份（{action}）：外部入口必须携带可归因调用者，内部系统链路请显式传入系统身份（防提权，安全审查 P0-02）', { action }))
+    }
+    if (actor.permissions.includes('*')) return
+    const owned = new Set(actor.permissions)
+    for (const permission of requested) {
+      if (permission === '*') {
+        throw new OrgScopeDeniedError(t('仅平台超级管理员可授予/配置全量权限「*」（{action}，防提权）', { action }))
+      }
+      if (permission.endsWith('.*')) {
+        const prefix = permission.slice(0, -2)
+        const leaked = PermissionCatalog.filter((item) => item.point.startsWith(`${prefix}.`) && !owned.has(item.point)).map((item) => item.point)
+        if (leaked.length > 0) {
+          throw new OrgScopeDeniedError(t('超出可授权上限（{action}）：操作者未持有 {points}（不可授予自身没有的权限，防提权）', { action, points: leaked.slice(0, 5).join('、') }))
+        }
+      } else if (!owned.has(permission)) {
+        throw new OrgScopeDeniedError(t('超出可授权上限（{action}）：操作者未持有权限点 {point}（不可授予自身没有的权限，防提权）', { action, point: permission }))
+      }
+    }
+  }
+
+  /** 非平台超管不得改动「组织子树外账号仍挂载的角色」——防止借编辑共享角色影响其他组织持有人（P0-02）。 */
+  private assertRoleHolderScope(actor: UserManageActor | undefined, roleId: string, action: string): void {
+    if (!actor || actor.permissions.includes('*')) return
+    const actorOrgId = actor.orgId ?? (actor.userId ? this.users().get(actor.userId)?.orgId : undefined)
+    if (!actorOrgId) throw new OrgScopeDeniedError(t('角色管理操作缺少操作者组织归属（{action}）', { action }))
+    const allowed = new Set(this.orgSubtreeIds(actorOrgId))
+    const outside = this.users().find((user) => user.roleIds.includes(roleId) && !allowed.has(user.orgId))
+    if (outside.length > 0) {
+      throw new OrgScopeDeniedError(t('该角色仍被本组织子树外的账号挂载（{action}被拒绝）：{names} 等——请由平台超级管理员处理', { action, names: outside.slice(0, 3).map((user) => user.displayName).join('、') }))
+    }
+  }
+
+  createRole(input: { code: string; name: string; description?: string; permissions: string[] }, actor?: UserManageActor): RoleRecord {
     if (!input.code || !/^[a-z0-9_]+$/.test(input.code)) throw new Error(t('角色 code 仅支持小写字母/数字/下划线'))
     if (this.roles().findOne((role) => role.code === input.code)) throw new Error(t('角色 code 已存在：{code}', { code: input.code }))
     this.assertPermissions(input.permissions)
+    this.assertGrantCeiling(actor, input.permissions, t('创建角色'))
     return this.roles().insert({
       id: newId('rol'),
       code: input.code,
@@ -1638,11 +1700,17 @@ export class IamService extends Service {
     })
   }
 
-  updateRole(id: string, patch: { name?: string; description?: string; permissions?: string[] }): RoleRecord {
+  updateRole(id: string, patch: { name?: string; description?: string; permissions?: string[] }, actor?: UserManageActor): RoleRecord {
     const role = this.roles().get(id)
     if (!role) throw new Error(t('角色不存在：{id}', { id }))
     if (role.builtin && patch.permissions) throw new Error(t('内置角色的权限不可修改'))
     if (patch.permissions) this.assertPermissions(patch.permissions)
+    if (patch.permissions) {
+      // P0-02：编辑角色等价于对全部持有人一次性改权——上限校验用「改后权限集」整体裁决，
+      // 并拒绝改动组织子树外账号仍挂载的角色（防止借共享角色跨组织提权）
+      this.assertGrantCeiling(actor, patch.permissions, t('编辑角色'))
+      this.assertRoleHolderScope(actor, id, t('编辑角色'))
+    }
     const updated = this.roles().update(id, patch)
     this.ctx.platformBus.emit(PlatformEvents.PermissionChanged, { kind: 'role', roleId: id })
     return updated
@@ -1655,10 +1723,12 @@ export class IamService extends Service {
    *   ② 仍有账号挂载时不可删（删了会把挂载者权限整体蒸发，须先解绑）；
    *   ③ 不存在即拒（与 updateRole 同口径，不静默成功）。
    */
-  deleteRole(id: string): void {
+  deleteRole(id: string, actor?: UserManageActor): void {
     const role = this.roles().get(id)
     if (!role) throw new Error(t('角色不存在：{id}', { id }))
     if (role.builtin) throw new Error(t('内置角色「{name}」不可删除（平台基线；如需收敛权限请走角色编辑）', { name: role.name }))
+    // P0-02：删除前校验持有人作用域（当前无挂载时恒过；与编辑同口径防跨组织治理干扰）
+    this.assertRoleHolderScope(actor, id, t('删除角色'))
     const holders = this.users().all().filter((user) => user.roleIds.includes(id))
     if (holders.length > 0) {
       throw new Error(t('角色「{name}」仍被 {count} 个账号挂载（{names} 等），请先在账号管理中解除后再删除', { name: role.name, count: holders.length, names: holders.slice(0, 5).map((user) => user.displayName).join('、') }))
@@ -1682,6 +1752,9 @@ export class IamService extends Service {
     for (const roleId of roleIds) {
       if (!this.roles().get(roleId)) throw new Error(t('角色不存在：{id}', { id: roleId }))
     }
+    // P0-02：按「角色解析后的实际权限点」做可授权上限裁决——角色粒度绕不过（把 super_admin
+    // 或任何含操作者未持权限点的角色分配给本组织任意账号，均在此拒绝；含 '*' 的角色解析即 '*'）
+    this.assertGrantCeiling(actor, this.resolveRolePermissions(roleIds), t('分配角色'))
     const updated = this.users().update(userId, { roleIds })
     this.ctx.platformBus.emit(PlatformEvents.PermissionChanged, { kind: 'user_roles', userId })
     return updated

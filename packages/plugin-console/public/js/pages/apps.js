@@ -159,7 +159,7 @@ async function openAppDetail(id, ctx) {
     ? `<img src="${esc(String(app.attrs['icon']).trim())}" alt="" referrerpolicy="no-referrer" style="width:22px;height:22px;border-radius:6px;object-fit:cover;vertical-align:-4px;margin-right:6px">`
     : esc(app.attrs['icon'] ?? '✨')
   const drawer = openDrawer({
-    title: `${titleIcon} ${esc(app.name)}`,
+    title: `${titleIcon} ${app.name}`,
     sub: `${app.slug} · ${app.attrs['url'] ?? rqI18n.t('未登记访问地址')}`,
     wide: true,
     body: `

@@ -142,7 +142,9 @@ export class PortalFeedService extends Service {
         try { return this.ctx.skillHub.skills().get(skillId)?.name ?? skillId } catch { return skillId }
       },
       skillDownloadUrl: (skillId) => `${portalPublicBase()}${prefix}/skills/${skillId}/download`,
-      hideConfidential: String(process.env.PORTAL_HIDE_CONFIDENTIAL ?? '') === '1',
+      // P1-03（安全审查 2026-10-31）：匿名门户默认隐藏机密级资产（opt-out：PORTAL_HIDE_CONFIDENTIAL=0
+      // 显式关闭）——旧版默认全量公开、需显式开启脱敏，公网匿名清单泄露内部资产拓扑
+      hideConfidential: String(process.env.PORTAL_HIDE_CONFIDENTIAL ?? '1').trim() !== '0',
     }
   }
 }

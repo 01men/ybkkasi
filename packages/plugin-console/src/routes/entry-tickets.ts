@@ -102,13 +102,27 @@ export function registerEntryTicketRoutes(ctx: Context, deps: EntryTicketRouteDe
   /**
    * 票据免登控制台（公开端点，与 redeem 同安全语义）：一次性票据兑换 → 直接建立控制台会话，
    * 门户/钉钉「打开即工作台」零二次登录。票据只进请求体与内存，不进常驻 URL、不进服务端日志；
-   * 签发侧授权语义已在领票端点定格（agent：owner/绑定用户/管理员；app：登录用户），此处仅消费。
+   * 签发侧授权语义已在领票端点定格，此处仅消费。
+   *
+   * 安全审查 P0-01（2026-10-31）：票据用途强隔离——仅 refType='self' 的自助票（签发人=领取人，
+   * 消费面为平台自有面板/白名单回跳）可兑换控制台会话。app/agent 票的接收方是不可控第三方
+   * 前端，若允许其兑换完整会话（含 refresh），恶意应用即可用票据接管签发人的平台身份
+   * （高权限用户受影响时为管理权限接管）。此类票只能走 /api/authn/entry-tickets/redeem
+   * 换取资源侧身份，永不建立平台会话。
    */
   http.register('POST', '/api/auth/entry-ticket-session', (exchange) => {
     const input = body<{ ticket?: string }>(exchange)
     const clientIp = String(exchange.raw.socket?.remoteAddress ?? 'unknown')
     try {
       const redeemed = ctx.entryTickets.redeem(String(input.ticket ?? ''), clientIp)
+      if (redeemed.refType !== 'self' || redeemed.refId !== redeemed.identity.sub) {
+        ctx.audit.record({
+          type: 'auth', actorType: 'human', actorId: redeemed.identity.sub, actorName: redeemed.identity.name,
+          action: `${redeemed.refType}.entry.ticket.session.denied`, resourceType: redeemed.refType, resourceId: redeemed.refId,
+          resourceName: redeemed.refId, result: 'denied', detail: t('非自助票拒绝兑换控制台会话（票据用途隔离，P0-01）'),
+        })
+        throw new Error(t('该票据类型不可用于登录控制台（应用/Agent 票仅交付资源侧身份）'))
+      }
       const user = ctx.iam.users().get(redeemed.identity.sub)
       if (!user || user.status !== 'active') throw new Error(t('签发用户状态异常（冻结/离职联动失效）'))
       const principal = ctx.authn.ensureHumanPrincipal(user.id, user.displayName)

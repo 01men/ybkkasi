@@ -96,6 +96,16 @@ export const PUBLIC_PATHS = new Set([
  *  执行中枢 webhook 触发器：路径即凭证（未登记/停用路径一律 404，fail-closed，见 plugin-exec-hub）。 */
 const PUBLIC_PATH_PREFIXES = ['/api/authn/oidc/auth-requests/', '/api/exec/webhook/']
 
+/**
+ * 受众绑定委托令牌的「身份自省」白名单（P1-07）：这些端点以令牌自身身份链为客体的
+ * 只读回显（act 链展示 / 数据范围身份读回），委托身份语义的事实消费面；GET-only。
+ * 扩编须过安全评审——任何写面/资源面进入本清单即架空受众边界。
+ */
+const AUD_TOKEN_INTROSPECTION_PATHS: ReadonlySet<string> = new Set([
+  '/api/auth/me',
+  '/api/nas/authz/scope',
+])
+
 /** /docs 公开白名单（默认拒绝，导出供 selftest 比对——清单变动即红）：
  *  仅收录面向外部读者的接入指引（「本文档随服务发布，可直接访问」系列）。
  *  目录内其余文档（部署 runbook、契约、以及 docs/internal/ 下的内部过程物料
@@ -165,25 +175,29 @@ export function apply(ctx: Context) {
     if (!exchange.path.startsWith('/api/') || PUBLIC_PATHS.has(exchange.path) || PUBLIC_PATH_PREFIXES.some((prefix) => exchange.path.startsWith(prefix)) || ticketDownload || signedLinkDownload) return
     const header = String(exchange.headers['authorization'] ?? '')
 
-    // 演示只读态（DEMO_MODE=1）：无 Bearer 时注入固定只读主体。
-    // 权限集为白名单 `.read` 枚举（见 demo-mode.ts），后续每个 guarded 路由的
-    // requirePermission 照常生效——写类路由自然 403，此处不另建拦截层。
-    if (!header && demo) {
+    // 演示只读态（DEMO_MODE=1）：只读闸门作用于全部请求——无 Bearer 注入固定只读主体；
+    // 带 Bearer 的真实登录会话同样受限（见下方 Bearer 分支的权限交集收敛）。
+    // 安全审查 P0-03（2026-10-31）：旧版只拦「无 Bearer」，演示种子账号（公开仓库含固定
+    // 演示口令）仍可真实登录取得可写会话——现在写方法 405 对登录态一视同仁，种子口令即使
+    // 泄露也只能得到与匿名访客相同的只读视图。
+    if (demo) {
       // 纵深防御：写方法入口即拒。覆盖「路由漏声明权限点」这类遗漏面（第一道闸是权限集无写点）。
       if (!READONLY_METHODS.has(exchange.method.toUpperCase())) {
         exchange.fail(405, 'DEMO_READONLY', t('演示模式为只读，不支持写操作。请自行部署后体验完整功能。'))
         return true
       }
-      // 演示态同样经统一 Principal 组装（authMethod='demo'）：unified 面与真实令牌同构，
-      // 权限集仍为白名单 .read 枚举，后续 requirePermission 照常生效。
-      const demoVerified = {
-        principal: { id: DEMO_PRINCIPAL_ID, type: 'human' as const, refType: 'user' as const, refId: DEMO_PRINCIPAL_ID, name: DEMO_PRINCIPAL_NAME },
-        token: { jti: DEMO_PRINCIPAL_ID, issuedBy: 'demo' },
-        scopes: [...DEMO_READONLY_PERMISSIONS],
-        actChain: [],
+      if (!header) {
+        // 演示态同样经统一 Principal 组装（authMethod='demo'）：unified 面与真实令牌同构，
+        // 权限集仍为白名单 .read 枚举，后续 requirePermission 照常生效。
+        const demoVerified = {
+          principal: { id: DEMO_PRINCIPAL_ID, type: 'human' as const, refType: 'user' as const, refId: DEMO_PRINCIPAL_ID, name: DEMO_PRINCIPAL_NAME },
+          token: { jti: DEMO_PRINCIPAL_ID, issuedBy: 'demo' },
+          scopes: [...DEMO_READONLY_PERMISSIONS],
+          actChain: [],
+        }
+        exchange.principal = await assemblePrincipal(demoVerified)
+        return
       }
-      exchange.principal = await assemblePrincipal(demoVerified)
-      return
     }
 
     if (!header.startsWith('Bearer ')) {
@@ -192,7 +206,32 @@ export function apply(ctx: Context) {
     }
     try {
       const verified = ctx.authn.verify(header.slice(7))
-      exchange.principal = await assemblePrincipal(verified)
+      // P1-07（安全审查 2026-10-31）：服务专用委托令牌（aud=mcp:service:<slug>/plugin:<id>）
+      // 只允许触达「身份自省」白名单端点（GET，令牌以自身身份链为客体的只读回显）——面板/
+      // dsh 的委托身份展示依赖该语义；其余控制台 /api 面（写面/管理面/资源面）一律 403，
+      // 防「服务 A 的委托令牌用于服务 B 或当作平台会话」。MCP 数据面 /mcp/* 自行按服务
+      // slug 强校验精确受众（mcp-dataplane assembleCaller）。
+      if (verified.token.audience !== undefined) {
+        const audAllowed = exchange.method.toUpperCase() === 'GET'
+          && AUD_TOKEN_INTROSPECTION_PATHS.has(exchange.path)
+        if (!audAllowed) {
+          exchange.fail(403, 'TOKEN_AUDIENCE_MISMATCH', t('该令牌绑定了专用受众（{aud}），不能用于控制台通用接口；请使用登录会话令牌，或经对应服务端点调用', { aud: verified.token.audience }))
+          return true
+        }
+      }
+      const principal = await assemblePrincipal(verified)
+      if (demo) {
+        // P0-03：演示态登录用户的权限与其自身权限取交集，收敛到只读白名单——
+        // '*'（种子管理员等）先展开为白名单全集（通配不参与交集），任何写类权限点被剥除，
+        // 写面另有上方 405 闸门兜底。console.login 保留：登录级 GET 语义照常（其写类路由
+        // ——反馈/自助票/工具执行——全部非 GET，同样被 405 闸门拦截）。
+        const allow = new Set([...DEMO_READONLY_PERMISSIONS, 'console.login'])
+        const expanded = principal.permissions.includes('*') ? [...allow] : principal.permissions
+        const readonlyPermissions = expanded.filter((point) => allow.has(point))
+        ;(principal as { permissions: readonly string[] }).permissions = readonlyPermissions
+        if (principal.unified) (principal.unified as { permissions?: readonly string[] }).permissions = readonlyPermissions
+      }
+      exchange.principal = principal
       return
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

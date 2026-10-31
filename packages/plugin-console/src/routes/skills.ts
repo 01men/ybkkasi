@@ -5,12 +5,52 @@
  * 处理器逐字搬运（行为与迁出前一致）。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import type { SkillRecord } from '../../../plugin-skillhub/src/index.ts'
 import { t } from '../../../platform-i18n/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 
 export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { guarded, body, changeLog, caller } = deps
+
+  /**
+   * Skill 可见性裁决（安全审查 P1-02，2026-10-31）：列表/详情/下载共用同一判定——
+   * 平台超管与审批/发布权限持有者全量；作者本人全量；其余按 visibility 收敛：
+   *   'all' → 公开；'orgs' → 仅 targetOrgs 内的调用者；'groups'（前端未提供编辑面，
+   *   存量数据按 fail-closed 处理）与在途项（待审批/扫描中/驳回）→ 仅作者与管理面可见。
+   * 返回 true=可见；对不可见 Skill 的详情/下载/安装按不存在处理（不泄露存在性）。
+   */
+  const skillVisibleTo = (skill: SkillRecord, exchange: HttpExchange): boolean => {
+    const info = caller(exchange)
+    const actorId = info.userId ?? info.principalId
+    if (info.permissions.includes('*') || info.permissions.includes('skill.approve') || info.permissions.includes('skill.publish')) return true
+    if (skill.authorId === actorId) return true
+    if (skill.status !== 'published' && skill.status !== 'deprecated') return false
+    if (skill.visibility === 'all') return true
+    if (skill.visibility === 'orgs') {
+      const orgId = info.userId ? ctx.iam.users().get(info.userId)?.orgId : undefined
+      return Boolean(orgId && skill.targetOrgs.includes(orgId))
+    }
+    return false
+  }
+
+  /** 非管理面/作者视角剔除版本内嵌包体（packageBase64 可达数十 MB 且为受控分发物，P1-02）。 */
+  const stripPackages = (skill: SkillRecord): SkillRecord => ({
+    ...skill,
+    versions: skill.versions.map(({ packageBase64, ...rest }) => {
+      void packageBase64
+      return { ...rest, hasPackage: true } as typeof rest & { hasPackage: boolean }
+    }),
+  })
+
+  /** 视图出口：可见性裁决 + 按角色决定是否剔除包体（作者/审批/发布管理面保留完整记录）。 */
+  const skillView = (skill: SkillRecord, exchange: HttpExchange): SkillRecord => {
+    if (!skillVisibleTo(skill, exchange)) throw new Error(t('Skill 不存在：{id}', { id: skill.id }))
+    const info = caller(exchange)
+    const privileged = info.permissions.includes('*') || info.permissions.includes('skill.approve') || info.permissions.includes('skill.publish')
+      || skill.authorId === (info.userId ?? info.principalId)
+    return privileged ? skill : stripPackages(skill)
+  }
 
   /**
    * 市场卡片热力（设计适配规格 5.3，2026-10-14）：每个 Skill 近 30 日每日调用次数 heat[30]。
@@ -48,21 +88,33 @@ export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
       return { skills: ctx.skillHub.skills().find((skill) => skill.authorId === (info.userId ?? info.principalId)).map(enrich) }
     }
     if (exchange.query.get('pending') === '1') {
-      return { skills: ctx.skillHub.skills().find((skill) => ['pending_approval', 'scanning', 'rejected'].includes(skill.status)).map(enrich) }
+      // P1-02：在途清单（待审批/扫描中/驳回）只对作者本人与审批/发布管理面开放——
+      // 普通成员（skill.read）此前可见全部在途项及其完整内容
+      const info = caller(exchange)
+      const gatekeeper = info.permissions.includes('*') || info.permissions.includes('skill.approve') || info.permissions.includes('skill.publish')
+      return { skills: ctx.skillHub.skills().find((skill) => ['pending_approval', 'scanning', 'rejected'].includes(skill.status))
+        .filter((skill) => gatekeeper || skill.authorId === (info.userId ?? info.principalId)).map(enrich) }
     }
-    // 市场列表含在途项（待审批/扫描中，排最前带状态徽标）：审批人无需切页即可看到待办
+    // 市场列表含在途项（待审批/扫描中，排最前带状态徽标）：审批人无需切页即可看到待办；
+    // P1-02：按调用者可见性裁决（visibility 收敛 + 在途项仅作者/管理面），并剔除版本包体
     const skills = ctx.skillHub.search({
       q: exchange.query.get('q') ?? undefined,
       category: exchange.query.get('category') ?? undefined,
       tag: exchange.query.get('tag') ?? undefined,
       sort: (exchange.query.get('sort') ?? 'downloads') as 'downloads' | 'rating' | 'updated',
       includePending: true,
-    })
-    return { skills: skills.map(enrich), categories: ctx.skillHub.categories(), ...(heat ? { heatAxis: heat.axis } : {}) }
+    }).filter((skill) => skillVisibleTo(skill, exchange))
+      .map((skill) => {
+        const view = skillView(skill, exchange)
+        return enrich(view)
+      })
+    return { skills, categories: ctx.skillHub.categories(), ...(heat ? { heatAxis: heat.axis } : {}) }
   })
 
   guarded('GET', '/api/skills/:id', 'skill.read', (exchange) => {
-    return ctx.skillHub.detail(exchange.params['id']!)
+    // P1-02：详情按同一可见性裁决，不可见按不存在处理（不泄露存在性）；可见但非作者/
+    // 管理面时剔除版本包体（内容分发走受控下载通道）
+    return skillView(ctx.skillHub.detail(exchange.params['id']!), exchange)
   })
 
   guarded('POST', '/api/skills', 'skill.submit', (exchange) => {
@@ -183,12 +235,16 @@ export function registerSkillRoutes(ctx: Context, deps: ConsoleRouteDeps): void 
     const { version } = body<{ version?: string }>(exchange)
     const info = caller(exchange)
     const skill = ctx.skillHub.detail(exchange.params['id']!)
+    // P1-02：包下载按同一可见性裁决（普通成员只能拿可见 Skill 的包，跨组织/受限项拒绝）
+    if (!skillVisibleTo(skill, exchange)) throw new Error(t('Skill 不存在：{id}', { id: skill.id }))
     return ctx.skillHub.download(skill.id, version ?? skill.currentVersion, { id: info.userId ?? info.principalId, name: info.name })
   })
 
   /** skill.zip 包下载：与 NAS 上架产物同源（提交携带的原始包或 SKILL.md 现场打包）。 */
   guarded('GET', '/api/skills/:id/package', 'skill.read', (exchange) => {
     const skill = ctx.skillHub.detail(exchange.params['id']!)
+    // P1-02：原始包下载按同一可见性裁决（与 download/install 同口径，不可见按不存在处理）
+    if (!skillVisibleTo(skill, exchange)) throw new Error(t('Skill 不存在：{id}', { id: exchange.params['id'] }))
     const pkg = ctx.skillHub.packageOf(skill.id, exchange.query.get('version') ?? skill.currentVersion)
     // 中文 slug 文件名：ASCII 回退 + RFC 5987 UTF-8 形式（非 Latin1 字符直接进头会损坏响应）
     exchange.res.writeHead(200, {

@@ -251,8 +251,8 @@ async function renderDirectory() {
 function openAgentDrawer(agent) {
   const canInvoke = session.can('agent.a2a.invoke')
   const drawer = openDrawer({
-    title: `${esc(agent.avatar ?? '🤖')} ${esc(agent.name)}`,
-    sub: `<span class="mono">${esc(agent.slug)}</span> · ${esc(agent.runtime)} ${esc(rqI18n.t('运行时'))} · ${esc(rqI18n.t('{time}更新', { time: timeAgo(agent.updatedAt) }))}`,
+    titleHtml: `${esc(agent.avatar ?? '🤖')} ${esc(agent.name)}`,
+    subHtml: `<span class="mono">${esc(agent.slug)}</span> · ${esc(agent.runtime)} ${esc(rqI18n.t('运行时'))} · ${esc(rqI18n.t('{time}更新', { time: timeAgo(agent.updatedAt) }))}`,
     wide: true,
     body: `
       <div class="flex mb-8" style="gap:8px;flex-wrap:wrap;align-items:center">
@@ -444,7 +444,7 @@ async function openTaskDrawer(taskId, onChanged) {
   let timer = 0
   let stream = null
   const drawer = openDrawer({
-    title: `${esc(rqI18n.t('协作任务'))} <span class="mono">${esc(shortTaskId(task.taskId))}</span>`,
+    titleHtml: `${esc(rqI18n.t('协作任务'))} <span class="mono">${esc(shortTaskId(task.taskId))}</span>`,
     sub: `${esc(task.agentSlug)} · ${esc(rqI18n.t(A2A_MODE_LABEL[task.mode] ?? task.mode))} · ${esc(rqI18n.t(A2A_CLASS_LABEL[task.dataClass] ?? task.dataClass))}${esc(rqI18n.t('密级'))}`,
     wide: true,
     body: `<div class="fs-12 text-4">…</div>`,
@@ -605,7 +605,7 @@ function messageBlock(task) {
 function openAcceptanceModal(task, decision, drawer, onChanged) {
   const meta = A2A_ACCEPT_ACTIONS[decision] ?? {}
   const modal = openModal({
-    title: `${esc(rqI18n.t(meta.label ?? '交付验收'))} · <span class="mono">${esc(shortTaskId(task.taskId))}</span>`,
+    titleHtml: `${esc(rqI18n.t(meta.label ?? '交付验收'))} · <span class="mono">${esc(shortTaskId(task.taskId))}</span>`,
     body: `
       <div class="muted-box mb-14" style="display:flex;gap:8px">
         ${icon('info', 15)}<span class="fs-13">${esc(rqI18n.t(meta.hint ?? ''))}</span>
@@ -640,7 +640,7 @@ function openAcceptanceModal(task, decision, drawer, onChanged) {
 /** 取消任务弹窗（G9）：非终态 ∧ 发起人本人或平台管理员；JSON-RPC tasks/cancel，理由必填。 */
 function openCancelModal(task, reload, onChanged) {
   const modal = openModal({
-    title: `${esc(rqI18n.t('取消任务'))} · <span class="mono">${esc(shortTaskId(task.taskId))}</span>`,
+    titleHtml: `${esc(rqI18n.t('取消任务'))} · <span class="mono">${esc(shortTaskId(task.taskId))}</span>`,
     body: `
       <div class="muted-box mb-14" style="display:flex;gap:8px">
         ${icon('info', 15)}<span class="fs-13">${esc(rqI18n.t('取消后任务立即停止执行并归档为「已取消」，已产生的计量照常入账；理由写入审计日志。'))}</span>
@@ -1211,7 +1211,7 @@ function openHarnessModal(agents, onCreated) {
 /** UHP 执行记录抽屉：输出内容与 metadata（行点击进入，G7）。 */
 function openUhpResponseDrawer(item) {
   openDrawer({
-    title: `${esc(rqI18n.t('UHP 执行记录'))} <span class="mono">${esc(shortTaskId(item.id))}</span>`,
+    titleHtml: `${esc(rqI18n.t('UHP 执行记录'))} <span class="mono">${esc(shortTaskId(item.id))}</span>`,
     sub: `${esc(item.model)} · ${timeAgo(item.created_at)}`,
     wide: true,
     body: `

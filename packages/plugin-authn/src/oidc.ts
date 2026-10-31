@@ -192,29 +192,45 @@ export class OidcService extends Service {
    *      同口径）+ externalBase 前缀——公网域名部署时 discovery/签发/校验自动对齐，远程 SSO 开箱可用；
    *   3. 回落 http://127.0.0.1:<port><base>（本机调试）。
    * 不传请求上下文时保持旧行为（env ?? 环回）——非请求面调用（测试/内部校验）零感知。
+   *
+   * 安全审查 P1-06（2026-10-31）：请求派生受外部头（x-forwarded-host/host）影响，公网上可被
+   * 伪造头改写 discovery 元数据。收敛规则：
+   *   - OIDC_ISSUER 已设 → 永远返回固定值，不再按请求派生（固定发行方）；
+   *   - 未设时仅当派生 host 命中 OIDC_TRUSTED_HOSTS 白名单（逗号分隔精确匹配）才采信，
+   *     否则回落环回（fail-closed）——公网部署必须二选一显式配置。
    */
   issuer(origin?: { headers: import('node:http').IncomingHttpHeaders }): string {
     if (process.env.OIDC_ISSUER) return process.env.OIDC_ISSUER
-    const derived = origin !== undefined ? this.deriveIssuerFromRequest(origin) : undefined
+    const derived = this.deriveIssuerFromRequest(origin)
     return derived ?? `http://127.0.0.1:${this.ctx.httpServer.port}${this.ctx.httpServer.externalBase}`
   }
 
-  /** 按请求头派生对外 issuer（host 缺失返回 undefined 走回落）。 */
-  private deriveIssuerFromRequest(origin: { headers: import('node:http').IncomingHttpHeaders }): string | undefined {
+  /** 按请求头派生对外 issuer（host 缺失/不在可信白名单返回 undefined 走回落）。 */
+  private deriveIssuerFromRequest(origin?: { headers: import('node:http').IncomingHttpHeaders }): string | undefined {
+    if (!origin) return undefined
     const header = (name: string): string | undefined => {
       const value = origin.headers[name]
       return value === undefined ? undefined : String(Array.isArray(value) ? value[0] : value)
     }
     const host = header('x-forwarded-host') ?? header('host')
     if (!host) return undefined
+    const trusted = new Set(String(process.env.OIDC_TRUSTED_HOSTS ?? '')
+      .split(',').map((item) => item.trim().toLowerCase()).filter(Boolean))
+    // 回环主机隐式可信（dsh-bridge 同源回跳等本机流程依赖）：伪造 Host: 127.x 只能把
+    // 重定向指回攻击者自己的机器，无目标可伤；非回环主机必须显式登记白名单。
+    // host 头可带端口（127.0.0.1:7300），经 URL 解析取裸主机名再比对。
+    let hostname = ''
+    try { hostname = new URL(`http://${host}`).hostname.toLowerCase() } catch { hostname = '' }
+    const loopback = hostname === 'localhost' || hostname === '::1' || hostname === '0.0.0.0' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+    if (!loopback && !trusted.has(hostname)) return undefined
     const proto = header('x-forwarded-proto') ?? 'http'
     return `${proto}://${host}${this.webBase()}`
   }
 
-  /** JWT 校验可接受的 issuer 集合：静态声明（env/环回）∪ 请求派生（同请求面自洽）。 */
+  /** JWT 校验可接受的 issuer 集合：OIDC_ISSUER 已设即仅固定值；未设时并入可信白名单派生值。 */
   private acceptedIssuers(origin?: { headers: import('node:http').IncomingHttpHeaders }): string[] {
     const staticIssuer = this.issuer()
-    const derived = origin !== undefined ? this.deriveIssuerFromRequest(origin) : undefined
+    const derived = this.deriveIssuerFromRequest(origin)
     return derived !== undefined && derived !== staticIssuer ? [staticIssuer, derived] : [staticIssuer]
   }
 
