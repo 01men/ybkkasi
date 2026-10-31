@@ -311,8 +311,8 @@ export class AgentRegistryService extends Service {
 
   /**
    * 上线门禁模式（AGENT_SSO_ENFORCE）：
-   *   '1'（默认）= 未纳管拒审——须有关联 OIDC 客户端，或登记 entryUrl 免登通道；
-   *   'oidc'    = 必须签发关联 OIDC 客户端（最严）；
+   *   '1'（默认）= 未纳管拒审——须有关联 OIDC 客户端、登记 entryUrl 免登通道，或声明 headless（纯后台，须已颁发机器凭证）；
+   *   'oidc'    = 必须签发关联 OIDC 客户端（最严，headless 声明不适用）；
    *   '0'       = 关闭门禁（仅建议开发环境）。
    */
   static ssoEnforceMode(): '1' | 'oidc' | '0' {
@@ -405,10 +405,17 @@ export class AgentRegistryService extends Service {
       throw new Error(t('上线门禁：Agent 上线前必须完成身份纳管——请在「Agent 本体 → 详情 → SSO 配置」签发 OIDC 客户端（当前 AGENT_SSO_ENFORCE=oidc）'))
     }
     const entryUrl = String(agent.attrs['entryUrl'] ?? '').trim()
-    if (!entryUrl) {
-      throw new Error(t('上线门禁：Agent 上线前必须完成身份纳管——签发 OIDC 客户端，或登记交互界面地址 entryUrl（免登通道）后重试'))
+    if (entryUrl) return undefined
+    // headless 第三纳管通道：Work Body 等纯后台执行体既无交互界面（no entryUrl 可登记）、
+    // 也无需浏览器回调（no OIDC 授权码流程）——显式声明后凭已颁发的机器身份凭证放行。
+    // 凭证即身份锚点：未颁发凭证的 headless 声明放行等于无主体上线，故一并拦截。
+    if (agent.attrs['headless'] === true) {
+      if (!this.machinePrincipal(agent.id)) {
+        throw new Error(t('上线门禁：headless（无交互界面）声明要求 Agent 已颁发机器身份凭证（当前未颁发）——请先颁发凭证再重试'))
+      }
+      return undefined
     }
-    return undefined
+    throw new Error(t('上线门禁：Agent 上线前必须完成身份纳管——签发 OIDC 客户端、登记交互界面地址 entryUrl（免登通道），或声明无交互界面（headless，纯后台执行）后重试'))
   }
 
   requestOnline(agentId: string, requester: { id: string; name: string }) {

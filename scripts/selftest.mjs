@@ -3866,6 +3866,34 @@ try {
   check('Agent 下线联动：关联 OIDC 客户端自动禁用（refresh 链一并吊销）',
     oidcOfflineOk.ok && oidcAfterOffline.data.status === 'offline' && oidcAfterOffline.data.sso?.status === 'disabled', JSON.stringify(oidcAfterOffline.data?.sso))
 
+  // —— headless 第三纳管通道（2026-10-31）：纯后台执行体（Work Body 等）无界面无回调 ——
+  section('Agent 身份纳管第三通道（headless 纯后台声明 → 门禁凭机器凭证放行）')
+  const hlAgentCreate = await api('POST', '/api/agents', { token: ops, body: { name: 'headless 自测机器人', attrs: { description: '纯后台执行体 headless 门禁自测', model: 'deepseek-chat', riskLevel: 'low', dataClass: 'internal' } } })
+  check('注册 headless 自测 Agent（无 entryUrl、无 SSO 客户端）', hlAgentCreate.ok && Boolean(hlAgentCreate.data.credential?.clientId), JSON.stringify(hlAgentCreate.error))
+  const hlAgentId = hlAgentCreate.data.agent.id
+  const hlGateNone = await api('POST', `/api/agents/${hlAgentId}/transition`, { token: ops, body: { action: 'online' } })
+  check('headless：三无（无客户端/entryUrl/声明）仍被拒并指路（新文案含 headless）',
+    !hlGateNone.ok && JSON.stringify(hlGateNone.error).includes('身份纳管') && JSON.stringify(hlGateNone.error).includes('headless'), JSON.stringify(hlGateNone.error))
+  const hlDeclare = await api('PATCH', `/api/agents/${hlAgentId}`, { token: ops, body: { attrs: { headless: true } } })
+  check('owner 声明 attrs.headless=true 200（boolean 校验通过）', hlDeclare.ok && hlDeclare.data.attrs?.headless === true, JSON.stringify(hlDeclare.error))
+  const hlGatePass = await api('POST', `/api/agents/${hlAgentId}/transition`, { token: ops, body: { action: 'online' } })
+  check('headless：声明后门禁放行（挂单成功，快照无 ssoClientId）', hlGatePass.ok && hlGatePass.data.approval?.id && !hlGatePass.data.approval?.payload?.ssoClientId, JSON.stringify(hlGatePass.error))
+  const hlBadType = await api('PATCH', `/api/agents/${hlAgentId}`, { token: ops, body: { attrs: { headless: 'yes' } } })
+  check('headless 属性类型护栏：字符串被拒（必须是布尔值）', !hlBadType.ok && JSON.stringify(hlBadType.error).includes('布尔'), JSON.stringify(hlBadType.error))
+  const hlRevokeMid = await api('PATCH', `/api/agents/${hlAgentId}`, { token: ops, body: { attrs: { headless: false } } })
+  check('审批挂单期间撤销 headless 声明 200（模拟门禁失效）', hlRevokeMid.ok)
+  const hlApproveFail = await api('POST', `/api/approvals/${hlGatePass.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '执行期复核应失败', confirmed: true } })
+  const hlAfterFail = await api('GET', `/api/agents/${hlAgentId}`, { token: admin })
+  check('headless：审批期间撤销声明 → 执行期复核失败留痕（身份纳管）',
+    hlApproveFail.ok && hlApproveFail.data.status === 'failed' && String(hlApproveFail.data.execution?.error ?? '').includes('身份纳管'), JSON.stringify(hlApproveFail.data))
+  check('headless：复核失败状态未上线', hlAfterFail.data.status !== 'online')
+  const hlRedeclare = await api('PATCH', `/api/agents/${hlAgentId}`, { token: ops, body: { attrs: { headless: true } } })
+  const hlGatePass2 = await api('POST', `/api/agents/${hlAgentId}/transition`, { token: ops, body: { action: 'online' } })
+  const hlApproveOk = await api('POST', `/api/approvals/${hlGatePass2.data.approval.id}/decide`, { token: approver, body: { decision: 'approve', opinion: '复核通过', confirmed: true } })
+  const hlAfterOnline = await api('GET', `/api/agents/${hlAgentId}`, { token: admin })
+  check('headless：重新声明后上线审批执行成功（状态 online）',
+    hlRedeclare.ok && hlApproveOk.ok && hlApproveOk.data.status === 'executed' && hlAfterOnline.data.status === 'online', JSON.stringify(hlApproveOk.data))
+
   // ================================================================ AI 应用 ↔ SSO 打通（MVP 闭环）
 
   // ================================================================ AI 应用 ↔ SSO 打通（MVP 闭环）

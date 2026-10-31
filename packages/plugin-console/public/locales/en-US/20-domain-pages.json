@@ -2091,5 +2091,22 @@
   "没有匹配的 AI 应用": "No matching AI apps",
   "换个分类或关键字试试": "Try another category or keyword",
   "全部分类": "All categories",
-  "搜索服务名称 / 描述": "Search service name / description"
+  "搜索服务名称 / 描述": "Search service name / description",
+  "门禁：OIDC 客户端 / entryUrl / headless 三选一": "Gate: OIDC client / entryUrl / headless — any one",
+  "：既无 SSO 客户端、也未登记 entryUrl 或声明 headless 时，上线审批将被拒绝。": ": go-live approval will be rejected when there is no SSO client, no registered entryUrl, and no headless declaration.",
+  "纯后台执行（headless 已声明，无交互界面）": "Pure background (headless declared, no UI)",
+  "负责人直接登记（https:// 或内网 http:// 地址；登记后即满足上线门禁的免登通道）": "Owner direct registration (https:// or intranet http://; once registered the passwordless gate channel is satisfied)",
+  "交互界面地址必须以 http:// 或 https:// 开头": "The UI entry URL must start with http:// or https://",
+  "交互界面地址已登记，免登通道已启用": "UI entry URL registered — passwordless channel enabled",
+  "无交互界面声明（headless · 纯后台）": "No-UI declaration (headless · pure background)",
+  "已声明": "Declared",
+  "未声明": "Not declared",
+  "适合没有任何面向用户的交互界面、仅凭机器身份被平台调度与调用的执行体（Work Body、定时任务型等）：声明后上线门禁凭已颁发的机器凭证放行，无需签发 OIDC 客户端，也无需登记 entryUrl。": "For executors with no user-facing UI that are scheduled and invoked purely by machine identity (Work Body, scheduled jobs, etc.): once declared, the go-live gate passes on the issued machine credential — no OIDC client or entryUrl needed.",
+  " 当前门禁为 AGENT_SSO_ENFORCE=oidc 严格模式：headless 声明不作为放行依据，仍须签发 OIDC 客户端。": " Current gate is AGENT_SSO_ENFORCE=oidc strict mode: headless declarations do not pass the gate — an OIDC client is still required.",
+  " 该 Agent 尚未颁发机器凭证：headless 声明放行前须先颁发凭证（无凭证放行等于无主体上线）。": " This Agent has no machine credential yet: issue the credential before a headless declaration can pass the gate (passing without a credential means going live with no principal).",
+  "声明无交互界面（headless）": "Declare no-UI (headless)",
+  "撤销 headless 声明": "Revoke headless declaration",
+  "声明即写入 Agent 属性 attrs.headless，全程审计；上线审批（L4）照常执行，审批期间撤销声明将被执行期复核拦截。": "The declaration is written to the Agent attribute attrs.headless and fully audited; the L4 go-live approval proceeds as usual, and revoking mid-approval is caught by the execution-time re-check.",
+  "已声明无交互界面（headless）：上线门禁凭机器凭证放行": "Declared no-UI (headless): the go-live gate passes on the machine credential",
+  "已撤销 headless 声明": "headless declaration revoked"
 }

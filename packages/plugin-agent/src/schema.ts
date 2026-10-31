@@ -29,6 +29,10 @@ export const AGENT_TYPE_SPEC: ResourceTypeSpec = {
       // 登记/编辑时校验存在性，上线门禁复核；控制台表单从目录动态取选项。目录中不存在的 slug 一律 400。
       { key: 'model', label: '底层模型', type: 'string', group: 'tech', required: true, placeholder: '模型目录中的 slug，如 deepseek-chat', hint: '取值 = 模型网关目录（GET /api/modelgw/models）已登记的 slug；未登记的模型在保存时被拒绝' },
       { key: 'entryUrl', label: '交互界面地址', type: 'url', group: 'tech', placeholder: 'https://…', hint: 'Agent 面向用户的真实交互入口；接入后由 Agent 凭自身凭证提报（接入义务），控制台据此提供直达入口' },
+      // headless 第三纳管通道（2026-10-31）：Work Body 等纯后台执行体没有任何交互界面，
+      // 既签发不了带回调的 OIDC 客户端、也没有 entryUrl 可登记——显式声明后上线门禁凭
+      // 已颁发的机器身份凭证放行（见 AgentRegistryService.assertOnlineGate；AGENT_SSO_ENFORCE=oidc 不放行）。
+      { key: 'headless', label: '无交互界面（纯后台）', type: 'boolean', group: 'tech', defaultValue: false, hint: '纯后台执行体声明（无任何面向用户的交互界面，如 Work Body / 定时任务型）：声明后上线门禁凭已颁发的机器身份凭证放行，免签发 OIDC 客户端与 entryUrl；AGENT_SSO_ENFORCE=oidc 严格模式不适用' },
       { key: 'skills', label: '关联 Skill', type: 'tags', group: 'tech', defaultValue: [], hint: '从市场安装后自动回填' },
       { key: 'mcpPermGroupIds', label: 'MCP 权限组', type: 'tags', group: 'tech', defaultValue: [], hint: '授予该 Agent 的工具访问范围' },
       { key: 'riskLevel', label: '风险等级', type: 'enum', group: 'governance', required: true, options: [

@@ -222,7 +222,9 @@ async function openAgentDetail(id, ctx) {
           <div class="desc-item"><span class="k">底层模型</span><span class="v">${esc(agent.attrs['model'] ?? '—')}</span></div>
           <div class="desc-item"><span class="k">交互界面</span><span class="v">${agent.attrs['entryUrl']
             ? `<button class="btn btn-default btn-sm" id="ag-open-entry">${icon('external', 13)}带平台身份打开</button>`
-            : '<span class="text-4">未提报（接入后由 Agent 凭自身凭证 PATCH attrs.entryUrl）</span>'}</span></div>
+            : agent.attrs['headless'] === true
+              ? '<span class="text-4">纯后台执行（headless 已声明，无交互界面）</span>'
+              : '<span class="text-4">未提报（接入后由 Agent 凭自身凭证 PATCH attrs.entryUrl）</span>'}</span></div>
           <div class="desc-item"><span class="k">机器凭证</span><span class="v">${agent.credential ? `<span class="badge badge-ok no-dot">已颁发</span> <span class="mono fs-12">${esc(agent.credential.clientId)}</span>` : '<span class="text-4">未颁发</span>'}</span></div>
           <div class="desc-item"><span class="k">创建时间</span><span class="v">${timeAgo(agent.createdAt)}</span></div>
           <div class="desc-item"><span class="k">最近活跃</span><span class="v">${agent.metrics.lastActiveAt ? timeAgo(agent.metrics.lastActiveAt) : '—'}</span></div>
@@ -598,6 +600,9 @@ async function openAgentCreate(schema, ctx) {
       }
       return field(f.label, inputField(name, { placeholder: f.placeholder || '模型目录中的 slug，如 deepseek-chat' }), { required: f.required, hint: f.hint })
     }
+    if (f.type === 'boolean') {
+      return field(f.label, `<label class="flex" style="gap:8px;font-size:13px;cursor:pointer;padding-top:6px"><input type="checkbox" name="${name}" ${f.defaultValue === true ? 'checked' : ''} style="accent-color:var(--brand-500)"><span>${esc(f.placeholder || rqI18n.t('是'))}</span></label>`, { required: f.required, hint: f.hint, full: false })
+    }
     if (f.type === 'enum') {
       return field(f.label, selectField(name, (f.options ?? []).map((o) => ({ value: o.value, label: o.hint ? `${o.label}（${o.hint}）` : o.label })), { value: String(f.defaultValue ?? '') }), { required: f.required, hint: f.hint, full: false })
     }
@@ -740,18 +745,52 @@ function renderMcpCapabilityTab(holder, agent) {
   })()
 }
 
-/** Agent「SSO 配置」tab：OIDC 客户端管理（owner 自助）+ entry-ticket 平台直达互补。
- *  门禁语义（AGENT_SSO_ENFORCE）：'1'=未纳管拒审（OIDC 客户端或 entryUrl 二选一）；'oidc'=必须签发；'0'=关闭。 */
+/** SSO tab 公共交互接线：entryUrl 负责人侧登记（owner 免控制台直填）与 headless 声明/撤销。
+ *  两分支（未签发 / 已签发客户端）共用——entryCard 两处都渲染，headlessCard 仅未签发分支渲染。 */
+function wireAgentEntryAndHeadless(holder, agent, refresh) {
+  const openBtn = holder.querySelector('#ag-sso-open')
+  if (openBtn) openBtn.onclick = () => void openAgentEntry(agent)
+  const entrySave = holder.querySelector('#ag-entry-save')
+  if (entrySave) entrySave.onclick = async () => {
+    const value = holder.querySelector('#ag-entry-input').value.trim()
+    if (!/^https?:\/\//.test(value)) { toast(rqI18n.t('交互界面地址必须以 http:// 或 https:// 开头'), 'error'); return }
+    try {
+      await api.patch(`/api/agents/${agent.id}`, { attrs: { entryUrl: value } })
+      toast(rqI18n.t('交互界面地址已登记，免登通道已启用'))
+      refresh()
+    } catch (error) { toast(error.message, 'error') }
+  }
+  const declare = holder.querySelector('#ag-headless-declare')
+  if (declare) declare.onclick = async () => {
+    try {
+      await api.patch(`/api/agents/${agent.id}`, { attrs: { headless: true } })
+      toast(rqI18n.t('已声明无交互界面（headless）：上线门禁凭机器凭证放行'))
+      refresh()
+    } catch (error) { toast(error.message, 'error') }
+  }
+  const revoke = holder.querySelector('#ag-headless-revoke')
+  if (revoke) revoke.onclick = async () => {
+    try {
+      await api.patch(`/api/agents/${agent.id}`, { attrs: { headless: false } })
+      toast(rqI18n.t('已撤销 headless 声明'))
+      refresh()
+    } catch (error) { toast(error.message, 'error') }
+  }
+}
+
+/** Agent「SSO 配置」tab：OIDC 客户端管理（owner 自助）+ entry-ticket 平台直达 + headless 纯后台声明互补。
+ *  门禁语义（AGENT_SSO_ENFORCE）：'1'=未纳管拒审（OIDC 客户端 / entryUrl / headless 三选一）；'oidc'=必须签发；'0'=关闭。 */
 function renderAgentSsoTab(holder, agent, ctx, refresh) {
   const sso = agent.sso
   const mode = agent.ssoEnforceMode ?? '1'
   const modeBadge = mode === 'oidc'
     ? '<span class="badge badge-warn no-dot">门禁：必须签发 OIDC 客户端</span>'
     : mode === '1'
-      ? '<span class="badge badge-muted no-dot">门禁：OIDC 客户端或 entryUrl 免登二选一</span>'
+      ? '<span class="badge badge-muted no-dot">门禁：OIDC 客户端 / entryUrl / headless 三选一</span>'
       : ''
   const enforced = mode !== '0'
   const entryUrl = agent.attrs['entryUrl']
+  const canWrite = session.can('agent.write')
   const entryCard = `
     <div class="card card-pad mt-14">
       <div class="flex-between mb-8">
@@ -769,7 +808,33 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
           <button class="btn btn-primary" id="ag-sso-open">${icon('external', 14)}带平台身份打开交互界面</button>
         </div>
         <div class="form-hint mt-8">交互界面接入（前端三步）：① 控制台「带平台身份打开」→ 一次性票据以 <code class="mono">#entry_ticket=&lt;ticket&gt;</code> 片段跳转；② 界面读 URL fragment 调兑换端点；③ 响应返回平台身份 identity（sub / org / roles / tenant）。票据重放被拒、过期即焚、兑换实时校验账号状态（agent.entry.ticket.* 全程审计）。</div>`
+        : canWrite ? `
+        <div class="form-item">
+          <label class="form-label">负责人直接登记（https:// 或内网 http:// 地址；登记后即满足上线门禁的免登通道）</label>
+          <div class="flex" style="gap:8px">
+            <input class="input" id="ag-entry-input" style="flex:1" placeholder="https://app.example.com/chat 或 http://192.168.0.7:3080/">
+            <button class="btn btn-primary" id="ag-entry-save">${icon('check', 14)}登记</button>
+          </div>
+          <div class="form-hint mt-8">也可由 Agent 凭自身凭证提报：PATCH /api/agents/:id {"attrs":{"entryUrl":"https://…"}}。登记后控制台即可带平台身份直达。</div>
+        </div>`
         : `<div class="form-hint">由 Agent 凭自身凭证提报：PATCH /api/agents/:id {"attrs":{"entryUrl":"https://…"}}。登记后控制台即可带平台身份直达。</div>`}
+    </div>`
+  const headless = agent.attrs['headless'] === true
+  const headlessCard = `
+    <div class="card card-pad mt-14">
+      <div class="flex-between mb-8">
+        <div class="card-title">${icon('bot', 14)} 无交互界面声明（headless · 纯后台）</div>
+        ${headless ? '<span class="badge badge-ok no-dot">已声明</span>' : '<span class="badge badge-muted no-dot">未声明</span>'}
+      </div>
+      <div class="fs-13 text-2 mb-8" style="line-height:1.8">适合没有任何面向用户的交互界面、仅凭机器身份被平台调度与调用的执行体（Work Body、定时任务型等）：声明后上线门禁凭已颁发的机器凭证放行，无需签发 OIDC 客户端，也无需登记 entryUrl。</div>
+      ${mode === 'oidc' ? `<div class="muted-box mb-8" style="font-size:12.5px">${icon('info', 14)} 当前门禁为 AGENT_SSO_ENFORCE=oidc 严格模式：headless 声明不作为放行依据，仍须签发 OIDC 客户端。</div>` : ''}
+      ${!headless && !agent.credential ? `<div class="muted-box mb-8" style="font-size:12.5px;border-color:var(--warn-border);background:var(--warn-bg)">${icon('alert', 14)} 该 Agent 尚未颁发机器凭证：headless 声明放行前须先颁发凭证（无凭证放行等于无主体上线）。</div>` : ''}
+      <div class="flex" style="gap:8px">
+        ${headless
+          ? `<button class="btn btn-default" id="ag-headless-revoke">${icon('x', 14)}撤销 headless 声明</button>`
+          : `<button class="btn btn-default" id="ag-headless-declare">${icon('check', 14)}声明无交互界面（headless）</button>`}
+      </div>
+      <div class="form-hint mt-8">声明即写入 Agent 属性 attrs.headless，全程审计；上线审批（L4）照常执行，审批期间撤销声明将被执行期复核拦截。</div>
     </div>`
   if (!sso) {
     holder.innerHTML = `
@@ -779,21 +844,21 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
           ${modeBadge}
         </div>
         <div class="fs-13 text-2 mb-8" style="line-height:1.9">
-          签发 OIDC 客户端后，Agent 交互界面即可按标准协议接入平台统一账号与权限：
-          <div class="muted-box mt-8" style="font-size:12.5px">
-            ① 授权码模式跳转 <code class="mono">/oauth/authorize</code>（强制 PKCE S256）<br>
-            ② <code class="mono">code</code> 换 <code class="mono">id_token / access_token</code>（Basic 或 Post 认证）<br>
-            ③ <code class="mono">access_token</code> 调 <code class="mono">/oauth/userinfo</code> 取用户身份（sub / org / roles / tenant）
+          身份纳管三选一（满足任一即可通过上线门禁；按 Agent 形态选择）：
+          <div class="muted-box mt-8" style="font-size:12.5px;line-height:2">
+            ① <b>登记交互界面地址 entryUrl</b>（免登通道，零改造）：有 Web 界面即可，免回调免协议改造——见下方「平台授权直达」卡；<br>
+            ② <b>签发 OIDC 客户端</b>（标准协议）：交互界面按授权码模式接入平台统一账号与权限（/oauth/authorize 强制 PKCE S256 → code 换 id_token/access_token → userinfo 取身份）——需提供回调地址；<br>
+            ③ <b>声明无交互界面 headless</b>（纯后台）：Work Body 等无任何界面的执行体，凭已颁发机器凭证放行——见下方声明卡。
           </div>
         </div>
-        ${enforced ? `<div class="muted-box mb-14" style="display:flex;gap:8px;border-color:var(--warn-border);background:var(--warn-bg)">${icon('alert', 15)}<span><b>${esc(rqI18n.t('Agent 上线门禁'))}</b>${mode === 'oidc' ? esc(rqI18n.t('：未完成 SSO 签发前，上线审批将被拒绝。')) : esc(rqI18n.t('：既无 SSO 客户端也未登记 entryUrl 时，上线审批将被拒绝。'))}</span></div>` : ''}
+        ${enforced ? `<div class="muted-box mb-14" style="display:flex;gap:8px;border-color:var(--warn-border);background:var(--warn-bg)">${icon('alert', 15)}<span><b>${esc(rqI18n.t('Agent 上线门禁'))}</b>${mode === 'oidc' ? esc(rqI18n.t('：未完成 SSO 签发前，上线审批将被拒绝。')) : esc(rqI18n.t('：既无 SSO 客户端、也未登记 entryUrl 或声明 headless 时，上线审批将被拒绝。'))}</span></div>` : ''}
         <button class="btn btn-primary" id="ag-sso-issue">${icon('key', 14)}签发 SSO 客户端</button>
         <div class="form-hint mt-8">本机联调免控制台：回调地址为环回（127.0.0.1 / localhost / 0.0.0.0）时，Agent 机器凭证可直接 <code class="mono">POST /api/agents/${esc(agent.id)}/sso-client</code> 自助签发（改回调 PATCH 同路径）。</div>
       </div>
-      ${entryCard}`
+      ${entryCard}
+      ${headlessCard}`
     holder.querySelector('#ag-sso-issue').onclick = () => openAgentIssueSsoModal(agent, refresh)
-    const openBtn = holder.querySelector('#ag-sso-open')
-    if (openBtn) openBtn.onclick = () => void openAgentEntry(agent)
+    wireAgentEntryAndHeadless(holder, agent, refresh)
     return
   }
   const active = sso.status === 'active'
@@ -848,8 +913,7 @@ function renderAgentSsoTab(holder, agent, ctx, refresh) {
     ${entryCard}`
   holder.querySelector('#ag-sso-copy-id').onclick = () => void copyText(sso.clientId)
   holder.querySelector('#ag-sso-copy-discovery').onclick = () => void copyText(`${sso.discovery.issuer}/.well-known/openid-configuration`)
-  const openBtn = holder.querySelector('#ag-sso-open')
-  if (openBtn) openBtn.onclick = () => void openAgentEntry(agent)
+  wireAgentEntryAndHeadless(holder, agent, refresh)
   holder.querySelector('#ag-sso-save').onclick = async () => {
     const redirectUris = holder.querySelector('#ag-sso-redirects').value.split('\n').map((x) => x.trim()).filter(Boolean)
     const postLogoutUris = holder.querySelector('#ag-sso-postlogouts').value.split('\n').map((x) => x.trim()).filter(Boolean)

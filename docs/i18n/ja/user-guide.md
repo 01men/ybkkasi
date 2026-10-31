@@ -274,7 +274,7 @@ YuanBingKe（ybkk-AIOS）は、DeepSeek Harness（dsh）の「すべてはプラ
   （中文原典 `docs/internal/a0-a3-autonomy-ladder-review.md`、2026-09-12 レビュー結論）。
 - **A2A 指名呼び出し**：`POST /api/agents/:idOrSlug/a2a/invoke`（権限点 `agent.a2a.invoke`）。
   v1 の範囲は単方向の指名呼び出し＋レベル透出です（ネゴシエーションプロトコルは升版時に別途検討）。
-- Agent の公開ゲート：`AGENT_SSO_ENFORCE`（既定有効）により、オンライン申請前に OIDC クライアント発行
+- Agent の公開ゲート：`AGENT_SSO_ENFORCE`（既定有効）により、オンライン申請前に OIDC クライアント発行、`entryUrl` 登録、または `headless` 宣言（UI なし・バックグラウンド実行、発行済みマシンクレデンシャルで通過）のいずれかが必要
   または `entryUrl` 属性登録のいずれかが必要です（既にオンラインの Agent は強制切断されません）。
 
 ### 6.2 AI アプリケーション本体
