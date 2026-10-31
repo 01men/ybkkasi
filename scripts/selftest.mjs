@@ -8799,6 +8799,20 @@ try {
       ]).size
       check(`加载屏 REST 路由数 ${bootRoutes} = 去重路由数 ${uniqueRoutes}（路由数防漂移）`,
         bootRoutes === uniqueRoutes, `加载屏=${bootRoutes} 实际=${uniqueRoutes}`)
+      // bootTools 自本节建立起就被解析却从未断言——工具数因此从 86 漂到 96 无人发现。
+      // 与 /api/platform/info 的 tools 数组长度绑定；落地页指标卡同口径。
+      const toolsInfo = await api('GET', '/api/platform/info', { token: admin })
+      const realTools = Array.isArray(toolsInfo.data?.tools) ? toolsInfo.data.tools.length : -1
+      check(`加载屏 MCP 工具数 ${bootTools} = 后端 tools 数组长度 ${realTools}（工具数防漂移）`,
+        bootTools === realTools, `加载屏=${bootTools} 后端=${realTools}`)
+      // 落地页（/launch）对外承诺的四个数字同样绑定后端，避免「同一站点三个不同工具数」复发。
+      const launchHtml = readFileSync(join(process.cwd(), 'packages/plugin-console/public/launch/index.html'), 'utf8')
+      const launchTools = launchHtml.match(/<b>(\d+)<\/b><span>MCP tools<\/span>/)
+      const launchRoutes = launchHtml.match(/<b>(\d+)<\/b><span>REST routes<\/span>/)
+      check(`落地页 MCP 工具数 ${launchTools?.[1] ?? '缺失'} = 后端 ${realTools}（落地页工具数防漂移）`,
+        Number(launchTools?.[1]) === realTools, `落地页=${launchTools?.[1]} 后端=${realTools}`)
+      check(`落地页 REST 路由数 ${launchRoutes?.[1] ?? '缺失'} = 去重路由数 ${uniqueRoutes}（落地页路由数防漂移）`,
+        Number(launchRoutes?.[1]) === uniqueRoutes, `落地页=${launchRoutes?.[1]} 实际=${uniqueRoutes}`)
       // 插件清单真实化（Q-18）：/api/platform/info 的插件数取实际装配树，不再写死 18
       const info = await api('GET', '/api/platform/info', { token: admin })
       const assembled = info.data?.pluginCount ?? -1
