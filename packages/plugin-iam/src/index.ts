@@ -316,6 +316,9 @@ export const PermissionCatalog: Array<{ point: string; label: string; group: str
   { point: 'app.read', label: '查看 AI 应用', group: 'AI 应用' },
   { point: 'app.write', label: '管理 AI 应用', group: 'AI 应用' },
   { point: 'app.offline', label: '下线 AI 应用', group: 'AI 应用' },
+  // 应用外部凭证取值（issue #19，2026-10-31）：独立权限点——登记/轮换沿用 app.write，
+  // 取值（拿到明文）单独授权 + 逐次审计；缺省无内置角色持有（按需显式授权，最小披露面）
+  { point: 'app.credential.fetch', label: '取用应用外部凭证（每次取用落审计）', group: 'AI 应用' },
   // 数据要素域（IAW 交接 2-1..2-4）：数据集登记/质量分/血缘/指标字典
   { point: 'resource.dataset.write', label: '管理数据要素（数据集/质量分/血缘/指标字典）', group: '数据要素' },
   { point: 'audit.read', label: '查看审计日志', group: '审计' },

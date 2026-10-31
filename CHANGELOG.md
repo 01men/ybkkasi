@@ -3,6 +3,32 @@
 本文件记录对外可感知的版本节点。过程性批次明细（QA 报告、交接单、批次计划）见
 `docs/internal/`（不构成对外契约）；早期完整发布说明见 `docs/internal/release-notes-*.md`。
 
+## [Unreleased] · 应用外部凭证托管：数字员工可存取的长期第三方凭据平台落点（2026-10-31，#19）
+
+GitHub issue #19（enhancement）实测反馈：数字员工/接入应用要调用「用长期固定凭据鉴权的外部
+自研服务」时，平台没有任何可存取落点（`/api/secrets`、`/api/vault` 404；app attrs 白名单无
+secret 字段；connector 凭证保险库 write-only 且平台无回读），明文只能落各机器本地 0600 文件
+——无归属、轮换逐台改、审计断链。按 issue 方向 A 落地最小闭环：
+
+- **加密存取**：新增 `appCredentials` 服务（`packages/plugin-app/src/credentials.ts`）——
+  值 AES-256-GCM 静态加密（每条目独立 IV + auth tag），主密钥独立文件（0600）首用生成；
+  密钥文件 0600 / 目录 0700，与 SecretBroker 同纪律且叠加静态加密（平台全仓首个加密存储位）。
+- **授权模型**：登记/轮换/删除沿用 `app.write` + owner 校验（与能力绑定同口径）；**取值
+  （拿到明文）走独立权限点 `app.credential.fetch`**（新权限点，目录收录、缺省无内置角色持有）+
+  对象级校验（机器凭证须绑定本应用，human 须 owner 或管理员）——绑定而不授权同样 403。
+- **逐次审计**：每次取值 emit `app.secret.access` 事件（payload 仅元数据零值），plugin-audit
+  订阅落 `app.credential.access`；轮换同键覆盖（旧值立即失效）；应用删除联动清库（删除即销毁）。
+- **REST 面（+5 路由，493）**：`GET/PUT/DELETE /api/apps/:id/credentials(/:key)`、
+  `GET .../:key/value`（404 CREDENTIAL_NOT_FOUND）、`GET .../self-check`（接入方自检：
+  托管在哪 / 谁能读 / 最近谁读过，一条命令）。响应零明文（只回 `masked` + `rotatedAt`）。
+- **控制台**：应用详情新增「外部凭证」tab（登记/轮换/删除/取值弹窗/自检卡片）；errors.js
+  补 `CREDENTIAL_NOT_FOUND` 文案；en/ja 词典补齐 34 条新文案。
+- **文档**：新增 `docs/app-credentials.md`（安全模型/端点契约/授权流程/边界对照）；
+  app-onboarding.md 指引接入方凭据落平台托管而非本地文件。
+- **自测**：新增 18 条断言（加密落盘核验/双闸门 403/404 语义/轮换失效/审计零泄漏/自检/
+  删除联动清库），落地页断言数 1749 → 1767；随包单测 `credentials.test.mjs` 6 条（含
+  篡改检测 fail-closed 与重启解密往返）。
+
 ## [Unreleased] · Agent 身份纳管第三通道 headless + SSO 页负责人侧 entryUrl 登记（2026-10-31）
 
 用户实测反馈：Work Body 等纯后台 Agent 接入后点「上线」被门禁拦住，而签发 SSO 客户端强制

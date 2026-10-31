@@ -186,6 +186,7 @@ async function openAppDetail(id, ctx) {
         <div class="tab" data-tab="metrics">应用指标</div>
         <div class="tab" data-tab="cost">成本穿透</div>
         <div class="tab" data-tab="caps">${icon('puzzle', 13)} MCP 能力</div>
+        <div class="tab" data-tab="creds">${icon('lock', 13)} 外部凭证</div>
         <div class="tab" data-tab="lifecycle">生命周期</div>
         <div class="tab" data-tab="sso">${icon('key', 13)} SSO 配置${app.sso ? (app.sso.status === 'active' ? '' : ' ⚠') : ''}</div>
       </div>
@@ -251,6 +252,7 @@ async function openAppDetail(id, ctx) {
           </div>`).join('') || '<span class="text-4 fs-12">暂无成本数据</span>'}`
     }
     if (tab === 'caps') renderCapsTab(tabBody, app, ctx)
+    if (tab === 'creds') renderCredsTab(tabBody, app, ctx)
     if (tab === 'lifecycle') {
       tabBody.innerHTML = `
         <div class="timeline">
@@ -846,4 +848,123 @@ function openAppCreate(schema, ctx) {
       } catch (error) { toast(error.message, 'error') }
     }
   })
+}
+
+/** 外部凭证 tab（issue #19 方向 A 最小闭环）：数字员工调用外部自研服务的长期凭据平台落点。
+ *  登记即 AES-256-GCM 加密落密钥文件；值任何响应绝不回显（只回掩码 + 轮换时间）；
+ *  取值须独立权限点 app.credential.fetch（对象级校验 + 逐次审计）；附接入方自检卡。 */
+function renderCredsTab(holder, app, ctx) {
+  if (!session.can('app.write')) {
+    holder.innerHTML = `<div class="muted-box">${esc(rqI18n.t('外部凭证属应用管理操作（app.write），当前账号无权限查看。'))}</div>`
+    return
+  }
+  holder.innerHTML = '<div class="text-4 fs-12">加载中…</div>'
+  void (async () => {
+    const [credData, checkData] = await Promise.all([
+      api.get(`/api/apps/${app.id}/credentials`).catch(() => null),
+      api.get(`/api/apps/${app.id}/credentials/self-check`).catch(() => null),
+    ])
+    const credentials = credData?.credentials ?? []
+    const canFetch = session.can('app.credential.fetch')
+    holder.innerHTML = `
+      <div class="card card-pad mb-14">
+        <div class="card-title mb-8">${icon('lock', 14)} ${esc(rqI18n.t('已登记外部凭证（{n}）', { n: credentials.length }))}</div>
+        <div class="fs-12 text-3 mb-8">${esc(rqI18n.t('数字员工调用外部自研服务的长期凭据落点：登记即 AES-256-GCM 加密（值任何响应不回显，只回掩码）；取值须 app.credential.fetch 且每次落审计。'))}</div>
+        ${credentials.length ? credentials.map((cred) => `
+          <div class="flex" style="padding:8px 0;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap;align-items:center">
+            <span class="fs-13 mono" style="font-weight:500;min-width:160px">${esc(cred.key)}</span>
+            <span class="fs-12 mono text-3">${esc(cred.masked)}</span>
+            ${cred.description ? `<span class="fs-12 text-3">${esc(cred.description)}</span>` : ''}
+            <span class="fs-12 text-4">${esc(rqI18n.t('轮换 {time} · {by}', { time: timeAgo(cred.rotatedAt), by: cred.rotatedBy }))}</span>
+            <span class="flex" style="gap:6px;margin-left:auto">
+              ${canFetch ? `<button class="btn btn-ghost btn-sm" data-fetch="${esc(cred.key)}">${icon('eye', 12)}${esc(rqI18n.t('取值'))}</button>` : ''}
+              <button class="btn btn-ghost btn-sm" data-rotate="${esc(cred.key)}">${icon('refresh', 12)}${esc(rqI18n.t('轮换'))}</button>
+              <button class="btn btn-ghost btn-sm" data-remove="${esc(cred.key)}" style="color:var(--danger)">${icon('trash', 12)}${esc(rqI18n.t('删除'))}</button>
+            </span>
+          </div>`).join('') : `<div class="text-4 fs-12">${esc(rqI18n.t('尚未登记外部凭证（第三方 API key / 内部服务 token 等长期凭据在此登记后，数字员工凭机器身份 + app.credential.fetch 取用）。'))}</div>`}
+        <div class="form-grid mt-14">
+          ${field(rqI18n.t('凭证键名'), inputField('cred-key', { placeholder: 'kizuna-admin-token' }), { required: true })}
+          ${field(rqI18n.t('凭证值'), `<input class="input" name="cred-value" type="password" autocomplete="off" placeholder="${esc(rqI18n.t('长期凭据明文（仅登记时提交，落库即加密）'))}">`, { required: true })}
+          ${field(rqI18n.t('描述（可选）'), inputField('cred-desc', { placeholder: rqI18n.t('如：Kizuna 产品服务管理令牌') }))}
+        </div>
+        <div id="cred-error"></div>
+        <button class="btn btn-primary btn-sm mt-8" id="cred-put">${icon('plus', 13)}${esc(rqI18n.t('登记 / 轮换（同键覆盖）'))}</button>
+      </div>
+      <div class="card card-pad">
+        <div class="card-title mb-8">${icon('shield', 14)} ${esc(rqI18n.t('接入方自检（托管在哪 / 谁能读 / 最近谁读过）'))}</div>
+        ${checkData ? `
+          <div class="desc-grid mb-14">
+            <div class="desc-item"><span class="k">存储</span><span class="v">${esc(rqI18n.t('{algo} 静态加密 · 密钥文件 0600 / 目录 0700 · 主密钥独立', { algo: checkData.storage?.algorithm ?? 'AES-256-GCM' }))}</span></div>
+            <div class="desc-item"><span class="k">${esc(rqI18n.t('可读权限点'))}</span><span class="v mono">${esc(checkData.whoCanRead?.permissionPoint ?? 'app.credential.fetch')}</span></div>
+            <div class="desc-item"><span class="k">${esc(rqI18n.t('可读机器凭证'))}</span><span class="v">${(checkData.whoCanRead?.machinePrincipals ?? []).length ? esc(checkData.whoCanRead.machinePrincipals.map((p) => p.name).join('、')) : esc(rqI18n.t('无（机器凭证须绑定本应用并授予该权限点）'))}</span></div>
+            <div class="desc-item"><span class="k">${esc(rqI18n.t('可读人工规则'))}</span><span class="v">${esc(checkData.whoCanRead?.humanRule ?? '')}</span></div>
+          </div>
+          ${(checkData.recentAccess ?? []).length ? `
+            <div class="fs-12 text-3 mb-8">${esc(rqI18n.t('最近取用（逐次落审计）：'))}</div>
+            ${checkData.recentAccess.map((item) => `
+              <div class="flex fs-12" style="padding:4px 0;border-bottom:1px dashed var(--border);gap:10px">
+                <span class="text-4">${esc(fmtTime(item.at))}</span>
+                <span style="min-width:110px">${esc(item.actorName)}</span>
+                <span class="text-3" style="flex:1">${esc(item.detail)}</span>
+              </div>`).join('')}` : `<div class="text-4 fs-12">${esc(rqI18n.t('暂无取用记录（每次取值自动落审计）。'))}</div>`}`
+        : `<div class="text-4 fs-12">${esc(rqI18n.t('自检数据不可用（无 app.read 权限）。'))}</div>`}
+      </div>`
+    holder.querySelectorAll('[data-fetch]').forEach((btn) => {
+      btn.onclick = async () => {
+        try {
+          const res = await api.get(`/api/apps/${app.id}/credentials/${btn.dataset.fetch}/value`)
+          const ack = await confirmDialog({
+            title: rqI18n.t('凭证取值：{key}', { key: btn.dataset.fetch }),
+            message: `<div class="fs-13">${esc(rqI18n.t('明文仅本次弹窗展示（请勿粘贴到聊天/工单）；本次取用已落审计。'))}</div><div class="mono fs-13 mt-8" style="user-select:all;word-break:break-all">${esc(res.value)}</div>`,
+            confirmText: rqI18n.t('复制'),
+          })
+          if (ack?.ok) { await copyText(res.value); toast(rqI18n.t('已复制')) }
+        } catch (error) { toast(error.message, 'error') }
+      }
+    })
+    holder.querySelectorAll('[data-rotate]').forEach((btn) => {
+      btn.onclick = () => {
+        // 轮换复用登记表单（同键覆盖即轮换）：键名预填 + 值聚焦，不引入第二处明文输入面
+        const keyInput = holder.querySelector('[name="cred-key"]')
+        const valueInput = holder.querySelector('[name="cred-value"]')
+        if (keyInput && valueInput) {
+          keyInput.value = btn.dataset.rotate
+          valueInput.value = ''
+          valueInput.focus()
+          keyInput.closest('.card')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          toast(rqI18n.t('轮换 {key}：请在下方输入新值后点「登记 / 轮换」', { key: btn.dataset.rotate }))
+        }
+      }
+    })
+    holder.querySelectorAll('[data-remove]').forEach((btn) => {
+      btn.onclick = async () => {
+        const ack = await confirmDialog({
+          title: rqI18n.t('删除凭证：{key}', { key: btn.dataset.remove }),
+          message: rqI18n.t('删除后数字员工将无法再取用该凭据（依赖它的调用会失败）。'),
+          confirmText: rqI18n.t('确认删除'),
+        })
+        if (!ack) return
+        try {
+          await api.delete(`/api/apps/${app.id}/credentials/${btn.dataset.remove}`)
+          toast(rqI18n.t('已删除'))
+          renderCredsTab(holder, app, ctx)
+        } catch (error) { toast(error.message, 'error') }
+      }
+    })
+    const putBtn = holder.querySelector('#cred-put')
+    if (putBtn) {
+      putBtn.onclick = async () => {
+        const form = collectForm(holder)
+        if (!form['cred-key']?.trim()) return toast(rqI18n.t('请填写凭证键名'), 'error')
+        if (!form['cred-value']) return toast(rqI18n.t('请填写凭证值'), 'error')
+        try {
+          const res = await api.put(`/api/apps/${app.id}/credentials/${form['cred-key'].trim()}`, { value: form['cred-value'], description: form['cred-desc'] || undefined })
+          toast(res.rotated ? rqI18n.t('已轮换（旧值立即失效）') : rqI18n.t('已登记（AES-256-GCM 加密落库）'))
+          renderCredsTab(holder, app, ctx)
+        } catch (error) {
+          holder.querySelector('#cred-error').innerHTML = errorBarHtml(error.code ?? 'BAD_REQUEST') + `<div class="fs-12 text-3" style="margin:-8px 0 12px">${esc(error.message)}</div>`
+        }
+      }
+    }
+  })()
 }

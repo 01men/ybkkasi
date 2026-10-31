@@ -46,7 +46,7 @@ export const name = 'console'
 export const inject = [
   'httpServer', 'opsStorage', 'platformBus', 'tools',
   'iam', 'authn', 'oidc', 'entryTickets', 'audit', 'usage', 'market', 'modelGateway',
-  'mcpRegistry', 'nasRegistry', 'nasAuthz', 'nasShareLinks', 'skillHub', 'resourceCore', 'agentRegistry', 'appRegistry', 'update',
+  'mcpRegistry', 'nasRegistry', 'nasAuthz', 'nasShareLinks', 'skillHub', 'resourceCore', 'agentRegistry', 'appRegistry', 'appCredentials', 'update',
   'connectorHub',
   // 数字员工窄端口登记器（platform-core 首位装配即提供；实现由 plugin-workforce 后补登记，port() 缺席=legacy）
   'workforcePolicy',

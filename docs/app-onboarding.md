@@ -20,6 +20,9 @@
    developerName/developerId/agentIds，没有 tags 字段）：白名单外字段（含 version）静默丢弃——返回 200
    但不落库；版本号用 publishVersion；icon 填 emoji 或图片 http(s) 地址（展示为应用头像）；
    开发者用 developerId（平台用户 ID，校验存在并自动回填 developerName）或直接给 developerName。
+   调用外部自研服务要用长期凭据（API key / 内部服务 token）时，落平台「外部凭证」托管
+   （登记即 AES-256-GCM 加密；数字员工凭机器身份 + app.credential.fetch 取用，逐次审计；
+   不要把明文写进 attrs、代码或本地文件），端点契约与授权流程见 docs/app-credentials.md。
 
 2. 登录打通：按 http://192.168.0.7:7300/docs/app-sso-integration.md 接入 OIDC
    （授权码 + 强制 PKCE S256，redirect_uri 必须与控制台登记值完全一致），身份以宿主账号体系（sub）为准。

@@ -27,6 +27,7 @@ import { ResourceCoreService } from '../../plugin-resource-core/src/index.ts'
 import { McpService } from '../../plugin-mcp/src/index.ts'
 import { McpToolRiskRegistry } from '../../plugin-mcp/src/risk-registry.ts'
 import { AppRegistryService, CapabilityOwnerConflictError } from './index.ts'
+import { AppCredentialService } from './credentials.ts'
 
 // -- 进程内构造宿主（桩总线 + 真实 StorageService/resource-core/mcpRegistry + 临时数据目录） --
 
@@ -72,6 +73,8 @@ function makeHarness() {
     orgs: () => ({ all: () => [], get: () => undefined }),
   }
   const registry = new AppRegistryService(ctx)
+  // 外部凭证托管（issue #19）：purge 联动清库经 ctx.appCredentials——同款真实装配（临时数据目录在位）
+  const credentials = new AppCredentialService(ctx)
   const mkApp = (name, slug) => registry.register({
     name, slug, ownerId: 'u1', ownerName: '测试员', orgId: 'org-1', withCredential: false,
     attrs: { description: '测试应用', appType: 'api', riskLevel: 'low', dataClass: 'internal', url: 'https://app.example.com' },
@@ -86,7 +89,7 @@ function makeHarness() {
     await mcpRegistry.verifyService(id)
     return mcpRegistry.deployService(id, { grayPercent: 100, actor: 'tester', ...options })
   }
-  return { ctx, registry, mcpRegistry, resourceCore, riskRegistry, events, auditRecords, executors, mkApp, mkService, setService, deploy }
+  return { ctx, registry, mcpRegistry, resourceCore, riskRegistry, credentials, events, auditRecords, executors, mkApp, mkService, setService, deploy }
 }
 
 const TOOL = { name: 't1', description: '演示工具', inputSchema: { type: 'object' }, riskLevel: 'read' }
@@ -295,7 +298,7 @@ test('重上线恢复：restoreCapabilityServices 恢复前置状态 + change �
 })
 
 test('purge 归档联动：archivedBy 标记 + 归属还原 + 绑定记录清除，服务保持 offline 不复活', async () => {
-  const { registry, mcpRegistry, resourceCore, mkApp, mkService, deploy } = makeHarness()
+  const { registry, mcpRegistry, resourceCore, credentials, mkApp, mkService, deploy } = makeHarness()
   const app = mkApp('删除应用', 'purge-app')
   const svc = mkService({ name: '归档服务', slug: 'purge-svc', exec: 'demo', tools: [TOOL] })
   await deploy(svc.id)
@@ -303,8 +306,12 @@ test('purge 归档联动：archivedBy 标记 + 归属还原 + 绑定记录清除
   registry.online(app.id, 'tester') // 生命周期：offline 仅可自 trial/online（先上线再下架）
   registry.offline(app.id, 'tester', '先下架')
   assert.equal(mcpRegistry.services().get(svc.id).status, 'offline')
+  // 凭证联动清库（issue #19）：purge 前登记一条凭证，purge 后密钥文件必须整体消失
+  credentials.put(app.id, { key: 'external-token', value: 'tk_live_123456', rotatedBy: 'tester' })
+  assert.equal(credentials.list(app.id).length, 1)
 
   registry.purge(app.id)
+  assert.equal(credentials.list(app.id).length, 0, 'purge 联动删除凭证密钥文件')
   const after = mcpRegistry.services().get(svc.id)
   assert.ok(after, '服务记录保留（purge 不删服务）')
   assert.equal(after.status, 'offline', '服务保持 offline（不复活）')

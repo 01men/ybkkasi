@@ -135,6 +135,13 @@ const COPY = {
   },
   // A2A/UHP 协作面（2026-10-20 QA 整改批次）：外部调用试图注入 ybk_a2a_task_id 绑定他人
   // A2A 任务——平台拒绝（仅允许内部派发通道绑定）。正常前端操作不会触达，仅直调协议面时出现。
+  // 应用外部凭证托管（issue #19，2026-10-31）：取值键未登记（未登记过或已删除/清库）
+  CREDENTIAL_NOT_FOUND: {
+    tone: 'warn',
+    title: '凭证不存在',
+    message: '该应用未登记此凭证，或它已被删除/随应用清除。请先在「AI 应用 → 应用详情 → 外部凭证」登记（登记即 AES-256-GCM 加密落库）。',
+    action: { label: '前往应用详情', href: '#/apps' },
+  },
   TASK_BINDING_FORBIDDEN: {
     tone: 'danger',
     title: '禁止绑定协作任务',

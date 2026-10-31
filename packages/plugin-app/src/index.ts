@@ -26,6 +26,9 @@ import { sensitiveHeaderKeys } from '../../plugin-mcp/src/secret-broker.ts'
 import * as appTools from './tools.ts'
 import { APP_TYPE_SPEC } from './schema.ts'
 import { buildAppOnboardingPrompt, type AppOnboardingCredential } from './onboarding.ts'
+import { AppCredentialService } from './credentials.ts'
+// REST 层消费 404 映射（console routes/apps.ts）：随包单一出口转导
+export { AppCredentialMissingError } from './credentials.ts'
 
 export interface AppUsageRecord extends RecordBase {
   appId: string
@@ -447,6 +450,8 @@ export class AppRegistryService extends Service {
     }
     const principal = this.ctx.authn.principals().findOne((item) => item.refType === 'app' && item.refId === appId)
     if (principal && principal.status === 'active') this.ctx.authn.disablePrincipal(principal.id, '应用删除联动')
+    // 外部凭证托管（issue #19）联动清库：应用不存在则凭证无归属，整个密钥文件删除（删除即销毁）
+    this.ctx.appCredentials.purge(appId)
     // W2-T4 归档联动（契约 §10）：能力服务保持 offline（不触碰状态、不复活），补 archivedBy
     // 标记（additive 字段，W3 拓扑/治理消费可读）；归属若为本 app 则还原 platform 占位
     // （防悬挂引用，同解绑语义）；绑定记录清除——capability 依赖边/凭证文件/OIDC/机器凭证
@@ -844,10 +849,14 @@ export const name = 'app'
 // W2-T4：mcpRegistry 直访注入——两个宿主装配序列中 plugin-mcp 均先于本插件装配
 // （boot-all.ts mcp→app、cordis.yml ops-mcp→ops-app），check-boot-order [A] 机器可校验；
 // 能力绑定/门禁/联动因此走直接 ctx 访问（fail-closed），无需 console 注入回调。
+// appCredentials 为本插件自供服务（apply 内先于消费装配，purge 经 registry 联动）。
 export const inject = ['opsStorage', 'platformBus', 'resourceCore', 'authn', 'oidc', 'audit', 'iam', 'mcpRegistry']
 
 export function apply(ctx: Context) {
   const registry = new AppRegistryService(ctx)
+  // 外部凭证托管（issue #19 方向 A 最小闭环）：AES-256-GCM 静态加密密钥文件，
+  // 取值独立权限点 app.credential.fetch + 逐次审计；purge 经 registry 删除联动清库
+  new AppCredentialService(ctx)
   ctx.plugin(appTools)
   // 平台侧自动折算（指标口径补全）：SSO 身份到访 → 应用 DAU，经事件总线解耦（不直连 authn/console）。
   // entry-ticket 兑换（console 发射）与 OIDC 发码（authn OidcService 发射）都代表用户已带平台身份进入应用。

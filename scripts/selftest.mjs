@@ -2690,6 +2690,69 @@ try {
   const orgSyncOrgDelete = await api('DELETE', `/api/iam/orgs/${orgSyncOrgCreate.data.id}`, { token: admin, body: {} })
   check('验收临时组织清理成功', orgSyncOrgDelete.ok, JSON.stringify(orgSyncOrgDelete.error))
 
+  // ================================================================ 应用外部凭证托管（issue #19 方向 A 最小闭环）
+  // 数字员工调用外部自研服务的长期凭据落点：AES-256-GCM 静态加密密钥文件；登记/轮换 app.write+owner，
+  // 取值独立权限点 app.credential.fetch + 对象级校验（机器须绑定本应用）+ 逐次审计；响应零明文。
+  section('应用外部凭证托管（#19：加密存取/独立权限点/逐次审计/接入方自检）')
+  const appCredApp = await api('POST', '/api/apps', { token: admin, body: { name: '外部凭证验收应用', attrs: { description: 'issue 19 外部凭证托管验收', appType: 'api', riskLevel: 'low', dataClass: 'confidential' } } })
+  check('注册凭证验收应用（自动带默认机器凭证）', appCredApp.ok && Boolean(appCredApp.data?.credential?.clientId), JSON.stringify(appCredApp.error))
+  const appCredAppId = appCredApp.data.app.id
+  const APP_CRED_SECRET_V1 = 'tk_live_secret_9f8e7d'
+  const appCredPut = await api('PUT', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token`, { token: admin, body: { value: APP_CRED_SECRET_V1, description: 'Kizuna 管理令牌' } })
+  check('登记外部凭证 200（响应掩码 + rotatedAt，不含明文）',
+    appCredPut.ok && appCredPut.data.masked === '••••••••8e7d' && typeof appCredPut.data.rotatedAt === 'string' && !JSON.stringify(appCredPut.data).includes('tk_live'),
+    JSON.stringify(appCredPut.error ?? appCredPut.data).slice(0, 200))
+  const appCredBadKey = await api('PUT', `/api/apps/${appCredAppId}/credentials/-bad-key`, { token: admin, body: { value: 'x' } })
+  check('非法键名 400（字母/数字开头，仅字母数字._-）', appCredBadKey.status === 400, JSON.stringify(appCredBadKey.error ?? appCredBadKey.data).slice(0, 120))
+  const appCredEmpty = await api('PUT', `/api/apps/${appCredAppId}/credentials/empty-value`, { token: admin, body: { value: '' } })
+  check('空值 400（凭证值必填）', appCredEmpty.status === 400)
+  const appCredList = await api('GET', `/api/apps/${appCredAppId}/credentials`, { token: admin })
+  check('凭证清单只回掩码元数据（值零回显）',
+    appCredList.ok && appCredList.data.credentials.length === 1 && appCredList.data.credentials[0].key === 'kizuna-admin-token' && !JSON.stringify(appCredList.data).includes(APP_CRED_SECRET_V1),
+    JSON.stringify(appCredList.error ?? appCredList.data).slice(0, 200))
+  // 静态加密落地核验：密钥文件在磁盘上不含明文；主密钥独立文件存在
+  const appCredKeyFile = join(DATA_DIR, 'secrets', 'app', `${appCredAppId}.json`)
+  const appCredKeyRaw = existsSync(appCredKeyFile) ? readFileSync(appCredKeyFile, 'utf8') : ''
+  check('静态加密（AES-256-GCM）：密钥文件不含明文，主密钥独立（.master.key）',
+    appCredKeyRaw !== '' && !appCredKeyRaw.includes(APP_CRED_SECRET_V1) && appCredKeyRaw.includes('"tag"') && existsSync(join(DATA_DIR, 'secrets', 'app', '.master.key')),
+    `file=${existsSync(appCredKeyFile)} master=${existsSync(join(DATA_DIR, 'secrets', 'app', '.master.key'))}`)
+  // 取值三态：管理员（*）200；绑定机器无 fetch 点 403；绑定机器有 fetch 点 200
+  const appCredGetAdmin = await api('GET', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token/value`, { token: admin })
+  check('管理员取值 200（解密往返一致）', appCredGetAdmin.ok && appCredGetAdmin.data.value === APP_CRED_SECRET_V1, JSON.stringify(appCredGetAdmin.error ?? '').slice(0, 160))
+  const appCredGetDefaultMach = await api('GET', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token/value`, { token: orgSyncCc.data?.token })
+  check('绑定本应用的默认机器凭证（无 fetch 点）403（权限点闸门）', appCredGetDefaultMach.status === 403, JSON.stringify(appCredGetDefaultMach.error).slice(0, 160))
+  const appCredFetchCred = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'cred-app-fetch', refType: 'app', refId: appCredAppId, scopes: ['app.credential.fetch'] } })
+  check('签发 fetch 附加权限点机器凭证（scopes 须命中权限目录）', appCredFetchCred.ok && Boolean(appCredFetchCred.data.clientId), JSON.stringify(appCredFetchCred.error ?? appCredFetchCred.data).slice(0, 160))
+  const appCredFetchCc = await api('POST', '/api/auth/client-credentials', { body: { clientId: appCredFetchCred.data.clientId, clientSecret: appCredFetchCred.data.clientSecret } })
+  const appCredGetMach = await api('GET', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token/value`, { token: appCredFetchCc.data?.token })
+  check('绑定本应用的机器凭证（fetch 点）取值 200（数字员工取用通道）', appCredGetMach.ok && appCredGetMach.data.value === APP_CRED_SECRET_V1, JSON.stringify(appCredGetMach.error ?? '').slice(0, 160))
+  const appCredOtherFetch = await api('POST', '/api/authn/principals', { token: admin, body: { name: 'cred-other-fetch', refType: 'app', refId: orgSyncAppId, scopes: ['app.read', 'app.credential.fetch'] } })
+  const appCredOtherCc = await api('POST', '/api/auth/client-credentials', { body: { clientId: appCredOtherFetch.data.clientId, clientSecret: appCredOtherFetch.data.clientSecret } })
+  const appCredGetOther = await api('GET', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token/value`, { token: appCredOtherCc.data?.token })
+  check('绑定他应用的机器凭证（fetch 点）403（对象级校验）', appCredGetOther.status === 403, JSON.stringify(appCredGetOther.error).slice(0, 160))
+  const appCredGhost = await api('GET', `/api/apps/${appCredAppId}/credentials/ghost-key/value`, { token: admin })
+  check('未登记键 404 CREDENTIAL_NOT_FOUND', appCredGhost.status === 404 && appCredGhost.error?.code === 'CREDENTIAL_NOT_FOUND', JSON.stringify(appCredGhost.error).slice(0, 160))
+  await api('GET', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token/value`, { token: appCredFetchCc.data?.token })
+  const appCredAudit = await api('GET', '/api/audit/logs?type=change&q=app.credential.access', { token: admin })
+  const appCredAuditText = appCredAudit.ok ? JSON.stringify(appCredAudit.data) : ''
+  check('取用逐次落审计（app.credential.access，值零泄漏）',
+    appCredAuditText.includes('app.credential.access') && appCredAuditText.includes('kizuna-admin-token') && !appCredAuditText.includes(APP_CRED_SECRET_V1),
+    appCredAuditText.slice(0, 200))
+  const appCredRotate = await api('PUT', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token`, { token: admin, body: { value: 'tk_live_rotated_bb11aa' } })
+  const appCredGetAfter = await api('GET', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token/value`, { token: admin })
+  check('轮换（同键覆盖）：rotated=true 且旧值立即失效', appCredRotate.ok && appCredRotate.data.rotated === true && appCredGetAfter.ok && appCredGetAfter.data.value === 'tk_live_rotated_bb11aa', JSON.stringify(appCredRotate.error ?? appCredGetAfter.error ?? '').slice(0, 160))
+  const appCredCheck = await api('GET', `/api/apps/${appCredAppId}/credentials/self-check`, { token: admin })
+  check('接入方自检（存储算法/可读机器凭证/最近取用）',
+    appCredCheck.ok && appCredCheck.data.storage?.algorithm === 'AES-256-GCM' && (appCredCheck.data.whoCanRead?.machinePrincipals ?? []).length >= 1 && (appCredCheck.data.recentAccess ?? []).length >= 2,
+    JSON.stringify(appCredCheck.error ?? appCredCheck.data).slice(0, 240))
+  const appCredCheckDenied = await api('GET', `/api/apps/${appCredAppId}/credentials/self-check`, { token: appCredOtherCc.data?.token })
+  check('他应用机器凭证自检 403（app.read 足过闸门但 owner 校验不过）', appCredCheckDenied.status === 403, JSON.stringify(appCredCheckDenied.error).slice(0, 160))
+  const appCredDel = await api('DELETE', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token`, { token: admin })
+  const appCredGetDeleted = await api('GET', `/api/apps/${appCredAppId}/credentials/kizuna-admin-token/value`, { token: admin })
+  check('删除后取值 404（删除即失效）', appCredDel.ok && appCredDel.data.removed === true && appCredGetDeleted.status === 404, JSON.stringify(appCredDel.error ?? appCredGetDeleted.error).slice(0, 160))
+  const appCredAppDel = await api('DELETE', `/api/apps/${appCredAppId}`, { token: admin, body: {} })
+  check('验收应用删除联动清库（密钥文件整体消失）', appCredAppDel.ok && !existsSync(join(DATA_DIR, 'secrets', 'app', `${appCredAppId}.json`)), JSON.stringify(appCredAppDel.error ?? '').slice(0, 160))
+
   mcpStub.close()
   ddStub.close()
 

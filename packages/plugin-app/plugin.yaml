@@ -6,7 +6,9 @@ depends: ['dsh-plugin-platform-core', 'dsh-plugin-resource-core', 'dsh-plugin-au
 provides:
   services:
     - appRegistry
+    - appCredentials
 permissions:
   - app.read
   - app.write
   - app.offline
+  - app.credential.fetch

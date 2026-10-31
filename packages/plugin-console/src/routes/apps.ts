@@ -5,7 +5,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { HttpExchange } from '../../../platform-core/src/index.ts'
 import { t } from '../../../platform-i18n/src/index.ts'
-import { CapabilityOwnerConflictError, type AppCapabilityLink } from '../../../plugin-app/src/index.ts'
+import { CapabilityOwnerConflictError, AppCredentialMissingError, type AppCapabilityLink } from '../../../plugin-app/src/index.ts'
 import type { ConsoleRouteDeps } from './deps.ts'
 import { scopedOrgFilterOf } from './iam.ts'
 
@@ -315,6 +315,112 @@ export function registerAppRoutes(ctx: Context, deps: AppRouteDeps): void {
       ? t('解绑能力服务 {serviceId}{owner}', { serviceId, owner: result.ownerRestored ? t('；归属联动还原 platform 占位（解绑联动）') : '' })
       : t('绑定不存在，幂等返回（serviceId={serviceId}）', { serviceId }))
     return result
+  })
+
+  // -- 应用外部凭证托管（issue #19 方向 A 最小闭环，2026-10-31） ----------------
+  // 数字员工/接入应用调用外部自研服务所需长期凭据的平台落点：登记即 AES-256-GCM 加密落
+  // 密钥文件（0600），取值走独立权限点 app.credential.fetch + 对象级校验 + 逐次审计
+  // （app.secret.access 事件 → audit app.credential.access），列表/登记响应只回掩码。
+  // 登记/轮换/删除沿用 app.write + assertAppOwner（与能力绑定同口径）。
+  const credentialApp = (exchange: HttpExchange): { id: string; name: string; ownerId: string } => {
+    const app = ctx.resourceCore.get('app', exchange.params['id']!)
+    if (!app) throw new Error(t('应用不存在：{id}', { id: exchange.params['id'] }))
+    return { id: app.id, name: app.name, ownerId: app.ownerId }
+  }
+
+  /** 取值对象级守卫：机器凭证须绑定本应用（refType/refId 命中）或为登记 owner；human 须 owner 或平台管理员。 */
+  const assertCredentialRead = (exchange: HttpExchange, appId: string): boolean => {
+    const info = caller(exchange)
+    const app = ctx.resourceCore.get('app', appId)
+    if (!app) throw new Error(t('应用不存在：{id}', { id: appId }))
+    const allowed = info.kind === 'machine'
+      ? (info.refType === 'app' && info.refId === appId) || app.ownerId === info.principalId
+      : app.ownerId === info.userId || info.permissions.includes('*')
+    if (allowed) return true
+    ctx.platformBus.emit('audit.authz.denied', {
+      actorId: info.userId ?? info.principalId,
+      actorName: info.name,
+      point: `app.credential.fetch(app:${appId})`,
+      path: exchange.path,
+    })
+    exchange.fail(403, 'FORBIDDEN', t('仅应用 owner、绑定本应用的机器凭证（或持有 {point} 的平台管理员）可取用「{name}」的外部凭证', { point: 'app.credential.fetch', name: app.name }))
+    return false
+  }
+
+  // 掩码清单（含登记/轮换/删除）：值永不回显（masked + rotatedAt 元数据）
+  guarded('GET', '/api/apps/:id/credentials', 'app.write', (exchange) => {
+    if (!assertAppOwner(exchange, exchange.params['id']!)) return
+    const id = exchange.params['id']!
+    return { credentials: ctx.appCredentials.list(id) }
+  })
+
+  // 登记/轮换（同键再 put 即轮换）：{value, description?}；响应掩码，审计不含值
+  guarded('PUT', '/api/apps/:id/credentials/:key', 'app.write', (exchange) => {
+    if (!assertAppOwner(exchange, exchange.params['id']!)) return
+    const id = exchange.params['id']!
+    const key = exchange.params['key']!
+    const input = body<{ value: string; description?: string }>(exchange)
+    const info = caller(exchange)
+    const app = ctx.resourceCore.get('app', id)
+    const existing = ctx.appCredentials.list(id).some((item) => item.key === key)
+    const meta = ctx.appCredentials.put(id, { key, value: String(input.value ?? ''), description: input.description, rotatedBy: info.name })
+    changeLog(exchange, existing ? 'app.credential.rotate' : 'app.credential.set', 'app', id, app?.name ?? id,
+      t('凭证 {key}（AES-256-GCM 落密钥文件，值不入审计）', { key }))
+    return { ...meta, rotated: existing }
+  })
+
+  // 删除单条：幂等
+  guarded('DELETE', '/api/apps/:id/credentials/:key', 'app.write', (exchange) => {
+    if (!assertAppOwner(exchange, exchange.params['id']!)) return
+    const id = exchange.params['id']!
+    const key = exchange.params['key']!
+    const removed = ctx.appCredentials.remove(id, key)
+    const app = ctx.resourceCore.get('app', id)
+    changeLog(exchange, 'app.credential.delete', 'app', id, app?.name ?? id, removed ? t('凭证 {key} 已删除', { key }) : t('凭证 {key} 不存在，幂等返回', { key }))
+    return { removed }
+  })
+
+  // 接入方自检（一条命令确认「托管在哪/谁能读/最近谁读过」）：先于 :key/value 注册（路由先匹配先中）
+  guarded('GET', '/api/apps/:id/credentials/self-check', 'app.read', (exchange) => {
+    if (!assertAppOwner(exchange, exchange.params['id']!)) return
+    const id = exchange.params['id']!
+    const app = ctx.resourceCore.get('app', id)!
+    const credentials = ctx.appCredentials.list(id)
+    const boundPrincipals = ctx.authn.principals().find((item) => item.type === 'machine' && item.status === 'active'
+      && item.scopes.includes('app.credential.fetch')
+      && ((item.refType === 'app' && item.refId === id) || app.ownerId === item.id))
+    const recentAccess = ctx.audit.query({ resourceType: 'app', resourceId: id, limit: 100 }).items
+      .filter((item) => item.action === 'app.credential.access')
+      .slice(0, 10)
+      .map((item) => ({ at: item.createdAt, actorId: item.actorId, actorName: item.actorName, result: item.result, detail: item.detail }))
+    return {
+      storage: { kind: 'platform-managed', algorithm: 'AES-256-GCM', note: t('密钥文件 0600 / 目录 0700，主密钥独立文件；值不入业务集合与 API 响应') },
+      entries: credentials.map((item) => ({ key: item.key, masked: item.masked, rotatedAt: item.rotatedAt })),
+      whoCanRead: {
+        permissionPoint: 'app.credential.fetch',
+        machinePrincipals: boundPrincipals.map((item) => ({ id: item.id, name: item.name, clientId: item.clientId })),
+        humanRule: t('应用 owner 或平台管理员（*）；独立权限点 app.credential.fetch 供角色/机器凭证按需授权'),
+      },
+      recentAccess,
+    }
+  })
+
+  // 取值（拿到明文）：独立权限点 app.credential.fetch + 对象级校验；逐次 emit app.secret.access 落审计
+  guarded('GET', '/api/apps/:id/credentials/:key/value', 'app.credential.fetch', (exchange) => {
+    const id = exchange.params['id']!
+    if (!assertCredentialRead(exchange, id)) return
+    const key = exchange.params['key']!
+    const info = caller(exchange)
+    try {
+      const value = ctx.appCredentials.resolve(id, key, { actor: info.userId ?? info.principalId, actorName: info.name })
+      return { key, value, note: t('本次取用已落审计（app.credential.access）') }
+    } catch (error) {
+      if (error instanceof AppCredentialMissingError) {
+        exchange.fail(404, 'CREDENTIAL_NOT_FOUND', error.message)
+        return
+      }
+      throw error
+    }
   })
 
   // -- 应用 ↔ SSO 打通（owner 自助签发 + 机器环回自助，口径见 ssoManageGuard） ----
