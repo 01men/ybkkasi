@@ -17,7 +17,7 @@ export function renderLogin(app) {
             <div style="font-size:19px;font-weight:600;letter-spacing:2px">元冰可 · 企业AI资源管理平台</div>
           </div>
           <h1>让团队一起用 AI<br>把每一份资源都管起来</h1>
-          <p>组织账号、MCP 服务、Skill 市场、Agent 本体、AI 应用——五类资源一套身份、一套权限、一套审计。一个工作台，撑起企业的全部 AI 资产。</p>
+          <p>MCP 服务、Skill 市场、Agent 本体、AI 应用、模型网关、NAS 存储——六类资源一套身份、一套权限、一套审计。一个工作台，撑起企业的全部 AI 资产。</p>
 
           <div class="login-hero-grid">
             <div class="login-hero-card">

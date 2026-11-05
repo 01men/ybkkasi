@@ -22,7 +22,7 @@ const TREE = {
 }
 
 const FEATURES = [
-  { icon: 'zap', title: '资产登记', desc: '五类资源一个入口登记建档：元数据、归属、计量口径一步到位。' },
+  { icon: 'zap', title: '资产登记', desc: '六类资源一个入口登记建档：元数据、归属、计量口径一步到位。' },
   { icon: 'sparkles', title: 'Skill 市场', desc: '企业级技能市场：上架审批、热度洞察、活跃日历一目了然。' },
   { icon: 'bot', title: 'Agent 本体', desc: 'Agent 身份与运行档案统一纳管，能力、依赖、健康度全程可见。' },
   { icon: 'app', title: 'AI 应用', desc: '应用注册即接入单点登录与计量，流量、活跃与成本一屏读懂。', green: true },
@@ -69,7 +69,7 @@ export function renderHome(app) {
       <div class="home-hero-copy">
         <div class="home-hero-eyebrow"><span class="dot"></span>企业级 AI 资源管理平台</div>
         <h1>让团队一起用 AI，<br>把<span class="grad">每一份资源</span>都管起来</h1>
-        <p class="home-hero-sub">Skill 市场、Agent 本体、AI 应用、MCP 服务、NAS 存储——五类资源一套身份、一套权限、一套审计。基于 DeepSeek Harness「一切皆插件」架构，九大业务域即插即用，按团队需要随用随上。</p>
+        <p class="home-hero-sub">Skill 市场、Agent 本体、AI 应用、MCP 服务、模型网关、NAS 存储——六类资源一套身份、一套权限、一套审计。基于 DeepSeek Harness「一切皆插件」架构，九大业务域即插即用，按团队需要随用随上。</p>
         <div class="home-hero-actions">
           <a class="home-btn home-btn-primary" href="#/login">${icon('arrowUp')}${loginLabel}</a>
           <a class="home-btn home-btn-ghost" href="#sec-start">了解架构</a>
