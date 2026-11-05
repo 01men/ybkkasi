@@ -149,6 +149,8 @@ AI 原生组织需要在五个方面重塑生产关系，平台在每一项下�
 | --- | --- |
 | [模型账单月底出来，没人说得清哪个部门花的](https://ybkkasi.com/blog/cost-attribution/) | 归口字段必须在消耗发生那一刻强制写上，并且允许它让调用失败。[Discussion #22](https://github.com/01men/ybkkasi/discussions/22) |
 | [Agent 需要的权限是动态的，传统权限模型在这里崩掉](https://ybkkasi.com/blog/agent-permissions/) | 一个 40 毫秒的调用配一个 7 天的 token，中间所有设计都是空的。[Discussion #23](https://github.com/01men/ybkkasi/discussions/23) |
+| [AI 网关和 AI 资产治理，有什么不一样？](https://ybkkasi.com/blog/ai-gateway-vs-governance/) | 网关管一次请求，治理管一个资产的整个生命周期。三处断点，网关按设计就不该去补。[Discussion #29](https://github.com/01men/ybkkasi/discussions/29) |
+| [1822 项断言全绿：我们怎么测试一个 Agent 管控平台](https://ybkkasi.com/blog/agent-platform-selftest/) | 管控平台测的不是功能对不对，是拦住的时候真的拦住了。[Discussion #30](https://github.com/01men/ybkkasi/discussions/30) |
 
 ## 联系我们
 

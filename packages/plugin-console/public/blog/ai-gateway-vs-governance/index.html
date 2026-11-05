@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 网关和 AI 资产治理，有什么不一样？</title>
+<meta name="description" content="网关管一次请求，治理管一个资产的整个生命周期。中间有三处结构性断点，网关按设计就不该去补。">
+<link rel="canonical" href="https://ybkkasi.com/blog/ai-gateway-vs-governance/">
+<meta property="og:title" content="AI 网关和 AI 资产治理，有什么不一样？">
+<meta property="og:description" content="网关管一次请求，治理管一个资产的整个生命周期。中间有三处结构性断点，网关按设计就不该去补。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://ybkkasi.com/blog/ai-gateway-vs-governance/">
+<link rel="icon" href="/ybk-mark.png">
+<style>
+:root{--bg:#f8f6f3;--surface:#fffdfb;--border:#e0ddd8;--t1:#231f1d;--t2:#4d4643;--t3:#706864;
+--brand:#0a5f87;--brand-deep:#084a68;--brand-soft:#e8f1f6;--ok:#2F9E44;
+--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t1);font-family:var(--font);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 22px}
+header.site{border-bottom:1px solid var(--border);background:rgba(248,246,243,.92);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;color:var(--t1)}
+.brand img{width:22px;height:22px;border-radius:6px}
+.brand span.sub{font-size:11px;letter-spacing:2px;color:#7E9AD2;font-weight:500}
+.nav{display:flex;gap:18px;font-size:13.5px}
+.nav a{color:var(--t2)}
+main{padding:52px 0 80px}
+.meta{font-size:12.5px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.meta em{font-style:normal;color:var(--brand);font-weight:600}
+h1.post{font-size:31px;line-height:1.32;letter-spacing:-.015em;margin-bottom:26px;font-weight:700}
+article h2{font-size:20.5px;margin:44px 0 15px;padding-top:16px;border-top:1px solid var(--border);letter-spacing:-.01em}
+article h3{font-size:17px;margin:28px 0 10px}
+article p{margin:0 0 17px;color:var(--t2);font-size:16px}
+article strong{color:var(--t1);font-weight:650}
+article ul,article ol{margin:0 0 18px 22px;color:var(--t2);font-size:16px}
+article li{margin-bottom:8px}
+article code{font-family:var(--mono);font-size:13.5px;background:#efece7;padding:1.5px 5px;border-radius:4px;color:#0a4a68}
+article pre{background:#201f1d;border-radius:8px;padding:15px 17px;overflow-x:auto;margin:0 0 20px}
+article pre code{background:none;color:#e8e4de;font-size:13px;padding:0;line-height:1.65}
+article table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;table-layout:fixed}
+article th,article td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;word-break:break-word}
+article th{background:var(--brand-soft);font-weight:600;color:var(--brand-deep);font-size:13px}
+article hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+article a{border-bottom:1px solid rgba(10,95,135,.28)}
+.post-list{list-style:none}
+.post-list li{border-top:1px solid var(--border);padding:24px 0}
+.post-list li:first-child{border-top:none;padding-top:0}
+.post-list h2{font-size:20px;font-weight:650;margin:0 0 8px;border:none;padding:0}
+.post-list h2 a{color:var(--t1);border:none}
+.post-list h2 a:hover{color:var(--brand);text-decoration:none}
+.post-list p{color:var(--t3);font-size:14px;margin:0}
+.post-list .d{font-size:12.5px;color:var(--t3);letter-spacing:.05em;margin-bottom:7px}
+footer.site{border-top:1px solid var(--border);padding:26px 0;font-size:12.5px;color:var(--t3)}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+@media(max-width:640px){h1.post{font-size:24px}article h2{font-size:18.5px}article p,article li{font-size:15px}main{padding:34px 0 60px}}
+</style>
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/ybk-mark.png" alt=""><span>元冰可</span><span class="sub">YBK</span></a>
+  <nav class="nav">
+    <a href="/blog/">技术笔记</a>
+    <a href="https://ybkkasi.com/docs">文档</a>
+    <a href="https://github.com/01men/ybkkasi">GitHub</a>
+    <a href="https://demo.ybkkasi.com/">演示</a>
+  </nav>
+</div></header>
+<main><div class="wrap">
+<div class="meta">品类边界</div>
+<h1 class="post">AI 网关和 AI 资产治理，有什么不一样？</h1>
+<article>
+<p>上周有人问我一个问题，问得很直接：</p>
+<p>「我装了 LiteLLM，也有审计日志，你说的『AI 资产治理』到底多管了什么？」</p>
+<p>这个问题不好答，因为大部分回答会滑向营销话术。我试着用我们自己踩过的坑来拆。</p>
+<p>先说结论：<strong>网关管一次请求，治理管一个资产的整个生命周期。</strong> 两者不竞争，但也不是「加了网关就顺便有了治理」——中间有三处结构性断点，网关按设计就不该去补。</p>
+<h2>网关的模型：请求进来，请求出去</h2>
+<p>看任何一个 AI 网关的架构图，主轴都是一条线：</p>
+<pre><code>client → [鉴权 / 限流 / 路由 / 预算 / 日志] → 上游 provider</code></pre>
+<p>LiteLLM、Portkey、Higress、Bifrost 都是这个形状。它们的核心抽象是<strong>一次调用</strong>（call），围绕这次调用做：</p>
+<ul>
+<li>这个 key 有没有额度</li>
+<li>这个模型能不能用</li>
+<li>这次调用花了多少 token</li>
+<li>上游挂了要不要降级到备用渠道</li>
+</ul>
+<p>这些我们都做了，而且做得不浅。我们的模型网关里，一次调用要过四道：</p>
+<ol>
+<li><strong>数据分级路由</strong>——渠道登记 <code>dataClassLimit</code>（公开 / 内部 / 秘密）。会话带 <code>dataClass=secret</code> 时，候选渠道按分级上限过滤，涉密数据永远不会路由到公开级渠道，越级直接锁死并给原因</li>
+<li><strong>降级链</strong>——渠道组按 <code>主 → 备1 → 备2 → 人工</code> 逐级降级，每步 8 秒超时，HTTP 5xx / 超时 / 网络错误触发，每次降级 emit <code>modelgw.degraded</code> 事件</li>
+<li><strong>预算熔断</strong>——org 级或 <code>agent:&lt;id&gt;</code> / <code>app:&lt;id&gt;</code> 级，日/月两档，warn 阈值告警，block 在<strong>调用前</strong>熔断（fail-closed），超额联动冻结对应 Agent 并生成解冻审批</li>
+<li><strong>用量计量</strong>——input/output token 用上游实测值，不估算</li>
+</ol>
+<p>到这一步，一次请求已经被管得很细了。但问题从这里开始。</p>
+<h2>断点一：请求有日志，资产没有档案</h2>
+<p>网关的日志表长这样：</p>
+<table><thead><tr><th>时间</th><th>key</th><th>model</th><th>tokens</th><th>cost</th></tr></thead><tbody><tr><td>14:02:11</td><td>sk-abc</td><td>gpt-x</td><td>1,842</td><td>…</td></tr><tr><td>14:02:13</td><td>sk-def</td><td>claude-y</td><td>903</td><td>…</td></tr></tbody></table>
+<p>现在审计的人问：这个 <code>sk-abc</code> 背后是哪个 MCP 服务？它上一次变更是什么时候？谁批的？当时灰度到多少？上一版回滚过吗？</p>
+<p>日志表回答不了。因为<strong>「一次调用」和「一个资产」是两个不同的实体</strong>，日志记录的是前者。</p>
+<p>这就是我们做 30 个插件包、把 MCP / Skill / Agent / AI 应用 / 模型渠道这些东西统一成「资产」的原因。每个资产有自己的状态机，MCP 服务的状态是：</p>
+<pre><code>draft → verifying → online → gray → unhealthy → offline</code></pre>
+<p><code>gray</code> 这一档是我们特意做进去的。<code>mcp_deploy</code> 支持传灰度比例，也支持 <code>dryRun</code>——先返回影响面预览，告诉你这次变更会波及哪些 Agent、哪些 Skill 依赖它，再决定要不要真的推。</p>
+<p>这件事网关做不了，因为它不知道「依赖」这个概念。它只知道流量从哪来，不知道谁在依赖。</p>
+<h2>断点二：流量有归属，责任没有主体</h2>
+<p>网关的成本报表通常按 <strong>key</strong> 或 <strong>model</strong> 聚合。这能回答「哪个 key 花得多」，回答不了「哪个部门花得多」。</p>
+<p>因为 key 是技术凭证，不是组织单元。一个部门可能发了 20 个 key，一个 key 可能被 3 个部门共用。月底账单出来，你手上是一堆 <code>sk-xxx</code> 的消费额，需要人去对「这个 key 是谁的」。</p>
+<p>我们的计量事件有四个字段：</p>
+<pre><code>org      组织（部门树上的节点）
+subject  终点主体：user:&lt;id&gt; | agent:&lt;id&gt;
+resource 被消耗的资源：model:&lt;slug&gt; | mcp:&lt;slug&gt; | skill:&lt;id&gt; | app:&lt;id&gt; | nas:&lt;id&gt;</code></pre>
+<p><code>subject</code> 这层是关键。它让「成本按 Agent 拆」变成一句 SQL，而不是一次跨系统对账。成本三维归因 = <code>org × subject × resource</code>，能出「研发部 → 客服 Agent → 某个 MCP 服务」这样的穿透。</p>
+<p>这里有个诚实的地方要说：<strong>我们不做计费</strong>。平台不转售、不分账，价格簿是零价快照（<code>charge</code> 恒 0），只呈现用量与内部成本穿透。原钱包和分账子系统已经下线封存。对私有化部署的企业来说这是对的——它要的是内部成本可见，不是要一个账单系统。</p>
+<h2>断点三：调用被允许，变更没人批</h2>
+<p>这一条我觉得是网关和治理最本质的分界。</p>
+<p>网关的鉴权模型是<strong>逐次判定</strong>：这次调用，这个 token 有没有这个 scope？有就放行，没有就 403。</p>
+<p>但企业里真正出事的地方，往往不是「某次调用越权」，而是<strong>「某个资产被别人改了权限」</strong>。</p>
+<p>举个我们自己代码里的真实教训。<code>/mcp</code> 端点有一个从 token 反查主体的函数 <code>mcpCallerFromToken</code>，它给 machine 类型的主体返回时漏传了 <code>refType</code> / <code>refId</code>。后果不是越权——是 <code>exec_claim</code> 的归属判定失效，任务变成了无主的。日志里能查到这个任务被执行了，查不到它是谁的。</p>
+<p>修复只改了十几行。但这件事说明：<strong>逐次鉴权判定的正确性，依赖于「主体是谁」这个前提在整个链路上保持一致</strong>。而这个一致性不属于任何单次请求，属于资产的身份模型。</p>
+<p>所以治理层要做的是把「变更」也变成一等公民：</p>
+<ul>
+<li>MCP 服务上线要审批（我们有 L3 级，含灰度比例决策）</li>
+<li>Agent / App 的生命周期变更要审批（L4 级）</li>
+<li>Skill 上架走两级审批 + 弃用告警</li>
+<li>每次变更进审计，四类日志分账：操作、认证、数据访问、配置变更</li>
+</ul>
+<p>网关看到的是「谁调用了什么」。治理层要回答的是「谁改了什么，谁批的，改之前长什么样」。</p>
+<h2>那什么时候不需要治理层</h2>
+<p>写到这里必须说清楚边界，否则就是在卖东西了。</p>
+<p><strong>只需要网关的情况：</strong></p>
+<ul>
+<li>你只有一两个团队在用模型，成本按 key 拆已经够</li>
+<li>MCP 服务数量在 10 个以内，谁在用你脑子里有数</li>
+<li>没有跨部门审计要求，出事靠人问</li>
+<li>你更需要的是 trace 深度和 eval —— 这块我们<strong>确实不如 Langfuse / LangSmith</strong>，我们只有计量和审计，没有调用链追踪和效果评估</li>
+</ul>
+<p><strong>需要治理层的情况：</strong></p>
+<ul>
+<li>MCP 服务散在多个部门，出现「这个服务下线了，谁在用它」这种问题</li>
+<li>成本要按部门/Agent 出报表，且这个报表要能被财务接受</li>
+<li>有合规要求，需要证明某个 AI 应用的上线经过了审批</li>
+<li>Agent 数量超过 20 个，靠人记已经记不住了</li>
+</ul>
+<p>这是一个<strong>刚被验证需求的新品类</strong>，我不认为它已经成熟。网关上在做流量，可观测在做 trace，构建平台在做 Agent，但「企业里已经建成的那些 AI 资产归谁管」这一层，目前没有标准答案。早期玩家有 Monospace、Busabase、AgentValet，各家切口都不一样。</p>
+<h2>我们做的选择：统一模型 + 可私有化</h2>
+<p>如果一定要用一句话说我们和网关的差别：</p>
+<blockquote><p>网关把 MCP 当作「一种要路由的流量」，我们把 MCP / Skill / Agent 当作「要被管生命周期的资产」。</p></blockquote>
+<p>这个选择带来两个具体后果。</p>
+<p><strong>一、六类资产共享一套底座。</strong> 不是给 MCP 做一套权限、给 Agent 再做一套，而是同一套身份、权限、计量、审计。代价是抽象必须足够强，任何一类资产的特殊性都得塞进同一个模型里。收益是：新接入一类资产（比如我们后加的 NAS 存储和模型渠道）不用重写治理逻辑。</p>
+<p><strong>二、完全自托管，MIT。</strong> 不是 SaaS，不是「免费版 + 企业版」。因为这一层接触的是企业最敏感的东西——谁有什么权限、哪个部门花了多少钱、出了事谁负责。这些东西放不到别人的云上。</p>
+<p>规模说清楚：30 个插件包，94 个权限点，499 条声明路由（其中 458 条受权限点保护），98 个 MCP 工具，1822 项端到端断言全绿，60 秒起得来，无重型依赖。数字不是卖点，但数字能说明这不是一个 PPT。</p>
+<h2>最后</h2>
+<p>回到开头那个问题：「装了网关，还缺什么？」</p>
+<p>缺的不是功能，是<strong>一个把资产当主体建模的层</strong>。网关的日志表里没有「资产」这一列，加不上去，因为那不是它的设计目标。</p>
+<p>反过来也一样：我们缺 trace 深度、缺 eval、单进程无水平扩展（多节点 HA 要等 Postgres 后端，ADR 还躺在仓库里）。这些是明确的缺口，写在 README 的「诚实边界」章节里。</p>
+<p>判断标准其实很简单：<strong>如果你的问题是「这次调用花了多少」，网关够了。如果你的问题是「这个东西是谁的、谁批的、改了会影响谁」，那需要的是另一个层。</strong></p>
+<hr>
+<p>仓库：https://github.com/01men/ybkkasi 免登演示：https://demo.ybkkasi.com</p>
+</article>
+<p style="margin-top:40px;font-size:13.5px;color:var(--t3)">源码 MIT：<a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a> · 免登只读演示：<a href="https://demo.ybkkasi.com/">demo.ybkkasi.com</a></p>
+</div></main>
+<footer class="site"><div class="wrap">
+  <span>© 2026 杭州元冰可科技有限公司 · 企业 AI 资产治理</span>
+  <span>MIT · <a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a></span>
+</div></footer>
+</body>
+</html>

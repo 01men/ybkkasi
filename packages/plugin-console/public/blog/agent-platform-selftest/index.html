@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1822 项断言全绿：我们怎么测试一个 Agent 管控平台</title>
+<meta name="description" content="管控平台测的不是功能对不对，是拦住的时候真的拦住了、放行的时候真的没顺手多放。">
+<link rel="canonical" href="https://ybkkasi.com/blog/agent-platform-selftest/">
+<meta property="og:title" content="1822 项断言全绿：我们怎么测试一个 Agent 管控平台">
+<meta property="og:description" content="管控平台测的不是功能对不对，是拦住的时候真的拦住了、放行的时候真的没顺手多放。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://ybkkasi.com/blog/agent-platform-selftest/">
+<link rel="icon" href="/ybk-mark.png">
+<style>
+:root{--bg:#f8f6f3;--surface:#fffdfb;--border:#e0ddd8;--t1:#231f1d;--t2:#4d4643;--t3:#706864;
+--brand:#0a5f87;--brand-deep:#084a68;--brand-soft:#e8f1f6;--ok:#2F9E44;
+--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t1);font-family:var(--font);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 22px}
+header.site{border-bottom:1px solid var(--border);background:rgba(248,246,243,.92);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;color:var(--t1)}
+.brand img{width:22px;height:22px;border-radius:6px}
+.brand span.sub{font-size:11px;letter-spacing:2px;color:#7E9AD2;font-weight:500}
+.nav{display:flex;gap:18px;font-size:13.5px}
+.nav a{color:var(--t2)}
+main{padding:52px 0 80px}
+.meta{font-size:12.5px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.meta em{font-style:normal;color:var(--brand);font-weight:600}
+h1.post{font-size:31px;line-height:1.32;letter-spacing:-.015em;margin-bottom:26px;font-weight:700}
+article h2{font-size:20.5px;margin:44px 0 15px;padding-top:16px;border-top:1px solid var(--border);letter-spacing:-.01em}
+article h3{font-size:17px;margin:28px 0 10px}
+article p{margin:0 0 17px;color:var(--t2);font-size:16px}
+article strong{color:var(--t1);font-weight:650}
+article ul,article ol{margin:0 0 18px 22px;color:var(--t2);font-size:16px}
+article li{margin-bottom:8px}
+article code{font-family:var(--mono);font-size:13.5px;background:#efece7;padding:1.5px 5px;border-radius:4px;color:#0a4a68}
+article pre{background:#201f1d;border-radius:8px;padding:15px 17px;overflow-x:auto;margin:0 0 20px}
+article pre code{background:none;color:#e8e4de;font-size:13px;padding:0;line-height:1.65}
+article table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;table-layout:fixed}
+article th,article td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;word-break:break-word}
+article th{background:var(--brand-soft);font-weight:600;color:var(--brand-deep);font-size:13px}
+article hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+article a{border-bottom:1px solid rgba(10,95,135,.28)}
+.post-list{list-style:none}
+.post-list li{border-top:1px solid var(--border);padding:24px 0}
+.post-list li:first-child{border-top:none;padding-top:0}
+.post-list h2{font-size:20px;font-weight:650;margin:0 0 8px;border:none;padding:0}
+.post-list h2 a{color:var(--t1);border:none}
+.post-list h2 a:hover{color:var(--brand);text-decoration:none}
+.post-list p{color:var(--t3);font-size:14px;margin:0}
+.post-list .d{font-size:12.5px;color:var(--t3);letter-spacing:.05em;margin-bottom:7px}
+footer.site{border-top:1px solid var(--border);padding:26px 0;font-size:12.5px;color:var(--t3)}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+@media(max-width:640px){h1.post{font-size:24px}article h2{font-size:18.5px}article p,article li{font-size:15px}main{padding:34px 0 60px}}
+</style>
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/ybk-mark.png" alt=""><span>元冰可</span><span class="sub">YBK</span></a>
+  <nav class="nav">
+    <a href="/blog/">技术笔记</a>
+    <a href="https://ybkkasi.com/docs">文档</a>
+    <a href="https://github.com/01men/ybkkasi">GitHub</a>
+    <a href="https://demo.ybkkasi.com/">演示</a>
+  </nav>
+</div></header>
+<main><div class="wrap">
+<div class="meta">工程实践</div>
+<h1 class="post">1822 项断言全绿：我们怎么测试一个 Agent 管控平台</h1>
+<article>
+<p>先给三个数字，都来自 CI 的同一份日志：</p>
+<ul>
+<li>自测脚本 <code>scripts/selftest.mjs</code>：<strong>10071 行，107 个测试分节</strong></li>
+<li>断言数：<strong>1822</strong></li>
+<li>CI 里跑完这一步：<strong>76 秒</strong>（整个 job 96 秒，run 41939385353）</li>
+</ul>
+<p>这不是炫技。管控平台的测试难点跟业务系统完全不是一回事——业务系统测的是"功能对不对"，管控平台测的是"<strong>拦住的时候真的拦住了，放行的时候真的没顺手多放</strong>"。前者漏测是功能缺失，后者漏测是安全事故。</p>
+<p>下面是我们踩出来的做法，包括我们测砸过的部分。</p>
+<hr>
+<h2>一、起一个真实例，别 mock 自己的边界</h2>
+<p>管控平台最典型的错误测法是：把鉴权中间件 mock 掉，然后测业务逻辑。</p>
+<p>这条路一开始就走歪了。因为这类平台的绝大多数价值就发生在中间件里——令牌受众校验、主体匹配、权限点判定、租户隔离。把这些 mock 掉，你测的是去掉安防的银行大堂。</p>
+<p>所以 <code>selftest.mjs</code> 的第一件事是 <strong>spawn 一个隔离实例</strong>：</p>
+<pre><code>独立端口（动态分配）+ 独立数据目录（data-selftest）</code></pre>
+<p>然后所有断言走<strong>真实 HTTP</strong>：<code>fetch</code> 打真实端点，带真实 Bearer 头，读真实 JSON 响应。</p>
+<p>代价很明显：慢。一次完整跑要几十秒，出问题时的报错是一坨 JSON 而不是干净的行号。收益也很明显：断言里写的 <code>403</code> 就是线上会拿到的 <code>403</code>。</p>
+<p>有一条纪律我们写进了脚本注释：<strong>断言的对象必须是外部可观测的行为，不是内部函数返回值。</strong> 内部函数变了但 HTTP 契约没变，测试不该红；HTTP 契约变了，测试必须红。</p>
+<p>例外只有一个：纯函数引擎。NAS 数据权限的判定引擎我们做了直接单测，因为它是个无状态纯函数，走 HTTP 反而是在测序列化。判断标准是"这层有没有自己的边界"，不是"测试好不好写"。</p>
+<hr>
+<h2>二、107 个分节，按"谁会被打穿"排</h2>
+<p>1822 条断言不是平铺的清单，是 107 个分节。分节顺序本身有信息量——按<strong>攻击面</strong>排，不按功能菜单排。</p>
+<p>前面几节是身份与权限：</p>
+<ul>
+<li>平台健康与登录</li>
+<li>RBAC 权限模型</li>
+<li>组织账号（IAM）→ 账号冻结 → 令牌联动吊销</li>
+<li>refresh token 轮转、宽限自愈与重放防护</li>
+<li>统一认证（机器身份 / 令牌）</li>
+<li>令牌受众（aud）与插件命名空间收敛</li>
+</ul>
+<p>这一段的断言密度最高。原因很直白：<strong>身份层错了，后面每一层都是在保护一个已经被攻破的入口。</strong></p>
+<p>举个具体的：账号冻结之后，已经发出的 access token 必须在有效期内立刻失效，refresh token 必须同时被拒。这个"联动"很容易做成"下次登录时才检查"，看起来能用，实际留了一个 token TTL 长度的窗口。断言写的是冻结后<strong>立即</strong>打原 token，必须 401。</p>
+<p>中段是资产生命周期——MCP 部署与灰度、Skill 扫描与两级审批、Agent 本体生命周期、AI 应用注册、市场验签。</p>
+<p>后面是治理的横切面——审计四类日志、告警、成本归因、审批 SLA、数据权限例外与审批闭环。</p>
+<p>最后几节是<strong>存储与启动</strong>。这两块放在最后不是因为不重要，是因为它们最容易被"功能跑通了就行"糊过去。</p>
+<hr>
+<h2>三、四类不好测的东西</h2>
+<h3>1. 故障注入：不只是测 happy path 的镜像</h3>
+<p>一个治理平台的错误处理，决定了它是"出事时能说清"还是"出事时全黑"。</p>
+<p>我们注入了四类故障，每类都断言<strong>失败可见 + 恢复可用</strong>：</p>
+<table><thead><tr><th>注入</th><th>断言的行为</th></tr></thead><tbody><tr><td>网关上游返 500</td><td>调用显式 <code>status=error</code> 并计入 error_rate，不静默吞掉；解除后恢复</td></tr><tr><td>sidecar 审计写入失联</td><td>平台补记，且向调用方透出 <code>auditPersisted=false</code>（fail-visible 双写）</td></tr><tr><td>工具目录漂移（action 被移除）</td><td>后续调用 fail-closed 拒绝，报"不在纳管目录"；目录回补后恢复</td></tr><tr><td>连接器令牌被吊销</td><td>自动重铸并恢复调用，不让用户手工救火</td></tr></tbody></table>
+<p>第二类最值得说。审计写失败时，常见做法是重试然后放弃——调用方以为审计记了，其实没有。我们选择反过来：调用继续，但<strong>把"审计没落"这件事当场告诉调用方</strong>，同时平台侧补记一条。宁可让调用方知道链路有瑕疵，也不给一个"看起来很完整"的假审计。</p>
+<h3>2. P95 尾延迟闸门：把性能写成断言</h3>
+<p>性能通常靠人肉压测，靠感觉。我们把它做成了断言：</p>
+<pre><code>登录换票      P95 ≤ 800ms
+connector 调用 P95 ≤ 1500ms
+样本 n=20，每次跑都测，超阈值直接红</code></pre>
+<p>数字本身不漂亮，但它挡住了一类真实退化：某个改动让登录多了一次串行 IO，功能全对，用户开始抱怨"这系统点一下要等一下"。没有闸门，这种退化会活到线上，然后变成"感觉有点慢"这种无法定位的模糊投诉。</p>
+<p>阈值走环境变量（<code>P95_GATE_LOGIN_MS</code> / <code>P95_GATE_INVOKE_MS</code>），因为 CI 机器的性能和你自己的机器不一样，硬编码会让本地开发天天假红。</p>
+<h3>3. 崩溃恢复：kill -9 之后数据还在吗</h3>
+<p>存储这块，我们做了 SQLite 后端契约测试。核心断言只有一条，但它比一百条 CRUD 断言有用：</p>
+<pre><code>kill -9 子实例 → 重启 → 崩溃前创建的账号可以登录（凭证哈希完整）</code></pre>
+<p><code>kill -9</code> 是故意的，不是 <code>SIGTERM</code>。<code>SIGTERM</code> 会走优雅关闭，缓存刷盘、连接关闭全都正常执行，测出来的"数据没丢"没有意义——真实事故里进程是被 OOM killer 干掉的。</p>
+<p>这一节还断言了"JSON 遗留数据回填到 SQLite 后 API 可见"，也就是迁移路径本身要在测试里走一遍，不能只测新库。</p>
+<h3>4. 跨后端契约：同一套断言跑两种存储</h3>
+<p>业务集合有 JSON 和 SQLite 两种形态。同一批断言在两种后端下都要绿。</p>
+<p>这里翻过车：一开始只测 JSON，切到 SQLite 后发现"一人一号"的唯一约束在 JSON 后端靠代码判重、在 SQLite 后端靠 UNIQUE INDEX，两条路径的错误码不一样，前端只认其中一个。断言写细之后才发现。</p>
+<p>现在关于唯一约束的断言是四条，覆盖：同 provider 二次绑定被拒、同三方身份跨 corpId 放行（唯一键要含 corpId）、同 tick 连发 6 次重复绑定恰一条成功、绕过服务层直插同键记录被索引拒绝。最后一条是专门写来防止"约束只写在服务层"的。</p>
+<hr>
+<h2>四、测试自己也会骗人：六个真实教训</h2>
+<p>这一段是这篇文章里最该被抄走的部分。以下全部是我们自己的历史 bug，脚本注释里都留着日期。</p>
+<p><strong>1. 硬编码的版本号，会随着发版双红。</strong> 断言里写了 <code>expect version === '1.1.0'</code>。仓库升到 1.2.0 那天，两条断言一起红，看起来像"版本功能坏了"，实际是测试自己过期。现在版本号从 <code>package.json</code> 动态读。</p>
+<p><strong>2. 固定端口会跟并行实例打架，产生假失败。</strong> 测试用过 7313/7316/7318/7319/7322/7399 一组固定端口。有一次两个测试同时跑，端口抢占，出现了 5 条"功能坏了"的假失败——我们花了半天去查一个不存在的 bug。现在子实例用 <code>listen(0)</code> 让内核分配端口，取到后立刻释放再绑。想复现历史环境可以 <code>SELFTEST_PIN_PORTS=1</code> 钉死。</p>
+<p><strong>3. 测试进程崩掉，会把汇总输出一起吞掉。</strong> 收尾阶段的一个晚到的 <code>unhandledRejection</code>（undici keep-alive 连接）能让整个进程挂掉，结果不是"某条断言失败"，而是<strong>没有任何汇总输出</strong>——你只看到 CI 红了，不知道红在哪。现在会捕获、打印、不阻断汇总。</p>
+<p><strong>4. 用一个数字字面量当"权限点总数"，然后发版前才发现对不上。</strong> 这类断言的正确写法不是 <code>=== 85</code>，而是"清单里的权限点集合 == 实现里声明的权限点集合"——测的是<strong>一致性</strong>，不是<strong>计数</strong>。计数会变，一致性不该变。</p>
+<p><strong>5. 顺手 mock 掉的对象，会先变成"通过"，再变成"没人知道它到底在不在"。</strong> 早期有一个 stub，把第三方目录服务的响应写死。后来真实接口改了字段名，stub 没改，测试一路绿——直到线上联调。现在 stub 的字段名从真实文档的示例 JSON 里粘贴，并且单独有一条断言校验 stub 的响应形状。</p>
+<p><strong>6. 断言写"应该返回 403"，但没写"谁被 403"。</strong> RBAC 那节最后收敛成了矩阵驱动：普通成员直调管理端点，<strong>100% 被拒</strong>——遍历权限点 × 端点，任何一格放行就是红。这条断言抓到过两次真实的越权。单点断言抓不到，因为漏的那个点你根本没想到去写。</p>
+<hr>
+<h2>五、我们测不到什么</h2>
+<p>诚实部分。这 1822 条断言不能证明的事：</p>
+<p><strong>多节点。</strong> 全部断言跑在单进程单实例上。我们没有做水平扩展，多节点 HA 需要换 Postgres 后端，架构规划在 ADR 里，没有实现。所以"两个节点同时写同一条记录会怎样"这个问题，测试回答不了。</p>
+<p><strong>真实上游的长期行为。</strong> 模型网关测的是真实转发，但上游是测试 endpoint。上游的限流策略、配额耗尽、模型下线这些行为，测试里是注入的，不是自然发生的。</p>
+<p><strong>人的操作。</strong> 审批 SLA、二次确认、终审可追溯这些，测的是状态机和 API 契约。真实的"审批人休假两周，单子卡住了怎么办"，测不到。</p>
+<p><strong>性能的天花板。</strong> P95 闸门是回归防护，不是容量测试。它防退化，不告诉你 500 并发会怎样。</p>
+<p><strong>浏览器端到端。</strong> 我们有一个基于 jsdom 的页面烟测，但它不是真浏览器。真实的 CSS 布局崩坏、字体加载失败、移动端点不到按钮，这些要靠手工验收。</p>
+<p><strong>权限点的语义正确性。</strong> 矩阵能证明"该拒的都拒了"，不能证明"该给的对的人真的给了"。那取决于权限点划分得对不对，这是设计问题，不是测试问题。</p>
+<hr>
+<h2>六、如果只抄一条</h2>
+<p>如果这套东西只能带走一条经验，我会选这个：</p>
+<p><strong>把"要拦住什么"写成断言，而不是把"要做出什么"写成断言。</strong></p>
+<p>1822 条断言里，一半以上是负数断言——断言某个东西<strong>不能</strong>发生：没有 token 不能读、被冻结的账号不能续期、审计没落必须透出、目录漂移必须 fail-closed、唯一约束在绕过服务层时依然生效。</p>
+<p>正数断言保护的是功能，负数断言保护的是边界。而一个管控平台，本质上就是一堆边界。</p>
+<hr>
+<p><em>项目：<a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a>（MIT）· 30 个插件包 / 94 个权限点 / 499 条声明路由 / 98 个 MCP 工具。文中 1822 为 README 与 CI badge 口径，selftest 内建「落地页断言数 = 本次实际断言总数」自校验，本地批次跑得更高时也不让 badge 跟着最大值走，只跟已发布版本。</em></p>
+</article>
+<p style="margin-top:40px;font-size:13.5px;color:var(--t3)">源码 MIT：<a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a> · 免登只读演示：<a href="https://demo.ybkkasi.com/">demo.ybkkasi.com</a></p>
+</div></main>
+<footer class="site"><div class="wrap">
+  <span>© 2026 杭州元冰可科技有限公司 · 企业 AI 资产治理</span>
+  <span>MIT · <a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a></span>
+</div></footer>
+</body>
+</html>
