@@ -1689,14 +1689,20 @@ try {
     const nav = appSrc.slice(appSrc.indexOf('const NAV = ['), appSrc.indexOf('const app = $('))
     const registerGone = !cmdkSrc.includes(`hash: '#/register'`) && !nav.includes(`'#/register'`)
     check('前端 IA：资产登记（#/register）已从导航与命令面板下线', registerGone)
-    const collabGroup = nav.slice(nav.indexOf("section: '协作与执行'"), nav.indexOf("section: '治理'"))
+    // 分类名可能被 i18n 包裹（section: rqI18n.t('协作与执行')），断言须同时容忍两种写法
+    const secIdx = (name) => {
+      const re = new RegExp(`section: (?:rqI18n\\.t\\()?'${name}'\\)?`)
+      const m = nav.match(re)
+      return m ? m.index : -1
+    }
+    const collabGroup = nav.slice(secIdx('协作与执行'), secIdx('治理'))
     check('前端 IA：「协作与执行」独立一级分类承载 执行中枢 / A2A 协作 / UHP 执行',
-      nav.includes("section: '协作与执行'")
+      secIdx('协作与执行') >= 0
       && collabGroup.includes("'#/exec'") && collabGroup.includes("'#/a2a'") && collabGroup.includes("'#/a2a?tab=uhp'"))
-    const resourceGroup = nav.slice(nav.indexOf("section: '资源'"), nav.indexOf("section: '协作与执行'"))
+    const resourceGroup = nav.slice(secIdx('资源'), secIdx('协作与执行'))
     check('前端 IA：A2A 与数据权限已不在资源组（A2A 迁协作与执行、数据权限迁治理）',
       !resourceGroup.includes("'#/a2a") && !resourceGroup.includes("'#/nas-authz'"))
-    const governGroup = nav.slice(nav.indexOf("section: '治理'"), nav.indexOf("section: '企业'"))
+    const governGroup = nav.slice(secIdx('治理'), secIdx('企业'))
     check('前端 IA：数据权限（#/nas-authz）归入治理分类', governGroup.includes("'#/nas-authz'"))
   }
 
