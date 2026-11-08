@@ -1689,14 +1689,20 @@ try {
     const nav = appSrc.slice(appSrc.indexOf('const NAV = ['), appSrc.indexOf('const app = $('))
     const registerGone = !cmdkSrc.includes(`hash: '#/register'`) && !nav.includes(`'#/register'`)
     check('前端 IA：资产登记（#/register）已从导航与命令面板下线', registerGone)
-    const collabGroup = nav.slice(nav.indexOf("section: '协作与执行'"), nav.indexOf("section: '治理'"))
+    // 分类名可能被 i18n 包裹（section: rqI18n.t('协作与执行')），断言须同时容忍两种写法
+    const secIdx = (name) => {
+      const re = new RegExp(`section: (?:rqI18n\\.t\\()?'${name}'\\)?`)
+      const m = nav.match(re)
+      return m ? m.index : -1
+    }
+    const collabGroup = nav.slice(secIdx('协作与执行'), secIdx('治理'))
     check('前端 IA：「协作与执行」独立一级分类承载 执行中枢 / A2A 协作 / UHP 执行',
-      nav.includes("section: '协作与执行'")
+      secIdx('协作与执行') >= 0
       && collabGroup.includes("'#/exec'") && collabGroup.includes("'#/a2a'") && collabGroup.includes("'#/a2a?tab=uhp'"))
-    const resourceGroup = nav.slice(nav.indexOf("section: '资源'"), nav.indexOf("section: '协作与执行'"))
+    const resourceGroup = nav.slice(secIdx('资源'), secIdx('协作与执行'))
     check('前端 IA：A2A 与数据权限已不在资源组（A2A 迁协作与执行、数据权限迁治理）',
       !resourceGroup.includes("'#/a2a") && !resourceGroup.includes("'#/nas-authz'"))
-    const governGroup = nav.slice(nav.indexOf("section: '治理'"), nav.indexOf("section: '企业'"))
+    const governGroup = nav.slice(secIdx('治理'), secIdx('企业'))
     check('前端 IA：数据权限（#/nas-authz）归入治理分类', governGroup.includes("'#/nas-authz'"))
   }
 
@@ -8845,9 +8851,11 @@ try {
     check('locale 决议链（query > cookie > Accept-Language > env）',
       i18n.resolveRequestLocale({ query: 'ja' }) === 'ja-JP'
       && i18n.resolveRequestLocale({ cookie: 'en-US', acceptLanguage: 'ja-JP' }) === 'en-US'
-      && i18n.resolveRequestLocale({ acceptLanguage: 'fr-FR,ja;q=0.5' }) === 'ja-JP'
-      && i18n.resolveRequestLocale({ env: 'en-GB' }) === 'en-US')
-    // 词典齐套：全部 locale 目录 JSON 可解析 + en/ja 键集逐对一致
+      && i18n.resolveRequestLocale({ acceptLanguage: 'ko-KR,ja;q=0.5' }) === 'ja-JP'
+      && i18n.resolveRequestLocale({ env: 'en-GB' }) === 'en-US'
+      && i18n.resolveRequestLocale({ acceptLanguage: 'fr-CA,fr;q=0.9' }) === 'fr-FR'
+      && i18n.resolveRequestLocale({ cookie: 'fr' }) === 'fr-FR')
+    // 词典齐套：全部 locale 目录 JSON 可解析 + en 与 ja/fr 键集逐对一致
     const localeRoot = new URL('../packages/platform-i18n/locales/', import.meta.url).pathname
     const dictParityFails = []
     let dictPairs = 0
@@ -8857,22 +8865,29 @@ try {
       const enFiles = existsSync(join(rootDir, 'en-US')) ? readdirSync(join(rootDir, 'en-US')).filter((f) => f.endsWith('.json')) : []
       for (const name of enFiles) {
         const enPath = join(rootDir, 'en-US', name)
-        const jaPath = join(rootDir, 'ja-JP', name)
-        if (!existsSync(jaPath)) { dictParityFails.push(`缺 ja 侧文件：${jaPath}`); continue }
-        let en, ja
-        try { en = JSON.parse(readFileSync(enPath, 'utf8')); ja = JSON.parse(readFileSync(jaPath, 'utf8')) }
-        catch (error) { dictParityFails.push(`JSON 解析失败 ${name}: ${error.message}`); continue }
-        dictPairs += 1
-        const enKeys = Object.keys(en).sort()
-        const jaKeys = Object.keys(ja).sort()
-        if (JSON.stringify(enKeys) !== JSON.stringify(jaKeys)) {
-          const onlyEn = enKeys.filter((k) => !(k in ja)).slice(0, 3)
-          const onlyJa = jaKeys.filter((k) => !(k in en)).slice(0, 3)
-          dictParityFails.push(`${name} 键集不一致 onlyEn=${onlyEn} onlyJa=${onlyJa}`)
+        const en = await (async () => {
+          try { return JSON.parse(readFileSync(enPath, 'utf8')) }
+          catch (error) { dictParityFails.push(`JSON 解析失败 en-US/${name}: ${error.message}`); return null }
+        })()
+        if (!en) continue
+        for (const [langLabel, langDir] of [['ja', 'ja-JP'], ['fr', 'fr-FR']]) {
+          const langPath = join(rootDir, langDir, name)
+          if (!existsSync(langPath)) { dictParityFails.push(`缺 ${langLabel} 侧文件：${langPath}`); continue }
+          let lang
+          try { lang = JSON.parse(readFileSync(langPath, 'utf8')) }
+          catch (error) { dictParityFails.push(`JSON 解析失败 ${langDir}/${name}: ${error.message}`); continue }
+          dictPairs += 1
+          const enKeys = Object.keys(en).sort()
+          const langKeys = Object.keys(lang).sort()
+          if (JSON.stringify(enKeys) !== JSON.stringify(langKeys)) {
+            const onlyEn = enKeys.filter((k) => !(k in lang)).slice(0, 3)
+            const onlyLang = langKeys.filter((k) => !(k in en)).slice(0, 3)
+            dictParityFails.push(`${langDir}/${name} 键集不一致 onlyEn=${onlyEn} only${langLabel.toUpperCase()}=${onlyLang}`)
+          }
         }
       }
     }
-    check(`词典齐套：${dictPairs} 对 en/ja 文件 JSON 可解析且键集一致`, dictPairs >= 8 && dictParityFails.length === 0, dictParityFails.slice(0, 4).join('；'))
+    check(`词典齐套：${dictPairs} 对 en/ja/fr 文件 JSON 可解析且键集一致`, dictPairs >= 12 && dictParityFails.length === 0, dictParityFails.slice(0, 4).join('；'))
     // /locales 合并端点 + 请求级语言协商
     const localesEn = await fetch(`${BASE}/locales/en-US`).then((r) => r.json())
     check('/locales/en-US 合并端点（catalog 含通用键，规模 >100）',
