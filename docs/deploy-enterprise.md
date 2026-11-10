@@ -3,6 +3,9 @@
 > 适用对象：基于 **DeepSeek Harness（dsh）** 为企业部署本仓库（元冰可 · 企业 AI 资源统一管理平台）的工程师，
 > 以及希望把部署/接入工作**直接下达给 dsh 自带 Agent 自动完成**的使用者。
 > 日常运维（非部署）的 Agent 指引见 `skills/dsh-ops-admin/SKILL.md`（总控索引）。
+>
+> 源码仓库：https://github.com/01men/ybkkasi ｜ 在线演示（免部署，5 分钟看完控制台）：https://demo.ybkkasi.com/launch ｜ 产品站：https://ybkkasi.com
+> 只想验证能力再决定是否自建：先看演示，再回本文按形态 A 落地。
 
 ---
 
@@ -33,7 +36,7 @@
 ### 步骤 1：获取代码与依赖
 
 ```bash
-git clone <仓库地址> ops-platform && cd ops-platform
+git clone https://github.com/01men/ybkkasi.git ops-platform && cd ops-platform
 npm install                # 预期：无 ERR 结尾；package-lock 未变时秒级完成
 ```
 
