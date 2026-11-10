@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 拿着一把万能 token 横冲直撞：一次真实的越权复盘 · 元冰可</title>
+<meta name="description" content="MCP 通道漏传两个归属字段，权限全过但没人说得清「过的人是谁」。一次 40 行函数里的漏传，怎么变成越权。">
+<link rel="canonical" href="https://ybkkasi.com/blog/agent-wildcard-token/">
+<meta property="og:title" content="Agent 拿着一把万能 token 横冲直撞：一次真实的越权复盘">
+<meta property="og:description" content="MCP 通道漏传两个归属字段，权限全过但没人说得清「过的人是谁」。一次 40 行函数里的漏传，怎么变成越权。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://ybkkasi.com/blog/agent-wildcard-token/">
+<link rel="icon" href="/ybk-mark.png">
+<style>
+:root{--bg:#f8f6f3;--surface:#fffdfb;--border:#e0ddd8;--t1:#231f1d;--t2:#4d4643;--t3:#706864;
+--brand:#0a5f87;--brand-deep:#084a68;--brand-soft:#e8f1f6;--ok:#2F9E44;
+--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t1);font-family:var(--font);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 22px}
+header.site{border-bottom:1px solid var(--border);background:rgba(248,246,243,.92);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;color:var(--t1)}
+.brand img{width:22px;height:22px;border-radius:6px}
+.brand span.sub{font-size:11px;letter-spacing:2px;color:#7E9AD2;font-weight:500}
+.nav{display:flex;gap:18px;font-size:13.5px}
+.nav a{color:var(--t2)}
+main{padding:52px 0 80px}
+.meta{font-size:12.5px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.meta em{font-style:normal;color:var(--brand);font-weight:600}
+h1.post{font-size:31px;line-height:1.32;letter-spacing:-.015em;margin-bottom:26px;font-weight:700}
+article h2{font-size:20.5px;margin:44px 0 15px;padding-top:16px;border-top:1px solid var(--border);letter-spacing:-.01em}
+article h3{font-size:17px;margin:28px 0 10px}
+article p{margin:0 0 17px;color:var(--t2);font-size:16px}
+article strong{color:var(--t1);font-weight:650}
+article ul,article ol{margin:0 0 18px 22px;color:var(--t2);font-size:16px}
+article li{margin-bottom:8px}
+article code{font-family:var(--mono);font-size:13.5px;background:#efece7;padding:1.5px 5px;border-radius:4px;color:#0a4a68}
+article pre{background:#201f1d;border-radius:8px;padding:15px 17px;overflow-x:auto;margin:0 0 20px}
+article pre code{background:none;color:#e8e4de;font-size:13px;padding:0;line-height:1.65}
+article table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;table-layout:fixed}
+article th,article td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;word-break:break-word}
+article th{background:var(--brand-soft);font-weight:600;color:var(--brand-deep);font-size:13px}
+article hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+article a{border-bottom:1px solid rgba(10,95,135,.28)}
+article blockquote{border-left:3px solid var(--border);padding:2px 0 2px 16px;margin:0 0 18px;color:var(--t3);font-size:15px}
+.post-list{list-style:none}
+.post-list li{border-top:1px solid var(--border);padding:24px 0}
+.post-list li:first-child{border-top:none;padding-top:0}
+.post-list h2{font-size:20px;font-weight:650;margin:0 0 8px;border:none;padding:0}
+.post-list h2 a{color:var(--t1);border:none}
+.post-list h2 a:hover{color:var(--brand);text-decoration:none}
+.post-list p{color:var(--t3);font-size:14px;margin:0}
+.post-list .d{font-size:12.5px;color:var(--t3);letter-spacing:.05em;margin-bottom:7px}
+footer.site{border-top:1px solid var(--border);padding:26px 0;font-size:12.5px;color:var(--t3)}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+@media(max-width:640px){h1.post{font-size:24px}article h2{font-size:18.5px}article p,article li{font-size:15px}main{padding:34px 0 60px}}
+</style>
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/ybk-mark.png" alt=""><span>元冰可</span><span class="sub">YBK</span></a>
+  <nav class="nav">
+    <a href="/blog/">技术笔记</a>
+    <a href="https://ybkkasi.com/docs">文档</a>
+    <a href="https://github.com/01men/ybkkasi">GitHub</a>
+    <a href="https://demo.ybkkasi.com/">演示</a>
+  </nav>
+</div></header>
+<main><div class="wrap">
+<div class="meta">工程实践 · <em>iam</em></div>
+<h1 class="post">Agent 拿着一把万能 token 横冲直撞：一次真实的越权复盘</h1>
+<article>
+<p>那天我们在自己的代码里发现了一个鉴权漏洞。它不是设计缺陷，是一个 40 行函数里漏传的两个字段。</p>
+<p>这篇文章讲三件事：这个漏洞怎么被发现的、它为什么是「万能 token」问题的典型形态、以及我们把鉴权从「一把钥匙」改成「一串钥匙」时踩过的坑。</p>
+<p>不含产品宣传，只含代码和教训。</p>
+<hr>
+<h2>一、漏洞长什么样</h2>
+<p>元冰可把自己的平台同时暴露成三种入口：</p>
+<ul><li>REST 网关（<code>/api/*</code>），给控制台和外部系统调</li><li>MCP Server 端点（<code>/mcp</code>，JSON-RPC over HTTP），给 Claude Code、dsh 这类 MCP 客户端连</li><li>dsh 宿主桥，给 DeepSeek Harness 里的插件调</li></ul>
+<p>三条入口，理论上应该共用同一套鉴权中间件、同一套权限点、同一个主体结构。这是设计前提。</p>
+<p>我们的 MCP 端点鉴权代码在 <code>packages/plugin-console/src/routes/bridge.ts</code>，函数叫 <code>mcpCallerFromToken</code>。它做的事情看起来很标准：读 Authorization 头，验 Bearer 令牌，构造一个 <code>CallerInfo</code> 返回。</p>
+<p>某天有人（就是我）读这段代码的时候发现，构造 <code>CallerInfo</code> 时是这样的：</p>
+<pre><code>return {
+  kind: verified.principal.type,
+  principalId: verified.principal.id,
+  ...(verified.principal.type === &#x27;human&#x27; &amp;&amp; verified.principal.refId
+    ? { userId: verified.principal.refId }
+    : {}),
+  name: verified.principal.name,
+  permissions: verified.scopes,
+  actChain: verified.actChain,
+}</code></pre>
+<p>问题在于：当 <code>principal.type === 'machine'</code>（也就是 Agent 用的机器令牌）时，<strong><code>refType</code> 和 <code>refId</code> 两个字段没有被带上去</strong>。</p>
+<p><code>refType/refId</code> 是什么？它标识「这个凭证背后关联的是哪个具体资源」。human 凭证背后是一个用户，machine 凭证背后是一个 Agent。</p>
+<p>这两个字段一旦丢了，后续所有「按资源反查任务归属」的逻辑就全部失灵。</p>
+<h2>二、它是怎么变成越权的</h2>
+<p>单独丢两个字段，看起来只是个「数据不完整」。它变成越权，是因为下游有一段这样的逻辑。</p>
+<p><code>plugin-exec-hub</code> 里有个工具叫 <code>exec_claim</code>，Agent 在执行任务前要调它取执行锁。它需要知道「这次执行属于谁」。判断依据是：</p>
+<pre><code>exec.principal.refType === &#x27;agent&#x27; &amp;&amp; exec.principal.refId === 当前Agent</code></pre>
+<p>REST 链路上的鉴权中间件是从完整的主体记录里构造 <code>CallerInfo</code> 的，<code>refType/refId</code> 一直在。所以同一个 Agent，走 REST 调 <code>exec_claim</code>，归属判断正确；走 MCP 调 <code>exec_claim</code>，<code>refType</code> 是 undefined，判断条件永远不成立。</p>
+<p>代码里给它留了退路：</p>
+<pre><code>// 非受管（resolveByCaller=null）→ 落回旧 exec_claim 语义（保持兼容）</code></pre>
+<p>于是所有从 MCP 进来的执行，主体都被判定为「非受管」，走旧的宽松语义。</p>
+<p>翻译成人话：<strong>MCP 通道上，Agent 的执行任务不属于任何 Agent。</strong></p>
+<p>后果是连锁的：</p>
+<ol><li>执行锁拿不到归属，做不了「一个 Agent 不能抢另一个 Agent 的活」这类约束</li><li>审计日志记下来的主体不完整，事后追责追不到具体 Agent</li><li>成本归因算不出来——这条消耗记不到任何 Agent 头上，最后落进「无法归类」桶里</li><li>权限点虽然还在令牌上（<code>permissions: verified.scopes</code> 照常带了），但缺少资源维度的约束，等于一把万能钥匙开所有门——只要这个钥匙能进门</li></ol>
+<p>最后一条是关键。<strong>多数人理解越权时想的是「令牌权限太大」，但这次的真实情况是「令牌权限刚好够，主体身份丢了」。</strong> 权限检查全过，只是没人能说清「过的人是谁」。</p>
+<h2>三、为什么它躲过了两轮测试</h2>
+<p>三个原因叠在一起，缺一不可。</p>
+<p><strong>第一，两条链路的 CallerInfo 结构本来就不一致。</strong> REST 走中间件构造，带全字段；MCP 走独立函数构造，只带部分字段。这两个函数在代码里相隔几百行，没有共享类型约束——<code>CallerInfo</code> 的 <code>refType/refId</code> 是可选字段（<code>refType?: string</code>），TypeScript 不会报错。</p>
+<p><strong>第二，测试只测了「能调通」。</strong> 早期的 MCP 端点测试断言的是：正确的令牌能返回工具列表、无令牌返回 401、过期令牌返回 401。这些都是入口测试。没有任何一条断言去检查「Agent A 的令牌执行的任务，归属是不是 Agent A」。</p>
+<p><strong>第三，兼容性退路掩盖了它。</strong> <code>resolveByCaller=null → 落回旧语义</code> 这行是当年为了平滑迁移留的。它让系统在任何新链路出问题时都不会崩，代价是<strong>故障静默降级成了宽松模式</strong>。这类「为了不炸而写的兜底」是治理平台里最危险的代码形态，因为它把「明确的失败」换成了「看不见的失守」。</p>
+<h2>四、我们怎么改的</h2>
+<p>改动本身只有几行。<code>bridge.ts</code> 里补上 machine 分支：</p>
+<pre><code>...(verified.principal.type === &#x27;machine&#x27;
+  ? { refType: verified.principal.refType, refId: verified.principal.refId }
+  : {}),</code></pre>
+<p>补完之后 <code>/mcp</code> 和 <code>/api/tools/execute</code> 两条链路的 <code>CallerInfo</code> 结构完全一致：machine 主体带 <code>refType/refId</code>，human 主体带 <code>userId</code>。</p>
+<p>但真正花时间的是后面的三件事。</p>
+<p><strong>把两条链路的主体结构对齐这件事写成了断言。</strong> 不是加日志，是加测试断言：任何构造 <code>CallerInfo</code> 的代码路径，都必须覆盖齐这四个字段（human: <code>userId</code>；machine: <code>refType</code>/<code>refId</code>），少一个直接让测试变红。我们现在有 1822 条自测断言，这条归属一致性检查在里面。</p>
+<p><strong>删掉了那条兼容性退路。</strong> 主体解析不出来就是解析不出来，返回明确错误让调用方知道。理由很直接：治理平台宁可拒绝一次合法请求，也不能放过一次归属不明的执行。</p>
+<p><strong>把「主体不完整」变成一类可观测事件。</strong> 主体字段缺失时写一条审计日志，带上来源入口（rest / mcp / dsh）。这次故障真正被发现的路径不是测试，是有人注意到 MCP 链路的成本里「无法归类」那一栏异常高。</p>
+<h2>五、从这一个 bug 想到的更大的事</h2>
+<p>修完这个漏洞，我们把「万能 token」这个词重新想了一遍。</p>
+<p>问题从来不是「要不要发令牌」，而是<strong>令牌代表什么</strong>。</p>
+<p>传统 RBAC 的模型是一个主体对应一个角色，角色对应一组权限。这在人有明确岗位的时候成立。Agent 不一样——同一个 Agent 在不同时刻需要不同的权限：</p>
+<ul><li>白天做数据分析，只需要读数据库</li><li>晚上做归档，需要写存储</li><li>被另一个 Agent 委托时，需要临时多一层权限</li></ul>
+<p>我们的解法是把令牌拆成四层：</p>
+<table><thead><tr><th>层</th><th>字段</th><th>作用</th></tr></thead><tbody><tr><td>主体</td><td><code>principal.type</code> + <code>refId</code></td><td>这是谁</td></tr><tr><td>委托</td><td><code>actChain</code></td><td>谁让它干的（on-behalf-of 链，签发时叠加）</td></tr><tr><td>权限</td><td><code>scopes</code></td><td>能做什么（94 个权限点，最小声明）</td></tr><tr><td>归属</td><td><code>refType</code> + <code>refId</code></td><td>消耗记到哪个资产头上</td></tr></tbody></table>
+<p>关键在第四层。<strong>前三层决定「允不允许」，第四层决定「算谁的」。</strong> 没有第四层，一个 Agent 能做的事和另一个 Agent 能做的事可能完全一样，但所有消耗和审计都是匿名的——这就是万能 token 的真正形态。</p>
+<p>委托链也是同理。人给应用发令牌，应用再给 Agent 发令牌，这条链如果不记下来，审计时就只能看到最外层的应用，看不到实际是谁在操作。<code>actChain</code> 是把这条链钉进令牌里的，审计侧可以完整还原。</p>
+<h2>六、几条我们自己的规矩</h2>
+<p>写下来给同样在做 Agent 治理的团队参考。</p>
+<p><strong>一条链路一个 CallerInfo 构造函数。</strong> 别在每个入口各写一份主体解析。我们的 <code>/mcp</code> 最初独立写了解析函数，现在虽然还是两处代码，但有断言强制它们结构一致。更好的做法是抽成一个函数，让类型系统帮你记住。</p>
+<p><strong>治理平台的兜底逻辑默认应该是 fail-closed。</strong> 「解析不出来就退回旧语义」这种写法在任何 CRUD 系统里都是罪，在治理系统里是更大罪。它把「告警会响」换成了「日志里多个桶」。</p>
+<p><strong>测试要测归属，不要只测鉴权。</strong> 「无令牌返回 401」测的是入口。「A 的令牌产生的副作用归属 A」测的是治理。这两件事是完全不同的断言，我们早期只写了前者。</p>
+<p><strong>主体字段缺失是可观测事件，不是静默降级。</strong> 我们的 <code>/mcp</code> 端点按设计就要求 Bearer 令牌，匿名 introspection 请求会直接 401。这看起来很不友好（有些第三方 MCP 目录要求匿名可探测），但放宽鉴权去迎合检查是不可接受的——那正好是「万能 token」问题本身。</p>
+<hr>
+<h2>边界</h2>
+<p>我们解决的「万能 token」问题是：Agent 拿到的令牌权限过大、缺少资源归属、委托链丢失、审计追不到人。</p>
+<p>我们没解决的：</p>
+<ul><li>令牌泄露后的止损（吊销广播链路有了，但不做 token 指纹检测）</li><li>Agent 决策过程的合规（我们只管调用，不管推理）</li><li>跨组织边界的权限联邦（OIDC Provider 接了，但不做跨租户授权协商）</li></ul>
+<p>这些都是别的层的问题。我们把「谁能调什么、消耗算谁的、出事查得到谁」这三件事收在了一个模型里，剩下的没做。</p>
+<hr>
+<h2>相关</h2>
+<ul><li>仓库：https://github.com/01men/ybkkasi （MIT，自托管）</li><li>演示控制台：https://demo.ybkkasi.com （免登录只读）</li><li>1822 条自测断言 · 94 个权限点 · 499 条 REST 路由（458 条受权限点保护） · 30 个插件</li></ul>
+<p>代码在 <code>packages/plugin-console/src/routes/bridge.ts</code> 和 <code>packages/plugin-exec-hub/src/index.ts</code>，都可以直接读。</p></article>
+</div></main>
+<footer class="site"><div class="wrap">
+  <span>© 2026 杭州元冰可科技有限公司 · 企业 AI 资产治理</span>
+  <span>MIT · <a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a></span>
+</div></footer>
+</body>
+</html>
