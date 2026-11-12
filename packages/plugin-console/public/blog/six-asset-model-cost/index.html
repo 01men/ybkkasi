@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>为什么我们把 6 类 AI 资产统一成了一套模型——以及其中 3 类的成本其实是假的 · 元冰可</title>
+<meta name="description" content="MCP 服务、Skill、Agent、模型、AI 应用、NAS 六类东西全部塞进一个 items 数组。统一是对的，但我们有三类的成本字段至今是硬编码 0——这篇文章讲清统一模型的代价与边界。">
+<link rel="canonical" href="https://ybkkasi.com/blog/six-asset-model-cost/">
+<meta property="og:title" content="为什么我们把 6 类 AI 资产统一成了一套模型——以及其中 3 类的成本其实是假的">
+<meta property="og:description" content="MCP 服务、Skill、Agent、模型、AI 应用、NAS 六类东西全部塞进一个 items 数组。统一是对的，但我们有三类的成本字段至今是硬编码 0——这篇文章讲清统一模型的代价与边界。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://ybkkasi.com/blog/six-asset-model-cost/">
+<link rel="icon" href="/ybk-mark.png">
+<style>
+:root{--bg:#f8f6f3;--surface:#fffdfb;--border:#e0ddd8;--t1:#231f1d;--t2:#4d4643;--t3:#706864;
+--brand:#0a5f87;--brand-deep:#084a68;--brand-soft:#e8f1f6;--ok:#2F9E44;
+--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t1);font-family:var(--font);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 22px}
+header.site{border-bottom:1px solid var(--border);background:rgba(248,246,243,.92);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;color:var(--t1)}
+.brand img{width:22px;height:22px;border-radius:6px}
+.brand span.sub{font-size:11px;letter-spacing:2px;color:#7E9AD2;font-weight:500}
+.nav{display:flex;gap:18px;font-size:13.5px}
+.nav a{color:var(--t2)}
+main{padding:52px 0 80px}
+.meta{font-size:12.5px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.meta em{font-style:normal;color:var(--brand);font-weight:600}
+h1.post{font-size:31px;line-height:1.32;letter-spacing:-.015em;margin-bottom:26px;font-weight:700}
+article h2{font-size:20.5px;margin:44px 0 15px;padding-top:16px;border-top:1px solid var(--border);letter-spacing:-.01em}
+article h3{font-size:17px;margin:28px 0 10px}
+article p{margin:0 0 17px;color:var(--t2);font-size:16px}
+article strong{color:var(--t1);font-weight:650}
+article ul,article ol{margin:0 0 18px 22px;color:var(--t2);font-size:16px}
+article li{margin-bottom:8px}
+article code{font-family:var(--mono);font-size:13.5px;background:#efece7;padding:1.5px 5px;border-radius:4px;color:#0a4a68}
+article pre{background:#201f1d;border-radius:8px;padding:15px 17px;overflow-x:auto;margin:0 0 20px}
+article pre code{background:none;color:#e8e4de;font-size:13px;padding:0;line-height:1.65}
+article table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;table-layout:fixed}
+article th,article td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;word-break:break-word}
+article th{background:var(--brand-soft);font-weight:600;color:var(--brand-deep);font-size:13px}
+article hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+article a{border-bottom:1px solid rgba(10,95,135,.28)}
+article blockquote{border-left:3px solid var(--border);padding:2px 0 2px 16px;margin:0 0 18px;color:var(--t3);font-size:15px}
+.post-list{list-style:none}
+.post-list li{border-top:1px solid var(--border);padding:24px 0}
+.post-list li:first-child{border-top:none;padding-top:0}
+.post-list h2{font-size:20px;font-weight:650;margin:0 0 8px;border:none;padding:0}
+.post-list h2 a{color:var(--t1);border:none}
+.post-list h2 a:hover{color:var(--brand);text-decoration:none}
+.post-list p{color:var(--t3);font-size:14px;margin:0}
+.post-list .d{font-size:12.5px;color:var(--t3);letter-spacing:.05em;margin-bottom:7px}
+footer.site{border-top:1px solid var(--border);padding:26px 0;font-size:12.5px;color:var(--t3)}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+@media(max-width:640px){h1.post{font-size:24px}article h2{font-size:18.5px}article p,article li{font-size:15px}main{padding:34px 0 60px}}
+</style>
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/ybk-mark.png" alt=""><span>元冰可</span><span class="sub">YBK</span></a>
+  <nav class="nav">
+    <a href="/blog/">技术笔记</a>
+    <a href="https://ybkkasi.com/docs">文档</a>
+    <a href="https://github.com/01men/ybkkasi">GitHub</a>
+    <a href="https://demo.ybkkasi.com/">演示</a>
+  </nav>
+</div></header>
+<main><div class="wrap">
+<div class="meta">工程实践 · 资产台账</div>
+<h1 class="post">为什么我们把 6 类 AI 资产统一成了一套模型——以及其中 3 类的成本其实是假的</h1>
+<article>
+<p>你们公司现在有多少个 AI 相关的东西在跑？</p>
+<p>我拿这个问题问过几个团队，答案基本是三个版本：IT 说「MCP 服务大概七八个吧」，业务说「Agent 有十几个，具体哪些还在用不知道」，财务说「模型开了四家的账号，账单每月四万多」。<strong>三份台账，零重合。</strong></p>
+<p>这不是管理懒，是这六类东西天然长得不一样：</p>
+<ul><li><strong>MCP 服务</strong>有健康状态、有调用量、有版本，是「在线服务」的形状</li><li><strong>Skill</strong> 是给人用的提示词包，没有「运行中」这个状态，只有「发布/待审」</li><li><strong>Agent</strong> 是编排体，自己不产生 token，产生 token 的是它调用的模型</li><li><strong>模型</strong> 是平台自营的，没有「归属部门」，因为账单进来时就没带这个字段</li><li><strong>AI 应用</strong> 是对外的壳，成本要看它背后调了什么</li><li><strong>NAS 存储</strong> 连「调用」这个概念都不成立，只有容量和读次数</li></ul>
+<p>六种形状，六套字段，六张表。你问「谁在用 AI」，回答不了。</p>
+<p><strong>我们的选择是：不统一它们的实现，只统一它们的「可被问的那一面」。</strong></p>
+<h2>一、统一的是什么，不统一的是什么</h2>
+<p>先看接口。<code>/api/assets/inventory</code> 返回的是一个<strong>扁平数组</strong>，六类混在同一个 <code>items</code> 里：</p>
+<pre><code>{&quot;ok&quot;:true,&quot;data&quot;:{
+  &quot;days&quot;:30,
+  &quot;total&quot;:27,
+  &quot;summary&quot;:{
+    &quot;byType&quot;:{&quot;mcp&quot;:{&quot;total&quot;:5,&quot;inService&quot;:5},&quot;nas&quot;:{&quot;total&quot;:2,&quot;inService&quot;:0},
+              &quot;agent&quot;:{&quot;total&quot;:6,&quot;inService&quot;:5},&quot;app&quot;:{&quot;total&quot;:3,&quot;inService&quot;:3},
+              &quot;skill&quot;:{&quot;total&quot;:7,&quot;inService&quot;:6},&quot;model&quot;:{&quot;total&quot;:4,&quot;inService&quot;:0}},
+    &quot;unhealthy&quot;:0,
+    &quot;costCents30d&quot;:34786
+  },
+  &quot;items&quot;:[{&quot;type&quot;:&quot;mcp&quot;,&quot;id&quot;:&quot;mcp_mvckdqnj53jiqei5&quot;,&quot;name&quot;:&quot;数据分析引擎&quot;,
+            &quot;slug&quot;:&quot;datawise&quot;,&quot;status&quot;:&quot;online&quot;,&quot;health&quot;:&quot;healthy&quot;,&quot;exec&quot;:&quot;demo&quot;,
+            &quot;version&quot;:&quot;1.8.0&quot;,&quot;org&quot;:&quot;AI 平台部&quot;,&quot;updatedAt&quot;:&quot;...&quot;,
+            &quot;calls&quot;:5,&quot;costCents&quot;:9175}, ...]}}</code></pre>
+<p><code>items[]</code> 里每一条都有这 11 个字段：</p>
+<table><thead><tr><th>字段</th><th>语义</th><th>六类是否都有真实值</th></tr></thead><tbody><tr><td><code>type</code></td><td>六类之一</td><td>全部</td></tr><tr><td><code>id</code> / <code>slug</code> / <code>name</code></td><td>身份</td><td>全部</td></tr><tr><td><code>status</code></td><td>生命周期位置</td><td>全部，但<strong>枚举值不通用</strong>（见下）</td></tr><tr><td><code>health</code></td><td>健康</td><td>只有 mcp / agent / app / model 有意义</td></tr><tr><td><code>org</code></td><td>归属组织</td><td>全部</td></tr><tr><td><code>updatedAt</code></td><td>最后变更</td><td>全部</td></tr><tr><td><code>calls</code></td><td>30 天调用次数</td><td>只有 3 类是真的</td></tr><tr><td><code>costCents</code></td><td>30 天成本（分）</td><td><strong>只有 3 类是真的</strong></td></tr></tbody></table>
+<p><strong>统一的只有这 11 个「可以被跨类问」的字段。</strong> 版本号、endpoint、鉴权方式、依赖拓扑这些类内属性，一律留在各自的插件里，不进统一模型。</p>
+<p>这是第一个关键决策：<strong>统一模型不是「大宽表」，是「共同投影」</strong>。把六类的所有字段熔进一张表，结果是一张 80 列、其中 60 列永久 NULL 的表，查询还得写 <code>WHERE costCents IS NOT NULL</code> 来绕开假数据。我们宁可只投影 11 列，然后把「这 11 列之外的事」交给各域自己的接口。</p>
+<h2>二、第一个代价：<code>status</code> 这个词在六类里不是一回事</h2>
+<p>统一 <code>status</code> 字段是最容易踩的坑。真实枚举：</p>
+<table><thead><tr><th>类型</th><th>status 取值</th></tr></thead><tbody><tr><td>mcp</td><td><code>online</code> / <code>gray</code> / <code>unhealthy</code> / <code>offline</code></td></tr><tr><td>skill</td><td><code>published</code> / <code>pending_approval</code> / <code>draft</code> / <code>rejected</code></td></tr><tr><td>agent</td><td><code>online</code> / <code>trial</code> / <code>offline</code></td></tr><tr><td>model</td><td><code>online</code> / <code>offline</code></td></tr><tr><td>app</td><td><code>online</code> / <code>offline</code></td></tr><tr><td>nas</td><td><code>draft</code> / <code>online</code></td></tr></tbody></table>
+<p>「在线」不是六类共有的概念。Skill 没有「在线」这个状态——一个提示词包不运行，它只是「发布了」。NAS 的 <code>draft</code> 意思是「还没挂上去」。</p>
+<p>所以 <code>inService</code> 这个汇总指标只能靠枚举白名单算：</p>
+<pre><code>// packages/plugin-console/src/routes/dashboard.ts
+const byType: Record&lt;string, { total: number; inService: number }&gt; = {}
+for (const item of items) {
+  const bucket = byType[item.type] ?? { total: 0, inService: 0 }
+  bucket.total++
+  if ([&#x27;online&#x27;, &#x27;gray&#x27;, &#x27;published&#x27;].includes(item.status)) bucket.inService++
+  byType[item.type] = bucket
+}</code></pre>
+<p><code>['online','gray','published']</code>——<strong>三个值来自三个不同的域，硬编码在这一行里</strong>。这是技术债，但它诚实：与其造一个抽象的 <code>IN_SERVICE</code> 状态机再映射回来，不如让这行代码显式承认「三类各有一个『在用』的说法」。</p>
+<p>实测结果：<code>skill</code> 7 个里 1 个 <code>pending_approval</code>（合同条款审查），所以 <code>inService=6</code>；<code>agent</code> 6 个里 1 个 <code>trial</code>，<code>inService=5</code>；<code>model</code> 4 个全是 <code>offline</code>（待接入），<code>inService=0</code>。</p>
+<p><strong>如果这里做了抽象，这个 6/7 和 5/6 就永远对不上账了。</strong></p>
+<h2>三、第二个代价，也是这篇文章真正想说的：3 类的成本是假的</h2>
+<p>看 <code>costCents30d: 34786</code>。这个数是真的——但它只来自一部分资产。</p>
+<p>翻实现，每一类是怎么取 usage 的：</p>
+<table><thead><tr><th>类型</th><th>usage 取值方式</th><th>真假</th></tr></thead><tbody><tr><td>mcp</td><td><code>usageOf('mcp:' + slug)</code></td><td>真</td></tr><tr><td>model</td><td><code>usageOf('model:' + slug)</code></td><td>真</td></tr><tr><td>app</td><td><code>usageOf('app:' + slug)</code></td><td>真</td></tr><tr><td>agent</td><td><code>usageOf(undefined)</code></td><td><strong>恒为 0</strong></td></tr><tr><td>skill</td><td><code>calls: skill.stats?.installs ?? 0</code>，<code>costCents: 0</code></td><td><strong>成本恒为 0</strong></td></tr><tr><td>nas</td><td><code>calls: 0</code>，<code>costCents: 0</code></td><td><strong>恒为 0</strong></td></tr></tbody></table>
+<p><code>usageOf(undefined)</code> 直接返回 <code>{calls: 0, costCents: 0}</code>。也就是说：</p>
+<pre><code>{&quot;type&quot;:&quot;agent&quot;,&quot;name&quot;:&quot;数据分析师&quot;,&quot;calls&quot;:0,&quot;costCents&quot;:0}</code></pre>
+<p><strong><code>数据分析师</code> 这个 Agent 它可能每天都在跑，但在这张台账里它永远显示「30 天调用 0 次、花费 0 元」。</strong></p>
+<p>这不是忘了写。真实原因是：<strong>成本账本的 key 是 <code>resource</code> 字符串，而 Agent 没有自己的 <code>resource</code> key。</strong></p>
+<p>模型调用发生的时候，计量写的是 <code>model:deepseek-chat</code>；它不知道这次调用是哪个 Agent 发起的。MCP 工具调用写的是 <code>mcp:datawise</code>；它也不知道是哪个 Agent 调的这个工具。Agent 是<strong>编排层</strong>，它的成本散在所有下游资源的账上，而账本里没有「这笔消耗归属到 agent:X」这一行。</p>
+<p>这个问题不是「补个字段」能解的。要真解，得在每次模型/工具调用时把调用链上的 Agent 身份透传下来——这正是我们另一篇讲 MCP 通道漏传归属字段的越权复盘里同一个病根：<strong>编排层丢身份，下游就永远归不了因。</strong></p>
+<p><strong>统一模型的第一个诚实成本：面板上看起来六类齐整，其中三类的数字是 0，而 0 不等于没有消耗，等于不归因。</strong></p>
+<p>我们选择把 0 显示出来，不做「估算填充」。因为按月账单 34,786 分推算，如果我把 Agent 成本按调用比例摊分回去，那个数会看起来漂亮得多，然后所有人都以为归因做完了。<strong>假数字比空数字危险。</strong></p>
+<h2>四、那为什么还是要统一</h2>
+<p>既然三类归不了因，统一还有什么用？</p>
+<p>用处在<strong>问句</strong>。统一之前，你问不出这些问题，因为答案散在六个接口里，字段名都不一样：</p>
+<ul><li>「AI 平台部现在挂了几个在线的东西？」→ 按 <code>org</code> + <code>inService</code> 一行 SQL</li><li>「有没有 unhealthy 的？」→ <code>unhealthy: 0</code>，一个数</li><li>「最贵的三项是什么？」→ 按 <code>costCents</code> 降序（现回：数据分析引擎 9175、HR 人事服务 8859、客服工单系统 8440）</li><li>「哪些资产 30 天一次没被调用过？」→ <code>calls === 0</code></li></ul>
+<p>最后这条是我们内部最有用的一个查询，也是<strong>最容易被假 0 污染的一个</strong>。实测 27 个资产里 <code>calls === 0</code> 的有 20 条：</p>
+<table><thead><tr><th>类型</th><th>零调用</th><th>这个 0 是真的吗</th></tr></thead><tbody><tr><td>mcp</td><td>1（汇率与结算，灰度中）</td><td>真</td></tr><tr><td>skill</td><td>2（合同条款审查、竞品舆情监控）</td><td>真（<code>installs=0</code>）</td></tr><tr><td>model</td><td>2（DeepSeek Coder / Reasoner，待接入）</td><td>真</td></tr><tr><td>nas</td><td>2（两个 draft）</td><td>真</td></tr><tr><td>app</td><td>0</td><td>—</td></tr><tr><td>agent</td><td>6（全部）</td><td><strong>假 0</strong>，<code>usageOf(undefined)</code> 硬编码</td></tr></tbody></table>
+<p>所以这个查询现在<strong>只能用来找「真闲置」，不能直接拿来当闲置清单</strong>——因为六个 Agent 混在里面，你没法只看结果就判断哪个是真没人用。我们内部的临时做法是先 <code>WHERE type != 'agent'</code> 再人工判断。</p>
+<p>这正是上一节那个代价的下游后果：<strong>一个假的 0 会污染所有基于 0 的查询。</strong> 台账里填进一个不归因的默认值，代价不是那一格不好看，是依赖这一格的每一个问句都变成半真的。</p>
+<p><strong>统一模型真正的产品价值不是让报表好看，是让「没人用」这件事变得可查询——前提是每个 0 都是真 0。</strong></p>
+<h2>五、六类之外的第七类</h2>
+<p>有个问题我们到现在没答案：<strong>「模型渠道」算不算一类资产？</strong></p>
+<p><code>byType</code> 只有 6 个 key，但 <code>platform/info</code> 里的 <code>resourceTypes</code> 只注册了 3 类（nas / agent / app），mcp 和 skill 走的是另外的 registry，model 又是 modelgw 自己的表。<strong>六类在代码里其实是「2 + 3 + 1」三种装配方式，只是在投影层被拍平成 6 个 type 字符串。</strong></p>
+<p>早期版本对外说过「7 类」，把 SaaS 连接器也算了进去。后来对账发现 <code>inventory</code> 的 <code>byType</code> 里从来没有 connector——它有自己的生命周期，但不是「资产」，是「接入配置」。<strong>所以对外一律说 6 类</strong>，第 7 类是我们自己造出来的说法，已经删了。</p>
+<p>顺带一个正在变的东西：<code>collections</code> 现在实测是 86（此前记录是 72）。这个数还在涨，说明存储装配还没稳定。<strong>所以对外文案里我们从不引用 collections 的数字</strong>——一个每天变的数写进宣传语，三个月后就是假话。</p>
+<h2>六、如果你也要建这本台账</h2>
+<p>三条能直接抄的：</p>
+<ol><li><strong>只投影「可以跨类问」的字段，类内属性留在原处。</strong> 判断标准：这个问题，你会不会想拿它和别的类型比？会，才进统一模型。</li><li><strong><code>status</code> 不要硬造统一枚举。</strong> 让汇总逻辑显式写白名单，比造一个抽象状态机再映射回来更不容易说谎。</li><li><strong>归不了因的字段，显式返回 0 并在 UI 上标注。</strong> 不要摊分、不要估算、不要「暂无数据」这种含糊说法。0 就是「我们不归因这个」，让看的人知道边界在哪。</li></ol>
+<p>第三条最难，因为它要求你在一个看起来完整的面板上主动标出缺口。但<strong>台账的价值全在它敢不敢承认自己漏了什么</strong>——一份每一格都填满的台账，通常有三分之一的格子是拍的。</p>
+<hr>
+<p>六类资产的统一模型、94 个权限点、499 条路由登记，源码在 &lt;https://github.com/01men/ybkkasi&gt;，MIT。在线只读演示 &lt;https://demo.ybkkasi.com/&gt;，<code>/api/assets/inventory</code> 直接可看上面这些数。</p></article>
+</div></main>
+<footer class="site"><div class="wrap">
+  <span>© 2026 杭州元冰可科技有限公司 · 企业 AI 资产治理</span>
+  <span>MIT · <a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a></span>
+</div></footer>
+</body>
+</html>

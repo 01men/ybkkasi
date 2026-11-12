@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>30 插件 / 94 权限点 / 499 路由：把六类 AI 资产做成一本台账 · 元冰可</title>
+<meta name="description" content="用 cordis 插件树把企业 AI 资产拆成 30 个可独立启停的域，94 个权限点做 fail-closed 组织归属校验，499 条路由统一登记。附 4 条可复现命令。">
+<link rel="canonical" href="https://ybkkasi.com/blog/six-asset-types-plugin-tree/">
+<meta property="og:title" content="30 插件 / 94 权限点 / 499 路由：把六类 AI 资产做成一本台账">
+<meta property="og:description" content="用 cordis 插件树把企业 AI 资产拆成 30 个可独立启停的域，94 个权限点做 fail-closed 组织归属校验，499 条路由统一登记。附 4 条可复现命令。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://ybkkasi.com/blog/six-asset-types-plugin-tree/">
+<link rel="icon" href="/ybk-mark.png">
+<style>
+:root{--bg:#f8f6f3;--surface:#fffdfb;--border:#e0ddd8;--t1:#231f1d;--t2:#4d4643;--t3:#706864;
+--brand:#0a5f87;--brand-deep:#084a68;--brand-soft:#e8f1f6;--ok:#2F9E44;
+--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t1);font-family:var(--font);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 22px}
+header.site{border-bottom:1px solid var(--border);background:rgba(248,246,243,.92);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;color:var(--t1)}
+.brand img{width:22px;height:22px;border-radius:6px}
+.brand span.sub{font-size:11px;letter-spacing:2px;color:#7E9AD2;font-weight:500}
+.nav{display:flex;gap:18px;font-size:13.5px}
+.nav a{color:var(--t2)}
+main{padding:52px 0 80px}
+.meta{font-size:12.5px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.meta em{font-style:normal;color:var(--brand);font-weight:600}
+h1.post{font-size:31px;line-height:1.32;letter-spacing:-.015em;margin-bottom:26px;font-weight:700}
+article h2{font-size:20.5px;margin:44px 0 15px;padding-top:16px;border-top:1px solid var(--border);letter-spacing:-.01em}
+article h3{font-size:17px;margin:28px 0 10px}
+article p{margin:0 0 17px;color:var(--t2);font-size:16px}
+article strong{color:var(--t1);font-weight:650}
+article ul,article ol{margin:0 0 18px 22px;color:var(--t2);font-size:16px}
+article li{margin-bottom:8px}
+article code{font-family:var(--mono);font-size:13.5px;background:#efece7;padding:1.5px 5px;border-radius:4px;color:#0a4a68}
+article pre{background:#201f1d;border-radius:8px;padding:15px 17px;overflow-x:auto;margin:0 0 20px}
+article pre code{background:none;color:#e8e4de;font-size:13px;padding:0;line-height:1.65}
+article table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;table-layout:fixed}
+article th,article td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;word-break:break-word}
+article th{background:var(--brand-soft);font-weight:600;color:var(--brand-deep);font-size:13px}
+article hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+article a{border-bottom:1px solid rgba(10,95,135,.28)}
+article blockquote{border-left:3px solid var(--border);padding:2px 0 2px 16px;margin:0 0 18px;color:var(--t3);font-size:15px}
+.post-list{list-style:none}
+.post-list li{border-top:1px solid var(--border);padding:24px 0}
+.post-list li:first-child{border-top:none;padding-top:0}
+.post-list h2{font-size:20px;font-weight:650;margin:0 0 8px;border:none;padding:0}
+.post-list h2 a{color:var(--t1);border:none}
+.post-list h2 a:hover{color:var(--brand);text-decoration:none}
+.post-list p{color:var(--t3);font-size:14px;margin:0}
+.post-list .d{font-size:12.5px;color:var(--t3);letter-spacing:.05em;margin-bottom:7px}
+footer.site{border-top:1px solid var(--border);padding:26px 0;font-size:12.5px;color:var(--t3)}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+@media(max-width:640px){h1.post{font-size:24px}article h2{font-size:18.5px}article p,article li{font-size:15px}main{padding:34px 0 60px}}
+</style>
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/ybk-mark.png" alt=""><span>元冰可</span><span class="sub">YBK</span></a>
+  <nav class="nav">
+    <a href="/blog/">技术笔记</a>
+    <a href="https://ybkkasi.com/docs">文档</a>
+    <a href="https://github.com/01men/ybkkasi">GitHub</a>
+    <a href="https://demo.ybkkasi.com/">演示</a>
+  </nav>
+</div></header>
+<main><div class="wrap">
+<div class="meta">工程实践 · 架构</div>
+<h1 class="post">30 插件 / 94 权限点 / 499 路由：把六类 AI 资产做成一本台账</h1>
+<article>
+<p>先给结论，再给可复现的验证方式。</p>
+<p><strong>结论</strong>：企业 AI 资产治理的技术核心不是「加一层网关」，而是<strong>把每个能力域做成独立插件包，自己声明依赖、权限点和事件，跨域协作只走事件总线</strong>。这样资产台账、权限校验、成本归因、审计留痕才是插件自身的一部分，而不是外挂的补丁。</p>
+<p>下面是真实可跑的命令，全部在本机实例 <code>127.0.0.1:7302</code> 实测通过（Node ≥ 22.6）：</p>
+<pre><code># 1. 插件包数 / MCP 工具数 / 存储集合数
+curl --noproxy &#x27;*&#x27; http://127.0.0.1:7302/api/platform/info
+
+# 2. 路由矩阵：declaredApi / guarded / public / authenticated
+curl --noproxy &#x27;*&#x27; http://127.0.0.1:7302/api/platform/route-matrix
+
+# 3. 权限点目录
+curl --noproxy &#x27;*&#x27; http://127.0.0.1:7302/api/iam/permissions
+
+# 4. 资产台账：按类型汇总
+curl --noproxy &#x27;*&#x27; http://127.0.0.1:7302/api/assets/inventory</code></pre>
+<p>第 2 条实测返回：</p>
+<pre><code>{&quot;declaredApi&quot;: 499, &quot;guarded&quot;: 458, &quot;public&quot;: 30, &quot;authenticated&quot;: 11, &quot;undeclaredApi&quot;: 0}</code></pre>
+<p><code>declaredApi</code> 是全部声明端点，<code>guarded</code> 是其中受权限点保护的子集——<strong>这两个数不能相减，也不能混着用</strong>（我们内部就踩过这个坑：老文档把子集当成全量写了个「受保护路由数」，是 v1.3 时代的字面量，已作废）。</p>
+<h2>一、架构：cordis 插件树，不是微服务也不是单体</h2>
+<p>整个平台实例就是一棵 <strong>cordis 插件树</strong>，和 dsh 用的是同一个插件框架。每个业务域一个独立包：</p>
+<pre><code>platform-core  iam  authn  usage  audit  audit-approval-reconcile
+market  connector  mcp  nas  skillhub  agent  app  modelgw
+connect  connect-host-api  update  update-api  portal  console
+panel-core  flow-core  exec-hub  workforce  dingtalk-bridge  uhp  a2a
++ WorkforcePolicyRegistry  ToolRuntimeLite  resource-core</code></pre>
+<p><strong><code>pluginCount</code> 实测 30</strong>。这里有个口径坑值得说：<code>packages/</code> 目录只有 29 个，但装配树里有 5 个非包级 fiber（<code>WorkforcePolicyRegistry</code>、<code>ToolRuntimeLite</code>、<code>audit-approval-reconcile</code>、<code>connect-host-api</code>、<code>update-api</code>），去重后净 +1。<strong>所以「包数」和「加载的插件数」本来就是两个数</strong>，硬统一成同一个数只会让其中一边变成假话。</p>
+<p>关键约定有三条：</p>
+<ol><li><strong>插件之间不直接读写彼此的数据。</strong> 跨插件协作只经事件总线和扩展点。边界靠接口契约，不靠约定俗成。</li><li><strong>每个包自行声明依赖、权限点、事件</strong>，可以单独启停。治理能力是域自身的一部分。</li><li><strong>平台自己也是一个 MCP Server</strong>，98 个 MCP 工具对外暴露，任何 MCP 客户端都能接。</li></ol>
+<p>配套是 <strong>25 个插件清单</strong>（<code>plugin.yaml</code>）和 9 份领域运维 Skill。</p>
+<h2>二、权限：fail-closed 的组织归属校验</h2>
+<p>权限点目录实测 <strong>94 个唯一 point</strong>，分基础 / 组织账号 / 资源 / 审批 / 计量 / 审计等组。</p>
+<p>关键实现是组织归属校验默认 <strong>fail-closed</strong>：</p>
+<pre><code>// packages/plugin-iam/src/index.ts
+// 组织归属校验 fail-closed（N1）。permissions 取操作者令牌实时解析结果（&#x27;*&#x27;=平台管理员）</code></pre>
+<p>要点是 <strong>permissions 从操作者令牌实时解析，不从请求参数收</strong>。客户端说「我是管理员」不作数。</p>
+<p>内置角色是数据，不是代码：</p>
+<table><thead><tr><th>角色</th><th>权限面</th></tr></thead><tbody><tr><td><code>super_admin</code></td><td><code>*</code></td></tr><tr><td><code>org_admin</code></td><td><code>console.login</code> <code>iam.*</code> <code>approval.read</code> <code>exec.*</code> <code>workforce.*</code></td></tr><tr><td><code>resource_admin</code></td><td><code>mcp.*</code> <code>skill.*</code> <code>agent.*</code> <code>app.*</code> <code>nas.*</code> 等</td></tr><tr><td><code>developer</code></td><td>读多写少，<code>iam.*</code> 只读</td></tr><tr><td><code>member</code></td><td>基础只读 + 面板</td></tr><tr><td><code>auditor</code></td><td>全平台只读审计</td></tr></tbody></table>
+<p>注意 <code>developer</code> 是<strong>最小权限</strong>设计：提交和调试自己提交的资源，跨资源读是只读。</p>
+<h2>三、路由登记：两种注册形态都要扫</h2>
+<p>这是我们内部最容易被漏掉的一点。统计路由必须同时扫两种注册方式：</p>
+<pre><code>guarded(&#x27;METHOD&#x27;, &#x27;/path&#x27;, &#x27;perm&#x27;)      → 一类
+.register(&#x27;METHOD&#x27;, &#x27;/path&#x27;, ...)        → 另一类</code></pre>
+<p><strong>只扫 <code>guarded(</code> 会漏掉大量端点</strong>（OIDC 等走 <code>.register</code>）。我们早期就因为只扫一种，把数字报低了。</p>
+<p>最终以 <code>route-matrix</code> 接口为准：<strong>499</strong> 条声明端点，其中 458 条受权限点保护、30 条免鉴权（自带凭证校验）、11 条仅 Bearer。</p>
+<h2>四、断言：1822 项，CI 里跑</h2>
+<p>自测断言 <strong>1822 项</strong>，CI quality-gate 在 Node 24 两个矩阵各跑一遍，实跑日志：</p>
+<pre><code>✔ 落地页断言数 1822 = 本次实际断言总数 1822（断言数防漂移）
+自测结果：1822/1822 通过</code></pre>
+<p>最后那行「落地页断言数 = 本次实际断言总数」是防漂移自校验——<strong>如果前端落地页写了一个新数字而断言集没跟上，CI 直接红</strong>。我们被这个机制抓到过两次首页指标卡漂移（一次是插件数写旧，一次是断言数写成了两代前的值）。</p>
+<h2>五、跑起来</h2>
+<pre><code>git clone https://github.com/01men/ybkkasi.git
+cd ybkkasi
+docker compose up -d     # 打开 http://localhost:7300</code></pre>
+<p>或者作为 dsh 插件接入（<code>web</code> profile）：</p>
+<pre><code>dsh plugin --profile web add github:01men/ybkkasi</code></pre>
+<p>从源码起独立实例（Node ≥ 22.6，<code>node:sqlite</code>，零重型运行时依赖）：</p>
+<pre><code>npm ci
+npm start</code></pre>
+<p>在线只读演示：&lt;https://demo.ybkkasi.com/&gt;</p>
+<hr>
+<p><strong>几个我们没解决的</strong>：MCP 第三方服务常常不声明工具风险等级，早期我们默认「未声明 = 只读」，等于所有能写数据的工具只要保持沉默就绕过审批；改成「未声明 = 未知」后，写路径直接拒。另外场景级策略目前只支持「角色/用户 × 动作 × 允许/拒绝」，<strong>没有条件表达式、没有时间窗、没有数值约束</strong>。审批两级签核目前允许同一个人签两级（小团队凑不出两个人，我们选择去掉四眼原则，而不是逼大家共用一个 admin 账号）。</p>
+<p>License MIT，源码：&lt;https://github.com/01men/ybkkasi&gt;</p></article>
+</div></main>
+<footer class="site"><div class="wrap">
+  <span>© 2026 杭州元冰可科技有限公司 · 企业 AI 资产治理</span>
+  <span>MIT · <a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a></span>
+</div></footer>
+</body>
+</html>

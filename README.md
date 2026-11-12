@@ -153,6 +153,8 @@ AI 原生组织需要在五个方面重塑生产关系，平台在每一项下�
 | [1822 项断言全绿：我们怎么测试一个 Agent 管控平台](https://ybkkasi.com/blog/agent-platform-selftest/) | 管控平台测的不是功能对不对，是拦住的时候真的拦住了。[Discussion #30](https://github.com/01men/ybkkasi/discussions/30) |
 | [Agent 拿着一把万能 token 横冲直撞：一次真实的越权复盘](https://ybkkasi.com/blog/agent-wildcard-token/) | 令牌权限刚好够、主体身份却丢了。MCP 通道漏传两个归属字段，权限检查全过，没人说得清是谁过的。[Discussion #33](https://github.com/01men/ybkkasi/discussions/33) |
 | [两个月 6 万行代码换来 0 star，问题出在第一句话](https://ybkkasi.com/blog/zero-star-first-sentence/) | README 第一屏写的是「我做了什么」，不是「你有什么问题」。六个错误和各自的改法。[Discussion #34](https://github.com/01men/ybkkasi/discussions/34) |
+| [30 插件 / 94 权限点 / 499 路由：把六类 AI 资产做成一本台账](https://ybkkasi.com/blog/six-asset-types-plugin-tree/) | 插件树不是网关。路由统计要同时扫两种注册形态，458 是 499 的子集，不能相减。[Discussion #35](https://github.com/01men/ybkkasi/discussions/35) |
+| [为什么我们把 6 类 AI 资产统一成一套模型](https://ybkkasi.com/blog/six-asset-model-cost/) | 只投影 11 个可跨类问的字段。代价是 Agent/Skill/NAS 三类成本恒为 0，假 0 会污染所有基于 0 的查询。[Discussion #36](https://github.com/01men/ybkkasi/discussions/36) |
 
 ## 联系我们
 
