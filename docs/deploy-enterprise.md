@@ -48,10 +48,17 @@ export ADMIN_PASSWORD='<强口令>'            # Windows PowerShell: $env:ADMIN_
 npm start -- --port 7300 --data ./data
 ```
 
-- [ ] 日志出现「平台基线初始化完成」+ 「上线三步走」引导框（首启一次性）
-- [ ] 日志出现「元冰可|企业AI资源管理平台已启动」与「控制台地址：http://0.0.0.0:7300」
-- [ ] `curl -s http://127.0.0.1:7300/api/health` → `{"status":"ok",...}`
-- [ ] （若未设 ADMIN_PASSWORD）确认 `data/admin-initial-password.txt` 已生成，**读完立即转到步骤 4 改密**
+> ⚠️ 独立宿主（`src/main.ts`）**默认不向终端打印日志**：cordis logger 的默认 exporter 只做
+> 内存缓冲（保留最近 1000 条，供内部诊断），首启横幅「平台基线初始化完成 / 上线三步走 / 控制台地址」
+> 都写在缓冲里，`stdout` 只会有 npm 横幅和 SQLite 实验特性警告。**不要以「终端没看到横幅」判定启动失败**，
+> 按下面四条验收即可。
+
+- [ ] `curl -s http://127.0.0.1:7300/api/health` → `{"ok":true,"data":{"status":"ok",...}}`
+      且响应里 `contract.apiRoutes` 为 `499`（口径异常说明装配不全）
+- [ ] 数据目录已落盘基线：`ls data/platform~bootstrap.json data/txnstore.db` 两个文件都存在
+      （`platform~bootstrap.json` 内含 `mode:"baseline"` 与 `orgName`）
+- [ ] `curl -s http://127.0.0.1:7300/api/platform/bootstrap` → `{"ok":true,"data":{"initialPasswordPending":true|false}}`
+- [ ] （若未设 ADMIN_PASSWORD）确认 `data/admin-initial-password.txt` 已生成（权限 `0600`），**读完立即转到步骤 4 改密**
 
 ### 步骤 2 补充：存储后端选型（默认 JSON · 企业单节点推荐 SQLite）
 
@@ -78,7 +85,7 @@ PLATFORM_STORAGE=sqlite npm start -- --port 7300 --data ./data
 ### 步骤 3：功能验证
 
 ```bash
-# 登录（预期返回 token 字段）
+# 登录（预期 `ok:true`，令牌在 `data.token`，另有 `data.refreshToken`）
 curl -s -X POST localhost:7300/api/auth/login -H 'content-type: application/json' \
      -d '{"username":"admin","password":"<口令>"}'
 # 首启状态（预期 initialPasswordPending=true——口令文件还在服务器时为 true，改密删文件后变 false）
