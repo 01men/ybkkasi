@@ -168,8 +168,9 @@ Restart=always
 export ADMIN_PASSWORD='<强口令>'
 node --experimental-strip-types src/main.ts --port 7462 --data /tmp/ybk-deploy-demo/data
 #    等价 npm 入口：npm start -- --port 7462 --data /tmp/ybk-deploy-demo/data
-#    ✘ 成功标志：日志出现「元冰可|企业AI资源管理平台已启动」与
-#      「控制台地址：http://0.0.0.0:7462」；失败常见原因：端口被占（先换端口）、
+#    ⚠ 独立宿主默认不向终端打印日志（cordis logger 只做内存缓冲）——终端里看不到
+#      启动横幅不代表失败，用下面第 2 步的 HTTP 断言与数据目录落盘文件判断
+#      （同「步骤 2」的四条验收口径）。失败常见原因：端口被占（先换端口）、
 #      data 目录非空（平台按已有实例保护，不覆盖，见第五节护栏）
 
 # 2) 健康检查（另开一个终端）
