@@ -197,6 +197,132 @@
 
 ---
 
+## 附二：端到端场景示例（2026-11-13 实测）
+
+> 以下两个场景在干净隔离实例（本机 `127.0.0.1:7462`，全新数据目录）上按序真实执行成功，
+> 展示的输出是**真实返回**（token / clientSecret 等敏感值截断或脱敏，ID 原样保留）。
+> 接入你自己的平台时，把地址换成平台地址即可，其余命令可逐条复制。
+> 各步骤权限标注：标【管理员】的步骤需要管理类权限点，其余步骤 Agent 用自身机器令牌即可。
+
+### 场景一：最小可用 Agent（注册 → 机器身份换牌 → 首次提报 → 复核）
+
+```bash
+# ① 管理员登录取令牌（admin 有 '*' 全量权限，含 agent.write）
+curl -s -X POST http://127.0.0.1:7462/api/auth/login -H 'content-type: application/json' \
+     -d '{"username":"admin","password":"<口令>"}'
+# 实测：{"ok":true,"data":{"token":"dst1.eyJpc3Mi…（309 字符）"}} —— 记为 $ADMIN_TOKEN
+
+# ②【管理员】注册 Agent（agent.write；模型必须是模型目录已登记 slug）
+curl -s -X POST http://127.0.0.1:7462/api/agents \
+     -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+     -d '{"name":"周报助手","slug":"weekly-report-bot","attrs":{"description":"汇总部门周报并生成摘要的数字员工","model":"deepseek-chat","riskLevel":"low"}}'
+# 实测（截断）：
+# {"ok":true,"data":{"agent":{"id":"agt_mwej5t6vlb685guc","slug":"weekly-report-bot",
+#   "name":"周报助手","status":"draft","attrs":{"model":"deepseek-chat","riskLevel":"low",…}},
+#   "credential":{"clientId":"mc-mwej5t6vlb69laob","clientSecret":"cs_RKt0…（35 字符，仅本次返回）"}}}
+# ✔ 怎么判断：ok:true、status:"draft"、clientId mc- 前缀、clientSecret cs_ 前缀
+# ⚠ secret 只出现一次，立即安全保存；丢失走凭证轮换（dshctl credential rotate），不要重新注册
+
+# ③ 机器身份换牌（不走 SSO；客户端注意：payload 必须是合法 JSON，secret 不能带进 shell 引号陷阱，
+#    建议把 {"clientId":"…","clientSecret":"…"} 写入临时文件后 --data @file 发送）
+curl -s -X POST http://127.0.0.1:7462/api/auth/client-credentials \
+     -H 'content-type: application/json' --data @cc-payload.json
+# 实测（截断）：
+# {"ok":true,"data":{"token":"dst1.eyJpc3MiOiJkc2gtb3BzLWF1dGhuIiwidHlwIjoibWFjaGluZSIs…
+#   …,"scope":["mcp.invoke","skill.read","agent.read","usage.write",…]}} —— 记为 $MACHINE_TOKEN
+# ✔ 怎么判断：ok:true、JWT payload 的 typ:"machine"、scope 含 usage.write（首报靠它）
+# ⚠ 令牌 2 小时有效；401 时重新换牌一次再重试，连续失败 5 次会锁定 clientId
+
+# ④ 首次运营数据提报（接入验证 = 这个接口返回 200）
+curl -s -w '\nHTTP %{http_code}\n' -X POST http://127.0.0.1:7462/api/agents/agt_mwej5t6vlb685guc/metrics-report \
+     -H "authorization: Bearer $MACHINE_TOKEN" -H 'content-type: application/json' \
+     -d '{"dau":1,"sessions":1,"uniqueUsers":1}'
+# 实测：
+# {"ok":true,"data":{"sessions":1,"calls":0,"successRate":1,"tokens":0,"avgLatencyMs":0,
+#   "lastActiveAt":"2026-11-13T05:23:20.260Z","dau":1,"uniqueUsers":0,"gwCalls":0,
+#   "series":[{"date":"2026-11-13","calls":0,"tokens":0,"sessions":1,"dau":1}]}}
+# HTTP 200
+# ✔ 怎么判断：HTTP 200 且 series 出现当日记录 —— 接入完成（提报动作已入审计）
+
+# ⑤ 复核（管理员或负责人视角）
+curl -s http://127.0.0.1:7462/api/agents/agt_mwej5t6vlb685guc -H "authorization: Bearer $ADMIN_TOKEN"
+# 实测（截取）：{"id":"agt_mwej5t6vlb685guc","status":"draft",
+#                "metrics":{"sessions":1,"dau":1,"uniqueUsers":0}}
+# ✔ 怎么判断：metrics.sessions ≥ 1 —— 与文档步骤 3 的验收口径一致
+```
+
+**实测发现的两个真实护栏（照做可少走弯路）：**
+
+- `uniqueUsers` 不是随手填的声明值：提交 `userIds` 明细时，服务端校验
+  **userIds 数组的原始长度不得超过 uniqueUsers**（平台侧再做哈希去重）。
+  实测错误示例：`{"dau":2,"sessions":3,"uniqueUsers":1,"userIds":["u1001","u1001","u1002"]}`
+  → `{"ok":false,"error":{"code":"BAD_REQUEST","message":"userIds 数量（3）不应大于 uniqueUsers（1）"}}`；
+  把 uniqueUsers 改成与明细条数一致的口径（如 `uniqueUsers:2, userIds:["u1001","u1002"]`）即 200。
+- 管理员创建 Agent 时 `model` 必须在模型目录中存在（本实例缺省目录已含 deepseek-chat），
+  未登记 slug 在注册/PATCH/上线门禁三处都会被拒。
+
+### 场景二：带上线审批的 Agent（治理属性 → 提交 L4 → 裁决 → 自动执行 → 结果回传）
+
+```bash
+# ①【管理员】注册第二个 Agent（上线候选人）
+curl -s -X POST http://127.0.0.1:7462/api/agents \
+     -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+     -d '{"name":"工单分派员","slug":"ticket-dispatcher","attrs":{"description":"读取工单队列并按类别与负载分派负责人","model":"deepseek-chat","riskLevel":"medium"}}'
+# 实测（截取）：{"ok":true,"data":{"agent":{"id":"agt_mwej7q4ylb6hjiiv","status":"draft",…}}}
+
+# ②【管理员】补上线必需的治理属性：dataClass（密级）+ 身份纳管三选一（本例登记 entryUrl）
+curl -s -X PATCH http://127.0.0.1:7462/api/agents/agt_mwej7q4ylb6hjiiv \
+     -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+     -d '{"attrs":{"dataClass":"internal","entryUrl":"https://ticket.example-corp.cn/entry"}}'
+# 实测：{"ok":true,"status":"draft","dataClass":"internal",
+#        "entryUrl":"https://ticket.example-corp.cn/entry"}
+
+# ③【需 agent.approve】提交上线 —— L4 操作，自动生成审批单而不是直接上线
+curl -s -X POST http://127.0.0.1:7462/api/agents/agt_mwej7q4ylb6hjiiv/transition \
+     -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+     -d '{"action":"online"}'
+# 实测：{"ok":true,"approvalId":"apr_mwej82ehlb6ngbym","status":"pending",
+#        "kind":"agent.online","title":"Agent 上线：工单分派员",
+#        "note":"上线为 L4 操作，已创建审批单"}
+# ✔ 怎么判断：审批中心出现 pending 的 agent.online 单（GET /api/approvals 可查）
+
+# ④【需 approval.decide】第一次裁决：不带二次确认 —— 被真实拦截
+curl -s -X POST http://127.0.0.1:7462/api/approvals/apr_mwej82ehlb6ngbym/decide \
+     -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+     -d '{"decision":"approve","opinion":"同意上线"}'
+# 实测：{"ok":false,"error":{"code":"BAD_REQUEST",
+#        "message":"高风险审批通过需二次确认（confirmed=true），请在前端确认弹窗中复核后提交"}}
+
+# ⑤ 带二次确认的高风险裁决（confirmed=true）
+#    同人审批说明：管理员对自己提报的单直接审批是允许的（2026-11-02 业务裁决，
+#    AI 原生组织小团队常态）；审批人不同时同理，权限点 approval.decide 不变。
+curl -s -X POST http://127.0.0.1:7462/api/approvals/apr_mwej82ehlb6ngbym/decide \
+     -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+     -d '{"decision":"approve","opinion":"同意上线","confirmed":true}'
+# 实测（截断）：
+# {"ok":true,"data":{…"status":"executed","approverName":"平台管理员","opinion":"同意上线",
+#   "decidedAt":"2026-11-13T05:25:06.204Z",
+#   "execution":{"result":"{…agt_mwej7q4ylb6hjiiv…\"status\":\"online\"…}","at":"…"},
+#   "finalReview":{"approverId":"usr_…","approverName":"平台管理员","at":"…"}}}
+# ✔ 怎么判断：status:"executed" 且 execution.result 里 Agent 已是 online —— 批准后自动执行，
+#   不需要再手工改状态；重复裁决同一条会得到 "审批单已处理（executed）"
+
+# ⑥ 结果回传复核：Agent 状态与生命周期
+curl -s http://127.0.0.1:7462/api/agents/agt_mwej7q4ylb6hjiiv -H "authorization: Bearer $ADMIN_TOKEN"
+# 实测（截取）：{"status":"online","lifecycle":[
+#   {"at":"…05:24:04Z","from":"","to":"draft","action":"create","actor":"usr_…"},
+#   {"at":"…05:25:06Z","from":"draft","to":"online","action":"online","actor":"approval-center"}]}
+# ✔ 怎么判断：status:"online"，且生命周期里 online 动作的 actor 是 approval-center
+#   （审批中心执行器，不是人工直接改状态）—— 留痕完整、可审计
+```
+
+**场景二体现的审批状态流转：**`draft --(transition online)--> 审批单 pending --> confirmed 裁决
+approve --> 单据 executed --> Agent online（执行器 approval-center）`。
+每一步都有留痕：审批单（`GET /api/approvals`）、生命周期（Agent 详情 `lifecycle`）、
+审计（`GET /api/audit/logs` 中 approval/agent.online 相关 action）。
+
+---
+
 ## 附：2026-10-22 治理属性收敛
 
 Agent 白名单已移除 `systemPromptVersion`（系统提示词版本）。上线门禁只剩：

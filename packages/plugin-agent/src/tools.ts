@@ -138,7 +138,7 @@ export function apply(ctx: Context) {
 
   t.register(defineTool({
     name: 'agent_register',
-    description: '登记数字员工（Agent）进平台台账（draft 态，登记即入治理轨道），默认签发机器凭证（client_secret 仅本次返回）。上线走审批流：提交 agent.online 审批后经 approval_decide 通过（提交人与审批人不得为同一人）。',
+    description: '登记数字员工（Agent）进平台台账（draft 态，登记即入治理轨道），默认签发机器凭证（client_secret 仅本次返回）。上线走审批流：提交 agent.online 审批后经 approval_decide 通过（高风险单需 confirmed=true 二次确认；同人审批已按 2026-11-02 裁决放开）。',
     permission: 'agent.write',
     parameters: {
       name: { type: 'string', required: true, description: 'Agent 名称' },
@@ -178,7 +178,7 @@ export function apply(ctx: Context) {
       return {
         agent: { id: (result.agent as { id: string }).id, name: (result.agent as { name: string }).name, slug: (result.agent as { slug: string }).slug, status: (result.agent as { status: string }).status, orgId },
         ...(result.credential ? { credential: result.credential, credentialNote: 'client_secret 仅本次返回，请立即妥善保管；丢失走 onboarding-prompt(rotate=true) 轮换' } : {}),
-        nextStep: '上线：agent_transition(agentId, action=online) 提交审批 → approval_list(kind=agent.online) → approval_decide（提交人与审批人须不同主体）',
+        nextStep: '上线：agent_transition(agentId, action=online) 提交审批 → approval_list(kind=agent.online) → approval_decide（高风险单需 confirmed=true 二次确认）',
       }
     },
   }))
@@ -197,7 +197,7 @@ export function apply(ctx: Context) {
       const actor = { id: registrar.id, name: registrar.name }
       if (args.action === 'online') {
         const approval = ctx.agentRegistry.requestOnline(String(args.agentId), actor)
-        return { approvalId: approval.id, status: approval.status, note: '上线为 L4 操作，已创建审批单；经 approval_decide 通过后自动执行（提交人与审批人不得为同一人）' }
+        return { approvalId: approval.id, status: approval.status, note: '上线为 L4 操作，已创建审批单；经 approval_decide 通过后自动执行（高风险单需 confirmed=true 二次确认）' }
       }
       if (args.action === 'submit_trial') return ctx.agentRegistry.trial(String(args.agentId), registrar.name, [])
       return ctx.agentRegistry.archive(String(args.agentId), registrar.name)

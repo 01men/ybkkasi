@@ -155,6 +155,61 @@ Restart=always
   私有镜像用 `DSH_UPDATE_API_BASE` / `DSH_UPDATE_RAW_BASE` 环境变量覆盖。
 - **资金边界**：支付/对公/开票通道为手工过渡态，接入前请阅读 README「三A 资金红线」。
 
+### 最小可用部署示例（2026-11-13 实测：从零到可登录约 2 分钟）
+
+> 把「步骤 0–4」的最短路径串成一条可复制的命令序列。以下每条命令都在干净数据目录上
+> 实际执行成功，注释里的输出是**真实返回**（token 等敏感值仅截断/脱敏）；每步都给出
+> 「怎么知道这步成功了」。端口用 7462 仅为避开本机占用，换成任意空闲端口等价。
+
+```bash
+# 前置：node -v ≥ 22.6；依赖已安装（npm install 无 ERR 结尾）
+
+# 1) 启动（数据目录指向全新空目录；口令必须显式指定）
+export ADMIN_PASSWORD='<强口令>'
+node --experimental-strip-types src/main.ts --port 7462 --data /tmp/ybk-deploy-demo/data
+#    等价 npm 入口：npm start -- --port 7462 --data /tmp/ybk-deploy-demo/data
+#    ✘ 成功标志：日志出现「元冰可|企业AI资源管理平台已启动」与
+#      「控制台地址：http://0.0.0.0:7462」；失败常见原因：端口被占（先换端口）、
+#      data 目录非空（平台按已有实例保护，不覆盖，见第五节护栏）
+
+# 2) 健康检查（另开一个终端）
+curl -s http://127.0.0.1:7462/api/health
+#    实测输出（截断）：
+#    {"ok":true,"data":{"status":"ok","time":"2026-11-13T05:22:16.988Z",
+#     "contract":{"apiRoutes":499,...}}}
+#    ✔ 怎么判断：ok:true 且 status:"ok" —— REST 网关与路由契约（499 条）已就绪
+
+# 3) 首启状态
+curl -s http://127.0.0.1:7462/api/platform/bootstrap
+#    实测输出：{"ok":true,"data":{"initialPasswordPending":false}}
+#    ✔ 怎么判断：显式设置过 ADMIN_PASSWORD 时为 false，说明服务器上没有初始口令文件残留；
+#      若不设 ADMIN_PASSWORD 启动则为 true —— 按「步骤 4」改密并删除
+#      data/admin-initial-password.txt 后再查，应变为 false
+
+# 4) 管理员登录
+curl -s -X POST http://127.0.0.1:7462/api/auth/login \
+     -H 'content-type: application/json' \
+     -d '{"username":"admin","password":"<强口令>"}'
+#    实测输出（截断）：
+#    {"ok":true,"data":{"token":"dst1.eyJpc3MiOiJkc2gtb3BzLWF1dGhu…（309 字符）"}}
+#    ✔ 怎么判断：ok:true 且 token 以 dst1. 开头；此后调任意 /api 带
+#      Authorization: Bearer <token>（令牌有效期见响应内 exp）
+#    ✘ 返回 ok:false：先确认口令就是本次启动设置的 ADMIN_PASSWORD（实例按数据目录
+#      隔离，不同目录各有各的口令）
+
+# 5) 收尾验证
+#    浏览器打开 http://127.0.0.1:7462/ → 控制台登录页 → admin 登录进工作台即部署完成；
+#    换用 SQLite 后端 / systemd 守护 / 反代 TLS 等进阶配置，按正文对应小节叠加即可。
+```
+
+最小配置清单（就这三项，其余全部有缺省）：
+
+| 配置 | 值 | 说明 |
+|---|---|---|
+| `ADMIN_PASSWORD` | 强口令 | 不设则随机生成一次性口令写入 `<data>/admin-initial-password.txt`（读完立即改密） |
+| `--port` | 如 7462 | 缺省 7300 |
+| `--data` | 全新空目录 | 数据落盘（JSON 集合 + SQLite `txnstore.db`）；目录非空视为已有实例，平台拒绝覆盖 |
+
 ## 三、dsh 运行时接入（形态 B，启用 Agent 运维）
 
 此形态为实验性，先使用独立的数据目录验证。已安装 dsh 时可使用插件包：
