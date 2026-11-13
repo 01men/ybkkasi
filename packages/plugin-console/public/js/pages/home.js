@@ -52,11 +52,16 @@ export function renderHome(app) {
   // 首页主 CTA = 「进入体验环境」直达控制台工作台；真会话用户 = 「进入控制台」直达工作台；
   // 未登录访客 = 「登录控制台」走登录页。demo 实例裸落地现在先看营销首页（app.js 落地分诊），
   // 体验入口收敛到本组 CTA。
+  // 注意：#/dashboard 本身是裸落地白名单值（landing.js isBareLanding），直接用它做 CTA
+  // 会被分诊再次送回首页——demo/已登录入口带 from=home 深链参数穿过裸落地判定
+  // （真会话用户有 token 短路，不受影响；未登录仍走登录页）。
   const enterExperience = session.isDemo && !session.token
   const loginLabel = enterExperience
     ? rqI18n.t('进入体验环境')
     : session.token ? rqI18n.t('进入控制台') : rqI18n.t('登录控制台')
-  const loginHref = session.token || session.isDemo ? '#/dashboard' : '#/login'
+  const loginHref = session.token
+    ? '#/dashboard?from=home'
+    : session.isDemo ? '#/dashboard?from=home&demo=1' : '#/login'
   // 画布/SVG 内文本不受 DOM 翻译引擎覆盖（canvas fillText、<svg> 子树被跳过）——渲染时显式翻译
   const treeData = {
     label: rqI18n.t(TREE.label),
