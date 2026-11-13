@@ -165,10 +165,11 @@ function navigate() {
   // 产品首页（公共营销页，#/home）：免会话可浏览；未登录裸落地（'' | '#/' | '#/dashboard'）
   // 也落首页——先让产品展示全貌，登录从导航/CTA 进入（不再直接整登录页）。
   // 例外：带 ?ticket= 的一键免登入口仍直落登录页（票据由登录页消费，落在营销页会静默丢票）。
-  // 演示态（DEMO_MODE=1 免登只读会话）例外：裸落地直接进控制台——访客要的就是产品本体，
-  // 营销首页仍可经 #/home 显式到达。
+  // 演示态（DEMO_MODE=1 免登只读会话，2026-11-13 调整）与未登录同口径：裸落地先看营销首页
+  // （六幕横幅讲运转逻辑），访客经「进入体验环境」CTA 免登进入只读控制台——此前直接进
+  // 控制台，访客反而看不到首页叙事；#/:页面深链不受影响，营销首页仍可经 #/home 显式到达。
   const hasTicket = new URLSearchParams(location.search).has('ticket')
-  if (page === 'home' || (!session.token && !session.isDemo && !hasTicket && isBareLanding(location.hash))) {
+  if (page === 'home' || (!session.token && !hasTicket && isBareLanding(location.hash))) {
     guard(() => renderHome(app), app)
     return
   }

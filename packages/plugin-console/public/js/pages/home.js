@@ -48,7 +48,15 @@ const STATS = [
 ]
 
 export function renderHome(app) {
-  const loginLabel = session.token ? rqI18n.t('进入控制台') : rqI18n.t('登录控制台')
+  // CTA 决策（2026-11-13 演示态对齐）：免登只读演示会话（DEMO_MODE=1 注入，无 token）时
+  // 首页主 CTA = 「进入体验环境」直达控制台工作台；真会话用户 = 「进入控制台」直达工作台；
+  // 未登录访客 = 「登录控制台」走登录页。demo 实例裸落地现在先看营销首页（app.js 落地分诊），
+  // 体验入口收敛到本组 CTA。
+  const enterExperience = session.isDemo && !session.token
+  const loginLabel = enterExperience
+    ? rqI18n.t('进入体验环境')
+    : session.token ? rqI18n.t('进入控制台') : rqI18n.t('登录控制台')
+  const loginHref = session.token || session.isDemo ? '#/dashboard' : '#/login'
   // 画布/SVG 内文本不受 DOM 翻译引擎覆盖（canvas fillText、<svg> 子树被跳过）——渲染时显式翻译
   const treeData = {
     label: rqI18n.t(TREE.label),
@@ -71,7 +79,7 @@ export function renderHome(app) {
       </div>
       <div class="home-nav-cta">
         <a class="home-btn home-btn-ghost" href="#/panels" style="height:38px;padding:0 16px;font-size:13.5px">部门面板</a>
-        <a class="home-btn home-btn-primary" href="#/login" id="home-login-btn" style="height:38px;padding:0 18px;font-size:13.5px">${loginLabel}</a>
+        <a class="home-btn home-btn-primary" href="${loginHref}" id="home-login-btn" style="height:38px;padding:0 18px;font-size:13.5px">${loginLabel}</a>
       </div>
       <button class="home-nav-toggle" id="home-nav-toggle" aria-label="打开菜单" aria-expanded="false">${icon('menu', 20)}</button>
     </nav>
@@ -220,7 +228,7 @@ export function renderHome(app) {
           </div>
         </div>
         <div class="home-cta-actions home-reveal" id="home-cta-actions">
-          <a class="home-btn home-btn-green" href="#/login">${loginLabel}</a>
+          <a class="home-btn home-btn-green" href="${loginHref}">${loginLabel}</a>
           <a class="home-btn home-btn-light" href="#/panels">进入部门面板</a>
         </div>
         <div class="home-cta-note home-reveal">首次部署：平台管理员初始口令见服务器 data/admin-initial-password.txt，登录后请立即修改。</div>
@@ -255,7 +263,7 @@ export function renderHome(app) {
 
   mountNav(app)
   // 首屏横幅：智能组织六幕叙事（登录态感知的 CTA 文案随之注入）
-  mountOrgBanner($('#org-hero'), { t: rqI18n.t.bind(rqI18n), loginLabel, loginHref: '#/login' })
+  mountOrgBanner($('#org-hero'), { t: rqI18n.t.bind(rqI18n), loginLabel, loginHref })
   mountTree($('#home-tree'), treeData)
   mountCounters(app)
   mountReveal(app)
