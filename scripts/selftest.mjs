@@ -6264,6 +6264,10 @@ try {
   const gate01EntryTest = spawn(process.execPath, ['packages/plugin-console/public/js/gate01-entry.test.mjs'], { stdio: 'pipe' })
   await new Promise((resolve) => gate01EntryTest.on('close', resolve))
   check('01门入口探针随包单测全绿（node --test）', gate01EntryTest.exitCode === 0, `exit=${gate01EntryTest.exitCode}`)
+  // 首页横幅数据面随包单测（2026-11-13：六幕叙事完整性/三原则引语逐字护栏/三语文案键零缺失，org-banner.test.mjs）
+  const orgBannerTest = spawn(process.execPath, ['packages/plugin-console/public/js/org-banner.test.mjs'], { stdio: 'pipe' })
+  await new Promise((resolve) => orgBannerTest.on('close', resolve))
+  check('首页横幅数据面随包单测全绿（node --test）', orgBannerTest.exitCode === 0, `exit=${orgBannerTest.exitCode}`)
   // 契约↔实现双向一致性（OPT-P0-01，2026-09-12）：引擎构造性红/绿测试 + 真仓零红闸门
   const contractLintTest = spawn(process.execPath, ['scripts/contract-lint.test.mjs'], { stdio: 'pipe' })
   await new Promise((resolve) => contractLintTest.on('close', resolve))

@@ -1,16 +1,19 @@
 /**
- * 产品首页（公共营销页）：品牌叙事 + 资源生态树（canvas 特效）+ 能力矩阵 + 架构理念 + 快速开始。
+ * 产品首页（公共营销页）：智能组织六幕 3D 横幅 + 资源生态树（canvas 特效）+ 能力矩阵 + 架构理念 + 快速开始。
  *
  * 免会话可浏览——未登录访问根路径落地本页（不再直接整登录页），登录从导航/CTA 进入 #/login。
  * 主题为品牌字面量色（科技蓝 #1466CF + 晶青蓝 #28B5EC + 微信绿 #07C160；2026-10-30 首页回退批次由元冰蓝/冰湖青切换，取自冰晶主题色系），不消费 --brand-*，
  * 免受登录态五平台 data-platform 主题覆写影响；样式见 css/home.css（index.html 直链）。
- * 特效零依赖（零构建约束）：canvas 2D 手绘生态树（生长动画 + 绿色流转脉冲 + 悬停依赖链高亮）、
- * 粒子星尘、数字滚动与滚动显现（IntersectionObserver）；rAF 循环以 canvas 脱离文档为退出条件。
+ * 特效零依赖（零构建约束）：首屏为「智能组织形态」六幕叙事横幅（org-banner.js：人/Agent ×
+ * 企业 AI 资产 × 任务/Loop 双生命周期的 3D 可视化，每幕带「落到平台」产品桥接），
+ * 下方 canvas 2D 手绘资源生态树（生长动画 + 绿色流转脉冲 + 悬停依赖链高亮）、
+ * 数字滚动与滚动显现（IntersectionObserver）；rAF 循环以 canvas 脱离文档为退出条件。
  */
 import { icon } from '../icons.js'
 import rqI18n from '../i18n.js'
 import { session } from '../api.js'
 import { $, $$, esc } from '../ui.js'
+import { mountOrgBanner, ORG_UI } from '../org-banner.js'
 
 /** 生态树数据：平台 → 三域 → 资源叶（与控制台导航同源的 12 个能力面） */
 const TREE = {
@@ -41,7 +44,7 @@ const STATS = [
   { n: 9, unit: '大', lab: '业务域即插即用' },
   { n: 5, unit: '类', lab: 'AI 资源统一纳管' },
   { n: 29, unit: '个', lab: '平台插件并行运转' },
-  { n: 1795, unit: '条', lab: '自检断言每次启动全绿' },
+  { n: 1823, unit: '条', lab: '自检断言每次启动全绿' },
 ]
 
 export function renderHome(app) {
@@ -73,25 +76,9 @@ export function renderHome(app) {
       <button class="home-nav-toggle" id="home-nav-toggle" aria-label="打开菜单" aria-expanded="false">${icon('menu', 20)}</button>
     </nav>
 
-    <header class="home-hero">
-      <div class="home-hero-bg"><canvas id="home-stars"></canvas></div>
-      <div class="home-hero-copy">
-        <div class="home-hero-eyebrow"><span class="dot"></span>企业级 AI 资源管理平台</div>
-        <h1>让团队一起用 AI，<br>把<span class="grad">每一份资源</span>都管起来</h1>
-        <p class="home-hero-sub">${esc(rqI18n.t('Skill 市场、Agent 本体、AI 应用、MCP 服务、模型网关、NAS 存储——六类资源一套身份、一套权限、一套审计。基于 DeepSeek Harness「一切皆插件」架构，九大业务域即插即用，按团队需要随用随上。'))}</p>
-        <div class="home-hero-actions">
-          <a class="home-btn home-btn-primary" href="#/login">${icon('arrowUp')}${loginLabel}</a>
-          <a class="home-btn home-btn-ghost" href="#sec-start">了解架构</a>
-        </div>
-        <div class="home-hero-hint">${icon('shieldCheck')}${esc(rqI18n.t('支持钉钉扫码 · 账号密码 · 一次性票据免登'))}</div>
-      </div>
-      <div class="home-hero-visual">
-        <div class="home-tree-wrap">
-          <canvas id="home-tree"></canvas>
-          <div class="home-tree-caption"><i></i>资源生态树 · 悬停查看依赖链路</div>
-        </div>
-      </div>
-    </header>
+    <!-- 首屏横幅（2026-11-13）：智能组织形态 · 六幕 3D 叙事。壳层 DOM 由 org-banner.js 接管，
+         免会话可看，讲清 AI Native 组织的运转逻辑并逐幕桥接到平台能力面。 -->
+    <header class="org-hero" id="org-hero" aria-label="${esc(rqI18n.t(ORG_UI.headTitle))}"></header>
 
     <div class="home-stats">
       ${STATS.map((s, i) => `
@@ -115,6 +102,14 @@ export function renderHome(app) {
           <div class="home-card-title">${esc(rqI18n.t(f.title))}</div>
           <div class="home-card-desc">${esc(rqI18n.t(f.desc))}</div>
         </div>`).join('')}
+      </div>
+      <!-- 资源生态树（2026-11-13 自首屏右栏移入）：平台 → 三域 → 12 个能力面的全景，
+           悬停叶子看根→叶依赖链路，与横幅里的「本体调用资产」形成叙事呼应。 -->
+      <div class="home-tree-band home-reveal">
+        <div class="home-tree-wrap">
+          <canvas id="home-tree"></canvas>
+          <div class="home-tree-caption"><i></i>${esc(rqI18n.t(ORG_UI.treeBandCaption))}</div>
+        </div>
       </div>
     </section>
 
@@ -259,18 +254,19 @@ export function renderHome(app) {
   </div>`
 
   mountNav(app)
-  mountStars($('#home-stars'))
+  // 首屏横幅：智能组织六幕叙事（登录态感知的 CTA 文案随之注入）
+  mountOrgBanner($('#org-hero'), { t: rqI18n.t.bind(rqI18n), loginLabel, loginHref: '#/login' })
   mountTree($('#home-tree'), treeData)
   mountCounters(app)
   mountReveal(app)
   // 01门入口（2026-11-01）：dsh 侧装态（/gate01/panel/），底座不感知——探测存在才渲染
-  // （gate01-entry.js），纯底座部署不露、无死链。
+  // （gate01-entry.js），纯底座部署不露、无死链。2026-11-13 起落点移到横幅底栏 CTA 区。
   void import('../gate01-entry.js')
     .then(({ probeGate01Panel }) => probeGate01Panel())
     .then((url) => {
       if (!url) return
-      $('#home-cta-actions')?.insertAdjacentHTML('beforeend',
-        `<a class="home-btn home-btn-light" href="${url}" target="_blank" rel="noopener">${esc(rqI18n.t('01门 · 部门工作台'))}</a>`)
+      $('#org-bar-cta')?.insertAdjacentHTML('beforeend',
+        `<a class="home-btn home-btn-light org-cta" href="${url}" target="_blank" rel="noopener">${esc(rqI18n.t('01门 · 部门工作台'))}</a>`)
       $('.home-footer-links')?.insertAdjacentHTML('beforeend',
         `<a href="${url}" target="_blank" rel="noopener">${esc(rqI18n.t('01门工作台'))}</a>`)
     })
@@ -293,54 +289,6 @@ function mountNav() {
   nav.querySelectorAll('.home-nav-links a').forEach((a) => {
     a.addEventListener('click', () => nav.classList.remove('open'))
   })
-}
-
-/* ---------- 粒子星尘（hero 背景）：零依赖 canvas ---------- */
-function mountStars(canvas) {
-  if (!canvas) return
-  // canvas 缺席守卫（headless/jsdom 或 canvas 被禁用的环境）：跳过特效，页面结构照常渲染
-  const ctx = canvas.getContext ? canvas.getContext('2d') : null
-  if (!ctx) return
-  let stars = []
-  const resize = () => {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    canvas.width = canvas.clientWidth * dpr
-    canvas.height = canvas.clientHeight * dpr
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    const count = Math.round((canvas.clientWidth * canvas.clientHeight) / 16000)
-    stars = Array.from({ length: Math.min(count, 70) }, () => ({
-      x: Math.random() * canvas.clientWidth,
-      y: Math.random() * canvas.clientHeight,
-      r: 0.8 + Math.random() * 1.8,
-      vy: 0.06 + Math.random() * 0.22,
-      vx: (Math.random() - 0.5) * 0.08,
-      ph: Math.random() * Math.PI * 2,
-      green: Math.random() < 0.22,
-    }))
-  }
-  resize()
-  window.addEventListener('resize', resize)
-  const tick = (t) => {
-    if (!document.body.contains(canvas)) return
-    const w = canvas.clientWidth
-    const hgt = canvas.clientHeight
-    ctx.clearRect(0, 0, w, hgt)
-    for (const s of stars) {
-      s.y -= s.vy
-      s.x += s.vx
-      if (s.y < -4) { s.y = hgt + 4; s.x = Math.random() * w }
-      if (s.x < -4) s.x = w + 4
-      if (s.x > w + 4) s.x = -4
-      const a = 0.16 + 0.42 * (0.5 + 0.5 * Math.sin(t * 0.0012 + s.ph))
-      ctx.beginPath()
-      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
-      ctx.globalAlpha = a
-      ctx.fillStyle = s.green ? 'rgb(96,232,168)' : 'rgb(120,196,255)'
-      ctx.fill()
-    }
-    requestAnimationFrame(tick)
-  }
-  requestAnimationFrame(tick)
 }
 
 /* ---------- 资源生态树：生长动画 + 绿色流转脉冲 + 悬停依赖链高亮 ---------- */
@@ -434,6 +382,16 @@ function mountTree(canvas, tree = TREE) {
   })
   canvas.addEventListener('pointerleave', () => { hover = null })
 
+  // 离屏停帧（2026-11-13）：树移入产品能力区后滚出视口是常态，不再空转烧帧；
+  // 回到视口由观察者重新拉起 rAF。观察者缺席守卫：按常驻处理，保持原行为。
+  let inView = true, rafOn = false
+  if (typeof IntersectionObserver !== 'undefined') {
+    new IntersectionObserver((entries) => {
+      inView = !!entries[0]?.isIntersecting
+      if (inView && !rafOn) requestAnimationFrame(draw)
+    }, { threshold: 0.02 }).observe(canvas)
+  }
+
   const spawnPulse = (now) => {
     const leaves = nodes.filter((n) => n.depth === 2)
     const leaf = leaves[Math.floor(Math.random() * leaves.length)]
@@ -442,7 +400,8 @@ function mountTree(canvas, tree = TREE) {
   }
 
   const draw = (now) => {
-    if (!document.body.contains(canvas)) return
+    if (!document.body.contains(canvas) || !inView) { rafOn = false; return }
+    rafOn = true
     if (!start) start = now
     const grow = ease(Math.min((now - start) / 2100, 1))
     const w = canvas.clientWidth
@@ -602,6 +561,7 @@ function mountTree(canvas, tree = TREE) {
     ctx.restore()
     requestAnimationFrame(draw)
   }
+  rafOn = true
   requestAnimationFrame(draw)
 }
 
