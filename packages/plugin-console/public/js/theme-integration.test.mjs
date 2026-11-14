@@ -54,6 +54,9 @@ test('演示态真实接口、主题切换和工作台导航', async () => {
   Object.defineProperty(window, 'cytoscape', { configurable: true, get: () => cytoscape, set: (real) => {
     cytoscape = (opts) => real(window.JSON.parse(JSON.stringify({ elements: opts.elements, layout: opts.layout, headless: true, styleEnabled: false })))
   } })
+  // 演示态裸落地自 60bc952 起与未登录同口径：先落营销首页，带 from=home 深链才进控制台
+  // （见 home.js CTA 与 landing.js isBareLanding）——本用例要用控制台外壳，故先给深链。
+  location.hash = '#/dashboard?from=home&demo=1'
   await import('./app.js')
   await waitFor(() => document.querySelector('#ui-theme-switcher') && document.querySelector('#dash-tabs button'), '工作台首屏')
   assert.match(document.querySelector('#demo-banner').textContent, /演示模式.*只读/)
@@ -87,7 +90,8 @@ test('演示态真实接口、主题切换和工作台导航', async () => {
   // 旧版首页自带导航（无顶栏语言切换器宿主），切换器恢复语义由下方工作台断言覆盖。
   await waitFor(() => document.querySelector('.home .home-nav'), '公共产品首页（生态树版）')
   assert.ok(document.querySelector('.home #home-login-btn'), '首页登录 CTA 在位')
-  location.hash = '#/dashboard'
+  // '#/dashboard' 是裸落地白名单值，直接设会被分诊送回首页 → 仍用 from=home 深链
+  location.hash = '#/dashboard?from=home&demo=1'
   await waitFor(() => document.querySelector('.lens-crystal'), '回到冰晶工作台')
   assert.ok(document.querySelector('.topbar-right #rq-lang-switcher'), '工作台语言切换器仍可用')
   assert.equal(document.querySelector('#ui-theme-switcher').value, 'crystal')
