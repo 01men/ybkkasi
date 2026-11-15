@@ -337,3 +337,21 @@ DSHCTL_URL=http://宿主IP:7300 DSHCTL_USER=admin DSHCTL_PASS=*** \
 - [ ] 备份策略就位（data/ 目录定时冷备）
 - [ ] admin 初始口令已更换，演示口令 `Ybk@2026` 无法登录
 - [ ] （可选供应链加固）`GET /api/update/status` 显示 `releaseKeyConfigured:true`
+
+---
+
+## 七、部署完之后
+
+跑通了只是开始。下面三件事按顺序做，能少走两周弯路：
+
+1. **先接资产台账，别急着接权限。** 把现有 MCP / Skill / Agent / 模型网关登记进 `/api/assets/inventory`，
+   看清「谁在用什么」。没有这张底账，后面的权限和成本归因都是猜。
+2. **再开成本归因。** 部门 × Agent × Skill 三维从空开始算，历史账单追不回来，越早开始曲线越有意义。
+3. **最后收权限。** 拿着前两步的实际调用记录去收，比凭设计文档拍权限点可靠得多。
+
+部署过程中卡住、文档与实跑不一致、或者哪一步的验收项写得不清楚——直接开 issue，
+说明步骤号和实际输出：
+
+- 部署/接入问题：https://github.com/01men/ybkkasi/issues
+- 设计取舍与场景讨论：https://github.com/01men/ybkkasi/discussions
+- 还没部署就想先看效果：https://demo.ybkkasi.com/launch （免安装，静态介绍页）
