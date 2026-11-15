@@ -313,7 +313,9 @@ DSHCTL_URL=http://宿主IP:7300 DSHCTL_USER=admin DSHCTL_PASS=*** \
    a. GET / 返回 200；
    b. POST /api/auth/login（admin + 口令）返回 token；
    c. GET /api/overview（Bearer token）返回 200；
-   d. npm run selftest 全部通过；npm run lint:manifests 70/70 通过。
+   d. npm run selftest 全部通过（exit=0）；npm run lint:manifests exit=0 且末行
+      「清单校验：N/N 通过；场景图谱：M/M 通过」两处 N/N、M/M 分子分母相等
+      （参考值：v1.6.0 为 123/123 与 14/14；数字会随插件增减变化，以实跑输出为准，不要按字面比对）。
 6.（可选，仅当"接入 dsh"=是）按仓库 docs/deploy-enterprise.md 第三节生成 overlay 并以
    pnpm dsh web --patch 启动，在隔离数据目录中验证 /rq；不得让两个进程同时共享 data/。
 7. 回报：commit hash、服务地址、admin 首登是否成功、自测结果、初始口令交付方式（不得明文贴在公开渠道）。
