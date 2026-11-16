@@ -112,3 +112,19 @@ export function demoPrincipal(): {
 export function findWritePermissionLeaks(permissions: readonly string[] = DEMO_READONLY_PERMISSIONS): string[] {
   return permissions.filter((point) => !point.endsWith('.read') && !point.endsWith('.read-v1'))
 }
+/**
+ * 演示态权限收敛（P0-04，2026-11-17）：把任意主体的权限集夹紧到只读白名单。
+ *
+ * 背景：index.ts 的演示只读闸门只作用于 `/api/` 前缀（`!exchange.path.startsWith('/api/')` 直接
+ * return），而平台自带的 MCP Server 端点在 `/mcp`——不在该前缀内，于是 `/mcp` 的 `tools/call`
+ * 完全绕过了 405 与权限交集两道闸。实测：demo 实例上用仓库里公开的种子口令登录拿会话令牌，
+ * 经 `/mcp` 调 `iam_org_create` 成功写入组织（同一操作走 REST 被正确拒为 DEMO_READONLY）。
+ *
+ * 收敛口径与 index.ts 的 Bearer 分支逐字一致：`'*'` 先展开为白名单全集（通配不参与交集），
+ * 其余按白名单过滤。两个入口共用本函数，避免再次出现「一处加固、另一处漏网」。
+ */
+export function demoReadonlyPermissions(permissions: readonly string[]): string[] {
+  const allow = new Set([...DEMO_READONLY_PERMISSIONS, 'console.login'])
+  const expanded = permissions.includes('*') ? [...allow] : permissions
+  return expanded.filter((point) => allow.has(point))
+}

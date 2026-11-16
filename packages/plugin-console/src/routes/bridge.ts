@@ -9,6 +9,7 @@ import { platformVersionInfo, lookupsFromHost, resolveUnifiedPrincipal, toCaller
 import type { CallerInfo, HttpExchange } from '../../../platform-core/src/index.ts'
 import { noteForwardedPrincipal } from '../../../plugin-connect/src/host.ts'
 import { consolePermissionAllows } from './mcp-dataplane.ts'
+import { isDemoMode, demoReadonlyPermissions, READONLY_METHODS } from '../demo-mode.ts'
 
 export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void {
   const { http, guarded, body, changeLog, caller } = deps
@@ -211,7 +212,19 @@ export function registerBridgeRoutes(ctx: Context, deps: ConsoleRouteDeps): void
         resourceGet: (kind, id) => ctx.resourceCore.get(kind, id) as { orgId?: string } | undefined,
         tenantOfOrg: (orgId) => ctx.iam.tenantOfOrg(orgId),
       }))
-      return { ...toCallerInfo(unified), unified } as unknown as CallerInfo
+      const callerInfo = { ...toCallerInfo(unified), unified } as unknown as CallerInfo
+      // P0-04（2026-11-17）：演示只读闸门必须覆盖 /mcp。
+      // index.ts 的演示闸门只拦 `/api/` 前缀，`/mcp` 不在其中 → 种子口令登录后经 /mcp 的
+      // tools/call 可真实写入（实测 iam_org_create 成功落盘，同操作走 REST 被 405 拒绝）。
+      // 此处对 /mcp 入口做同样的权限收敛：'*' 展开为只读白名单，其余按白名单过滤，
+      // 写类工具因缺权限点被 tools.execute 拒绝。与 REST 面共用 demoReadonlyPermissions，
+      // 避免再次出现「一处加固、另一处漏网」的双闸不同构。
+      if (isDemoMode()) {
+        const readonly = demoReadonlyPermissions(callerInfo.permissions)
+        ;(callerInfo as { permissions: string[] }).permissions = readonly
+        if (callerInfo.unified) (callerInfo.unified as { permissions?: readonly string[] }).permissions = readonly
+      }
+      return callerInfo
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       exchange.res.writeHead(401, { 'content-type': 'application/json' })

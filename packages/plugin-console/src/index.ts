@@ -16,7 +16,7 @@ import type { HttpExchange, Collection, RecordBase, CallerInfo } from '../../pla
 import { createRestGate, lookupsFromHost, resolveUnifiedPrincipal, toCallerInfo, type UnifiedAuthMethod } from '../../platform-core/src/index.ts'
 import { createPluginContext, newId, platformVersionInfo, PlatformEvents } from '../../platform-core/src/index.ts'
 import type { VerifiedPrincipal } from '../../plugin-authn/src/index.ts'
-import { demoPrincipal, isDemoMode, DEMO_PRINCIPAL_ID, DEMO_PRINCIPAL_NAME, DEMO_READONLY_PERMISSIONS, READONLY_METHODS } from './demo-mode.ts'
+import { demoPrincipal, isDemoMode, DEMO_PRINCIPAL_ID, DEMO_PRINCIPAL_NAME, DEMO_READONLY_PERMISSIONS, READONLY_METHODS, demoReadonlyPermissions } from './demo-mode.ts'
 import { PermissionCatalog, type UserManageActor } from '../../plugin-iam/src/index.ts'
 import { ProviderAuthError } from '../../plugin-iam/src/providers.ts'
 import { normalizeLocale, readCatalogDir, DEFAULT_LOCALE, t } from '../../platform-i18n/src/index.ts'
@@ -229,9 +229,7 @@ export function apply(ctx: Context) {
         // '*'（种子管理员等）先展开为白名单全集（通配不参与交集），任何写类权限点被剥除，
         // 写面另有上方 405 闸门兜底。console.login 保留：登录级 GET 语义照常（其写类路由
         // ——反馈/自助票/工具执行——全部非 GET，同样被 405 闸门拦截）。
-        const allow = new Set([...DEMO_READONLY_PERMISSIONS, 'console.login'])
-        const expanded = principal.permissions.includes('*') ? [...allow] : principal.permissions
-        const readonlyPermissions = expanded.filter((point) => allow.has(point))
+        const readonlyPermissions = demoReadonlyPermissions(principal.permissions)
         ;(principal as { permissions: readonly string[] }).permissions = readonlyPermissions
         if (principal.unified) (principal.unified as { permissions?: readonly string[] }).permissions = readonlyPermissions
       }
