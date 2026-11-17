@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>企业 AI 资产成熟度自测：你的团队在第几级？ · 元冰可</title>
+<meta name="description" content="五级判据，每级给可跑的命令。大部分团队卡在 L1→L2，精力却花在 L0→L1。L3 的真正门槛不是有归属字段，是每个 0 都经过确认。">
+<link rel="canonical" href="https://ybkkasi.com/blog/ai-asset-maturity/">
+<meta property="og:title" content="企业 AI 资产成熟度自测：你的团队在第几级？">
+<meta property="og:description" content="五级判据，每级给可跑的命令。大部分团队卡在 L1→L2，精力却花在 L0→L1。L3 的真正门槛不是有归属字段，是每个 0 都经过确认。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://ybkkasi.com/blog/ai-asset-maturity/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/ybk-mark.png">
+<style>
+:root{--bg:#f8f6f3;--surface:#fffdfb;--border:#e0ddd8;--t1:#231f1d;--t2:#4d4643;--t3:#706864;
+--brand:#0a5f87;--brand-deep:#084a68;--brand-soft:#e8f1f6;--ok:#2F9E44;
+--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t1);font-family:var(--font);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 22px}
+header.site{border-bottom:1px solid var(--border);background:rgba(248,246,243,.92);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;color:var(--t1)}
+.brand img{width:22px;height:22px;border-radius:6px}
+.brand span.sub{font-size:11px;letter-spacing:2px;color:#7E9AD2;font-weight:500}
+.nav{display:flex;gap:18px;font-size:13.5px}
+.nav a{color:var(--t2)}
+main{padding:52px 0 80px}
+.meta{font-size:12.5px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.meta em{font-style:normal;color:var(--brand);font-weight:600}
+h1.post{font-size:31px;line-height:1.32;letter-spacing:-.015em;margin-bottom:26px;font-weight:700}
+article h2{font-size:20.5px;margin:44px 0 15px;padding-top:16px;border-top:1px solid var(--border);letter-spacing:-.01em}
+article h3{font-size:17px;margin:28px 0 10px}
+article p{margin:0 0 17px;color:var(--t2);font-size:16px}
+article strong{color:var(--t1);font-weight:650}
+article ul,article ol{margin:0 0 18px 22px;color:var(--t2);font-size:16px}
+article li{margin-bottom:8px}
+article code{font-family:var(--mono);font-size:13.5px;background:#efece7;padding:1.5px 5px;border-radius:4px;color:#0a4a68}
+article pre{background:#201f1d;border-radius:8px;padding:15px 17px;overflow-x:auto;margin:0 0 20px}
+article pre code{background:none;color:#e8e4de;font-size:13px;padding:0;line-height:1.65}
+article table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;table-layout:fixed}
+article th,article td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;word-break:break-word}
+article th{background:var(--brand-soft);font-weight:600;color:var(--brand-deep);font-size:13px}
+article hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+article a{border-bottom:1px solid rgba(10,95,135,.28)}
+.post-list{list-style:none}
+.post-list li{border-top:1px solid var(--border);padding:24px 0}
+.post-list li:first-child{border-top:none;padding-top:0}
+.post-list h2{font-size:20px;font-weight:650;margin:0 0 8px;border:none;padding:0}
+.post-list h2 a{color:var(--t1);border:none}
+.post-list h2 a:hover{color:var(--brand);text-decoration:none}
+.post-list p{color:var(--t3);font-size:14px;margin:0}
+.post-list .d{font-size:12.5px;color:var(--t3);letter-spacing:.05em;margin-bottom:7px}
+footer.site{border-top:1px solid var(--border);padding:26px 0;font-size:12.5px;color:var(--t3)}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+@media(max-width:640px){h1.post{font-size:24px}article h2{font-size:18.5px}article p,article li{font-size:15px}main{padding:34px 0 60px}}
+</style>
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/ybk-mark.png" alt=""><span>元冰可</span><span class="sub">YBK</span></a>
+  <nav class="nav">
+    <a href="/blog/">技术笔记</a>
+    <a href="https://ybkkasi.com/docs">文档</a>
+    <a href="https://github.com/01men/ybkkasi">GitHub</a>
+    <a href="https://demo.ybkkasi.com/">演示</a>
+  </nav>
+</div></header>
+<main><div class="wrap">
+<div class="meta">方法论 · 成熟度</div>
+<h1 class="post">企业 AI 资产成熟度自测：你的团队在第几级？</h1>
+<article>
+<p>先问三个问题，不用查资料，凭印象答：</p>
+<ol><li>公司现在有几个 MCP 服务在跑？<strong>（不是「大概」，是准确数字）</strong></li><li>上个月 AI 花了多少钱？拆到部门，排前三的是谁？<strong>（不是总额）</strong></li><li>昨天有人调了一次客户数据接口，是谁调的？</li></ol>
+<p>三个都能立刻答上来，你的团队在 L3 以上。三个都答不上，在 L0。</p>
+<p><strong>只有一个能答上来，是最常见的状态——也是最危险的状态。</strong> 因为那一个通常让人误以为「我们在管 AI」。</p>
+<p>下面五级，每级给出可验证的判据。不用自评，直接跑命令对。</p>
+<h2>一、五级的判据</h2>
+<table><thead><tr><th>级别</th><th>一句话</th><th>可验证判据</th></tr></thead><tbody><tr><td><strong>L0 散装</strong></td><td>东西在跑，没人有名单</td><td>问「有几个」，三个部门给三个数</td></tr><tr><td><strong>L1 有清单</strong></td><td>有一张表，但是人填的</td><td>表里超过一周没更新；有人离职后条目还在</td></tr><tr><td><strong>L2 有台账</strong></td><td>从系统里自动出，不是人填的</td><td>有一个接口，能返回全部资产的当前状态</td></tr><tr><td><strong>L3 有归口</strong></td><td>每个资产有归属人、每次调用有归属</td><td>任一次调用能回答「谁、为什么、花了多少」</td></tr><tr><td><strong>L4 有制度</strong></td><td>权限和成本在调用发生时强制生效</td><td>归口字段缺失时，调用直接失败而不是记一笔</td></tr></tbody></table>
+<p>这五级不是能力等级，是<strong>「能回答哪些问题」的等级</strong>。L2 能回答「有什么」，L3 才能回答「谁在用」，L4 才能回答「该不该让他用」。</p>
+<p><strong>大部分团队的卡点在 L1→L2，而绝大部分精力花在 L0→L1。</strong></p>
+<h2>二、L0 到 L1：清单的错觉</h2>
+<p>L0 的特征不是「没有管理」，是<strong>三份互不相交的名单</strong>。</p>
+<p>我们内部真实经历：IT 说「MCP 服务七八个」，业务说「Agent 十几个，具体哪些还在用不知道」，财务说「模型开了四家账号，月账单四万多」。三份台账，零重合。</p>
+<p>于是建了一张 Excel。这就是 L1。</p>
+<p>L1 的问题从来不是「没建」，是<strong>建完之后它就不再是真的</strong>。三个具体腐烂方式：</p>
+<ul><li><strong>人一离职，条目变孤儿。</strong> 表里还写着「负责人：张三」，张三三个月前走了。</li><li><strong>新东西永远滞后入表。</strong> 有人周五接了个 MCP 服务自己试，下周一才想起来没登记——如果他没想起来，就永远不在表里。</li><li><strong>状态列是愿望不是事实。</strong> 表里写「运行中」，实际早就挂了，因为没人去改。</li></ul>
+<p><strong>判据很简单：这张表如果今天停止人工维护，多久之后它会开始说谎？</strong> 答案是「一周内」的话，你还在 L1，不管表做得多漂亮。</p>
+<p>我们的判断是：<strong>L1 不该作为目标级，它只是必经的过渡态。</strong> 在 L1 上做的所有优化（加字段、加颜色、加自动提醒）都是给一个必然腐烂的东西续命。</p>
+<h2>三、L2 到 L3：台账的价值在问句，不在报表</h2>
+<p>L2 的定义是<strong>有接口，不是有页面</strong>。区别在于：页面是给人看的，接口是能被查的。</p>
+<p>我们的 <code>/api/assets/inventory</code> 返回一个扁平数组，六类资产混在同一个 <code>items</code> 里，每条只有 11 个字段：<code>type</code> / <code>id</code> / <code>slug</code> / <code>name</code> / <code>status</code> / <code>health</code> / <code>org</code> / <code>updatedAt</code> / <code>calls</code> / <code>costCents</code>。</p>
+<p>只有 11 个。版本号、endpoint、鉴权方式、依赖拓扑这些类内属性，一律不进统一模型。</p>
+<p><strong>因为台账的价值全在「能被问」，而不在「记得全」。</strong> 统一之前你问不出这些问题，因为答案散在六个接口里、字段名都不一样：</p>
+<ul><li>「AI 平台部现在挂了几个在线的东西？」→ 按 <code>org</code> + 在服状态，一行查询</li><li>「最贵的三项是什么？」→ 按 <code>costCents</code> 降序</li><li>「哪些资产 30 天一次没被调用过？」→ <code>calls === 0</code></li></ul>
+<p>第三条是我们内部最有用的查询，也是<strong>最容易给出错误答案的一条</strong>。</p>
+<h2>四、L3 的门槛：每个 0 必须是真的 0</h2>
+<p>这一节是整篇文章的重点，也是我们踩得最深的一脚。</p>
+<p>实测 27 个资产里 <code>calls === 0</code> 的有 20 条。看起来是个大发现——74% 的 AI 资产没人用。但拆开看：</p>
+<table><thead><tr><th>类型</th><th>零调用</th><th>这个 0 是真的吗</th></tr></thead><tbody><tr><td>mcp</td><td>1（灰度中）</td><td>真</td></tr><tr><td>skill</td><td>2（安装数 0）</td><td>真</td></tr><tr><td>model</td><td>2（待接入）</td><td>真</td></tr><tr><td>nas</td><td>2（草稿态）</td><td>真</td></tr><tr><td>app</td><td>0</td><td>—</td></tr><tr><td><strong>agent</strong></td><td><strong>6（全部）</strong></td><td><strong>假 0</strong></td></tr></tbody></table>
+<p>六个 Agent 的 <code>calls</code> 恒为 0，原因不是没人用，是这条链路上取用量时传的是 <code>undefined</code>，落进默认分支写了 0。<strong>查询逻辑没查错，数据从源头就是假的。</strong></p>
+<p>后果不是「那一格不好看」，是<strong>依赖这一格的每一个问句都变成半真的</strong>：</p>
+<ul><li>「找出闲置资产」→ 六个在用的 Agent 混进清单</li><li>「闲置率 74%」→ 真实值可能是 52%，也可能是 20%</li><li>有人拿着这份报表去砍预算 → 砍掉的是正在用的东西</li></ul>
+<p>我们当时的临时做法是在查询里先 <code>WHERE type != &#x27;agent&#x27;</code>。这是个技术债，但它比「假装 0 是真的」诚实。</p>
+<p><strong>L3 的真实门槛不是「有归属字段」，是「每个 0 都经过确认」。</strong> 一条记录说「这个月没人用」，你得能回答「你怎么知道没人用，而不是你没记」。</p>
+<p>同理，成本字段：六类里有三类是硬编码 0。所以对外我们从不引用「总成本」以外的任何拆分——因为拆分里有三类的分母是假的。</p>
+<h2>五、L4：让归口字段能弄失败调用</h2>
+<p>L3 和 L4 的差是一行代码的位置。</p>
+<p>L3 的做法常见于「事后补录」：调用发生，日志记一笔，后台任务异步补上部门字段，补不上就留空。</p>
+<p>L4 的做法是<strong>在消耗发生的那一刻强制写上，并且允许它让调用失败</strong>。</p>
+<p>这两者的差别在概率上极大：</p>
+<ul><li>事后补录的补齐率，取决于上游字段质量。我们的实测是补不上的那些永远不会被补上，而且<strong>没人会发现</strong>——因为空值不报警。</li><li>强制写入的失败率，会在第一天就暴露成 500 错误。难看，但你知道。</li></ul>
+<p><strong>一个字段如果可以在缺失的情况下让流程继续，它就一定会缺失。</strong> 这不是纪律问题，是任何有并发和重试的系统里的必然。</p>
+<p>代价是真实的：上线第一周会有调用被拒。这是必须付的价，因为账单月底出来的时候，「某个部门这个月花了多少」这个问题只有一个正确答案，没有「大概」。</p>
+<h2>六、你的自测：跑这四条</h2>
+<p>不用看我们的产品，跑这四行就够判断自己在哪一级：</p>
+<pre><code># L2 判据：有没有一个接口能返回全部资产的当前状态
+curl -s &lt;你的平台&gt;/api/assets/inventory | head -c 200
+# 返回的是接口数据 → L2 起步；返回 HTML → 还在 L1
+
+# L3 判据：任取一条资产，问它的归属和用量
+# 能否一句话回答「谁负责、上月调用几次、花多少」
+
+# L3 判据（关键）：随机挑 5 个「30 天零调用」的资产，人工确认
+# 5 个里有 1 个其实在用 → 你的 0 是假的，回 L2
+
+# L4 判据：把某个资产的归属部门清空，然后调用它
+# 调用成功并记了一笔空归属 → L3
+# 调用被拒绝，报错说缺归属 → L4</code></pre>
+<p>最后一条是最硬的判据，也是最容易被跳过的一条——因为它真的会让一次调用失败。</p>
+<h2>七、我们现在在哪一级</h2>
+<p>诚实地说：<strong>L3，正在补 L4 的洞。</strong></p>
+<p>具体的缺口，列清楚：</p>
+<ul><li><code>calls</code> / <code>costCents</code> 六类里有三类是硬编码 0 → 拆分口径不完整，对外只引总数</li><li>Agent 的用量取用走的是空参数默认分支 → 「零调用」查询需要排除 agent 才可信</li><li>归口字段在部分通道是事后补，不是强制写 → 还没到「缺了就失败」</li><li><code>collections</code> 这个数在 72 到 86 之间反复（装配态差异），所以对外文案里任何地方都不引用它——<strong>一个会涨也会跌的指标，是装配态的伪指标，不是业务指标</strong></li></ul>
+<p><strong>这四条都是我们自己写在文档里的，不是别人挖出来的。</strong> 因为一个台账如果不标出自己漏了什么，它就没有价值——一份每格都填满的台账，通常有三分之一的格子是拍的。</p>
+<p>L4 不是终点。但 L3 到 L4 这一步，是所有「AI 花了多少钱」的问题从「说不清」变成「说得清」的唯一一步。</p>
+<hr>
+<p>源码 <a href="https://github.com/01men/ybkkasi">https://github.com/01men/ybkkasi</a>，MIT，30 个插件 / 94 个权限点 / 499 条路由 / 98 个 MCP 工具 / 1822 项断言，Node 22 + <code>node:sqlite</code>，零重型依赖。在线只读演示 <a href="https://demo.ybkkasi.com/">https://demo.ybkkasi.com/</a>。如果你只想先看一眼「台账长什么样」，<code>/api/assets/inventory</code> 打开就是。</p>
+</article>
+</div></main>
+<footer class="site"><div class="wrap">
+  <span>© 2026 杭州元冰可科技有限公司 · 企业 AI 资产治理</span>
+  <span>MIT · <a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a></span>
+</div></footer>
+</body>
+</html>

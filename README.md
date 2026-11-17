@@ -156,6 +156,7 @@ AI 原生组织需要在五个方面重塑生产关系，平台在每一项下�
 | [30 插件 / 94 权限点 / 499 路由：把六类 AI 资产做成一本台账](https://ybkkasi.com/blog/six-asset-types-plugin-tree/) | 插件树不是网关。路由统计要同时扫两种注册形态，458 是 499 的子集，不能相减。[Discussion #35](https://github.com/01men/ybkkasi/discussions/35) |
 | [为什么我们把 6 类 AI 资产统一成一套模型](https://ybkkasi.com/blog/six-asset-model-cost/) | 只投影 11 个可跨类问的字段。代价是 Agent/Skill/NAS 三类成本恒为 0，假 0 会污染所有基于 0 的查询。[Discussion #36](https://github.com/01men/ybkkasi/discussions/36) |
 | [98 个 MCP 工具，四个 MCP 目录里一个都搜不到](https://ybkkasi.com/blog/mcp-directory-404/) | `package.json` 里一个 `private: true` 让整条分发链在第一步就死掉，而症状出现在第 3、4 步。附 SPA 站点「200 = 页面存在」验证方法失效的修法。[Discussion #37](https://github.com/01men/ybkkasi/discussions/37) |
+| [企业 AI 资产成熟度自测：你的团队在第几级？](https://ybkkasi.com/blog/ai-asset-maturity/) | 五级判据 + 四条可跑自测。卡点几乎总在 L1→L2：清单必然腐烂，台账必须从系统出而不是人填。[Discussion #38](https://github.com/01men/ybkkasi/discussions/38) |
 
 ## 联系我们
 
