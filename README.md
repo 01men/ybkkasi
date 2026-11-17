@@ -72,6 +72,10 @@ npm start
 
 独立实例默认不注入演示数据。首次启动凭据、持久化、备份和企业部署配置见[部署指南](docs/deploy-enterprise.md)。
 
+## 一键部署
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/Ybkkasi/)
+
 ## 界面
 
 以下截图来自本仓库的演示实例，数据为演示数据：
