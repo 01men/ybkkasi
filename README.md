@@ -45,7 +45,22 @@
 
 ## 快速开始
 
-在线体验无需安装：[demo.ybkkasi.com](https://demo.ybkkasi.com/)。
+先选一条路。**只想看效果的话不用装任何东西**；想在本机跑起来，最短的是 Docker 一条命令。
+
+| 你的目的 | 入口 | 说明 |
+| --- | --- | --- |
+| 先看控制台长什么样 | [demo.ybkkasi.com](https://demo.ybkkasi.com/) | 免登录只读演示，0 安装 |
+| 本机拉起只读演示实例 | `docker compose up -d`（见下） | 一条命令，自动构建镜像，需已装 Docker |
+| 作为 dsh 插件接入 | `dsh plugin --profile web add github:01men/ybkkasi` | 需已有 dsh `web` profile |
+| 源码跑独立实例（开发 / 二次开发） | `npm ci && npm start` | 需 Node.js ≥ 22.6 |
+
+> **本仓库不发布到 npm，这是刻意选择，不是遗漏。** `package.json` 里设了 `private: true`，
+> `installMode` 是 `source`：运行需要 Node ≥ 22.6（原生执行 TypeScript，无构建步骤）、
+> 内置 `node:sqlite`、并装配 30 个 cordis 插件。发包只解决「registry 上有没有」，
+> 不解决「装完能不能跑」，反而会造出一个能 `npm i`、起不来的包。
+> 因此安装入口只有上表四条。副作用是 Glama / mcp.so / Smithery / npm 这些靠「自助验证到包」
+> 收录的 MCP 目录无法建立条目——完整的原因、影响与取舍见
+> [98 个 MCP 工具，四个 MCP 目录里一个都搜不到](https://ybkkasi.com/blog/mcp-directory-404/)。
 
 本地使用 Docker Compose 启动一个只读演示实例：
 
