@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>98 个 MCP 工具，四个 MCP 目录里一个都搜不到 · 元冰可</title>
+<meta name="description" content="98 个 MCP 工具、499 条路由，在 npm、Glama、mcp.so、Smithery 四个目录里全部 404。根因是 package.json 里一个 private: true。以及为什么这个错误会被读成「收录了但没流量」。">
+<link rel="canonical" href="https://ybkkasi.com/blog/mcp-directory-404/">
+<meta property="og:title" content="98 个 MCP 工具，四个 MCP 目录里一个都搜不到">
+<meta property="og:description" content="98 个 MCP 工具、499 条路由，在 npm、Glama、mcp.so、Smithery 四个目录里全部 404。根因是 package.json 里一个 private: true。以及为什么这个错误会被读成「收录了但没流量」。">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://ybkkasi.com/blog/mcp-directory-404/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/ybk-mark.png">
+<style>
+:root{--bg:#f8f6f3;--surface:#fffdfb;--border:#e0ddd8;--t1:#231f1d;--t2:#4d4643;--t3:#706864;
+--brand:#0a5f87;--brand-deep:#084a68;--brand-soft:#e8f1f6;--ok:#2F9E44;
+--font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t1);font-family:var(--font);line-height:1.75;-webkit-font-smoothing:antialiased}
+a{color:var(--brand);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:760px;margin:0 auto;padding:0 22px}
+header.site{border-bottom:1px solid var(--border);background:rgba(248,246,243,.92);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;height:56px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;color:var(--t1)}
+.brand img{width:22px;height:22px;border-radius:6px}
+.brand span.sub{font-size:11px;letter-spacing:2px;color:#7E9AD2;font-weight:500}
+.nav{display:flex;gap:18px;font-size:13.5px}
+.nav a{color:var(--t2)}
+main{padding:52px 0 80px}
+.meta{font-size:12.5px;color:var(--t3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+.meta em{font-style:normal;color:var(--brand);font-weight:600}
+h1.post{font-size:31px;line-height:1.32;letter-spacing:-.015em;margin-bottom:26px;font-weight:700}
+article h2{font-size:20.5px;margin:44px 0 15px;padding-top:16px;border-top:1px solid var(--border);letter-spacing:-.01em}
+article h3{font-size:17px;margin:28px 0 10px}
+article p{margin:0 0 17px;color:var(--t2);font-size:16px}
+article strong{color:var(--t1);font-weight:650}
+article ul,article ol{margin:0 0 18px 22px;color:var(--t2);font-size:16px}
+article li{margin-bottom:8px}
+article code{font-family:var(--mono);font-size:13.5px;background:#efece7;padding:1.5px 5px;border-radius:4px;color:#0a4a68}
+article pre{background:#201f1d;border-radius:8px;padding:15px 17px;overflow-x:auto;margin:0 0 20px}
+article pre code{background:none;color:#e8e4de;font-size:13px;padding:0;line-height:1.65}
+article table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;table-layout:fixed}
+article th,article td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;word-break:break-word}
+article th{background:var(--brand-soft);font-weight:600;color:var(--brand-deep);font-size:13px}
+article hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+article a{border-bottom:1px solid rgba(10,95,135,.28)}
+.post-list{list-style:none}
+.post-list li{border-top:1px solid var(--border);padding:24px 0}
+.post-list li:first-child{border-top:none;padding-top:0}
+.post-list h2{font-size:20px;font-weight:650;margin:0 0 8px;border:none;padding:0}
+.post-list h2 a{color:var(--t1);border:none}
+.post-list h2 a:hover{color:var(--brand);text-decoration:none}
+.post-list p{color:var(--t3);font-size:14px;margin:0}
+.post-list .d{font-size:12.5px;color:var(--t3);letter-spacing:.05em;margin-bottom:7px}
+footer.site{border-top:1px solid var(--border);padding:26px 0;font-size:12.5px;color:var(--t3)}
+footer.site .wrap{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+@media(max-width:640px){h1.post{font-size:24px}article h2{font-size:18.5px}article p,article li{font-size:15px}main{padding:34px 0 60px}}
+</style>
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/ybk-mark.png" alt=""><span>元冰可</span><span class="sub">YBK</span></a>
+  <nav class="nav">
+    <a href="/blog/">技术笔记</a>
+    <a href="https://ybkkasi.com/docs">文档</a>
+    <a href="https://github.com/01men/ybkkasi">GitHub</a>
+    <a href="https://demo.ybkkasi.com/">演示</a>
+  </nav>
+</div></header>
+<main><div class="wrap">
+<div class="meta">自省 · 分发</div>
+<h1 class="post">98 个 MCP 工具，四个 MCP 目录里一个都搜不到</h1>
+<article>
+<p>上个月有个用户在群里问：「你们的 MCP Server 在 Glama 上叫什么？我搜不到。」</p>
+<p>我去搜了。搜不到。</p>
+<p>接着把另外三个目录也搜了一遍：npm 上 <code>dsh-enterprise-ops</code> 返回 404，Glama 返回 404，mcp.so 没有条目，Smithery 的搜索接口直接报错。四个主流 MCP 目录，一个都不存在。</p>
+<p><strong>这个项目有 98 个 MCP 工具、499 条路由、30 个插件。它作为一个 MCP Server，在 MCP 的地图上是不存在的。</strong></p>
+<p>更难受的是：这件事我们两个月前就知道了。<code>punkpeye/awesome-mcp-servers</code>（97.7k star）上那个 PR 从 10 月 17 日挂到现在，我还在评论区自己写了八条更新，最后一条是「Glama 是 blocker，且在我们这边」。</p>
+<p>我知道问题在哪。我只是没改。</p>
+<h2>一、四个目录，同一份实测</h2>
+<p>先摆证据。全部是今天重新跑的，不是回忆：</p>
+<table><thead><tr><th>目标</th><th>结果</th><th>判据</th></tr></thead><tbody><tr><td><code>registry.npmjs.org/dsh-enterprise-ops</code></td><td>404</td><td>包从未发布，注册表里没有这个名</td></tr><tr><td><code>glama.ai/mcp/servers/@01men/ybkkasi</code></td><td>404</td><td>目录查不到服务条目</td></tr><tr><td><code>mcp.so/server/ybkkasi</code></td><td>404</td><td>无收录</td></tr><tr><td>Smithery 搜索 <code>ybkkasi</code></td><td>接口报错</td><td>无收录</td></tr></tbody></table>
+<p>四个 404 背后是<strong>同一个根因</strong>，不是四次独立的失败。</p>
+<h2>二、根因是 <code>package.json</code> 第 4 行</h2>
+<p>打开仓库根目录的 <code>package.json</code>：</p>
+<pre><code>{
+  &quot;name&quot;: &quot;dsh-enterprise-ops&quot;,
+  &quot;version&quot;: &quot;1.6.0&quot;,
+  &quot;private&quot;: true,
+  &quot;bin&quot;: null
+}</code></pre>
+<p><code>private: true</code>。</p>
+<p>这一个 boolean 做的事情比它看起来多：它让 <code>npm publish</code> 无条件失败，而 npm registry 是这条链路上的第一块多米诺。</p>
+<ul><li>npm 上没有包 → Glama 的自助验证拿不到包元数据 → 目录不给建条目</li><li>Glama 没有条目 → <code>punkpeye/awesome-mcp-servers</code> 的自动检查挂红 → 维护者不会合</li><li>目录里没有 → mcp.so / Smithery 的同步器抓不到 → 也不会有</li></ul>
+<p><strong>四个目录，一个 boolean，一条因果链。</strong></p>
+<p><code>private: true</code> 不是失误。它是刻意的：这个仓有 <code>packages/</code> 下 30 个包、内部有 <code>docs/internal/</code> 一堆设计文档，误执行一次 <code>npm publish</code> 就能把半个仓库推上公网。用 <code>private</code> 锁死发布，是当时最省事的防呆。</p>
+<p>省事的代价是：<strong>整个分发链路在第一步就死了，而症状出现在第 3、4 步。</strong></p>
+<h2>三、为什么这个错会被读成「收录了但没流量」</h2>
+<p>这是这篇文章真正想讲的事。</p>
+<p>当时我们内部的说法是「MCP 目录这条路没效果」。理由听起来很扎实：投了 14 个清单，0 个第三方 referrer。</p>
+<p>但把判据换成「目标站能不能自助验证到这个包」，14 投的真实状态是：<strong>大部分根本没进入审核，少数进了但过不了自动检查。</strong></p>
+<p>这两件事在报表上是同一个数字——<code>referrer = 0</code>。</p>
+<ul><li>「收录了，但没人从那里点进来」→ 渠道无效，砍掉</li><li>「压根没收录，所以不可能有人从那里点进来」→ 执行缺失，与渠道无关</li></ul>
+<p><strong>同一个 0，两种完全相反的含义。而人只会看见自己想看见的那个。</strong></p>
+<p>我们因此冻了 awesome 清单这条路径，写进了复盘：「14 投 0 referrer，该路径不可执行」。</p>
+<p>后来 11 月 12 日 <code>agentrust-io/awesome-ai-governance#164</code> 被维护者合并了 —— 22 天前投的，一个 8 周里唯一存活的投递。它让结论变得很难看：不是清单无效，是我们投的方式有一半是废的，而另一条（这个仓不需要 npm 包，只看 README）恰好有效。</p>
+<h2>四、我们试过的三条绕路，全部失败</h2>
+<p><strong>绕路一：加 <code>glama.json</code> 声明所有权。</strong></p>
+<p>10 月 23 日我在仓库根目录加了 <code>glama.json</code>，按 Glama 的 schema 声明 server 归属。结论：没用。Glama 的验证要求能拉到包或者能跑到容器，<code>glama.json</code> 只证明「这个 GitHub 仓库声称自己属于这个 listing」，证明不了「这个 listing 有东西可跑」。</p>
+<p><strong>绕路二：发 GitHub Release 当替代。</strong></p>
+<p>10 月 23 日打了 v1.3.0，后来又发 v1.5.0、v1.6.0。Release 是公开可下载的，看起来能替代 npm 包。</p>
+<p>结论：对目录审核没用。四个目录的验证逻辑都指向包管理器或可运行的容器镜像，GitHub Release 不在它们的判据里。</p>
+<p><strong>绕路三：请维护者豁免。</strong></p>
+<p>我在 PR 评论区明确写过「不申请豁免」——因为那条规则是对的。一个要求「只有能跑起来的 server 才收录」的清单，如果为了某个项目开口子，它三个月内就会变成一张死链表。</p>
+<p><strong>三条绕路都失败的共同原因：它们都在绕开「包不可安装」这个事实，而不是解决它。</strong></p>
+<h2>五、这件事的边界：目录收录不是分发渠道</h2>
+<p>写到这里要收一下，不然就成了「我们终于要发 npm 了」的预告——不是。</p>
+<p>三个事实必须先讲清：</p>
+<p><strong>第一，这个项目的主安装形态是源码。</strong> <code>/api/platform/info</code> 明确回 <code>installMode: &quot;source&quot;</code>。它要 Node ≥ 22.6、要 <code>node:sqlite</code>、要装配 30 个 cordis 插件，不是 <code>npx xxx</code> 一条命令能起的东西。发到 npm 上，用户下载完还是得 clone。<strong>包管理器解决的是「有没有」，不解决「能不能跑」。</strong></p>
+<p><strong>第二，目录的流量从来不是主渠道。</strong> 8 周的数据：外部 referrer 只有 github.com。目录即使收录，能带来的也是长尾里的长尾。</p>
+<p><strong>第三，真正被这个 boolean 挡住的是「被验证」，不是「被使用」。</strong> 有人评估这套东西，会去翻 <code>package.json</code>（我们的 traffic top paths 里 <code>blob/main/package.json</code> 已经连续几天进榜），看到 <code>private: true</code> 之后会得出一个合理但错误的结论：「这大概是内部项目，不是给人用的」。</p>
+<p>所以正确的动作不是「为了收录去发 npm」，而是：<strong>要么把可安装性做真，要么把「为什么不可安装」写在第一屏。</strong></p>
+<p>我们选后者。至少现在，<code>package.json</code> 里的 <code>private: true</code> 是诚实的——它就是不可从包管理器安装。</p>
+<h2>六、顺带修掉一个验证方法</h2>
+<p>查这四个 404 的时候发现一个更基础的问题，比上面的都值得说。</p>
+<p>我们验证「页面是否上线」的方法，一直是 <code>curl -o /dev/null -w &quot;%{http_code}&quot;</code>。返回 200 就算成功。8 篇博客上线时都是这么验的。</p>
+<p>今天顺手试了一下：<code>https://ybkkasi.com/blog/nonsense-xyz/</code> 返回 <strong>200</strong>。</p>
+<p>站点是单页应用，所有未命中的路径都回退到首页，永远 200。<strong>「200 = 页面存在」在这个站点上是完全失效的判据。</strong></p>
+<p>正确的验法是比对标题：</p>
+<pre><code>curl -s https://ybkkasi.com/blog/six-asset-model-cost/ | grep -o &#x27;&lt;title&gt;[^&lt;]*&lt;/title&gt;&#x27;
+# &lt;title&gt;为什么我们把 6 类 AI 资产统一成了一套模型…… · 元冰可&lt;/title&gt;
+
+curl -s https://ybkkasi.com/blog/nonsense-xyz/ | grep -o &#x27;&lt;title&gt;[^&lt;]*&lt;/title&gt;&#x27;
+# &lt;title&gt;元冰可 AIOS · 企业 AI 运行与治理平台&lt;/title&gt;   ← 回退到首页</code></pre>
+<p>八篇博客这次全部重验过，标题各自独立、不是首页回退，确实在线。</p>
+<p>但方法本身的漏洞是真的：<strong>任何一个「验证信号」在它失效之前，都会一直给你绿灯。</strong> 而失效的那一天，你不会收到通知。</p>
+<p>我们前面那个 <code>referrer = 0</code> 是同一个病：一个读数为 0 的指标，看起来像「没人来」，实际是「管道断了」。两个都通过了我当时的验收，因为验收的方法本身不检查自己有没有在说谎。</p>
+<h2>七、如果你也在做 MCP Server</h2>
+<p>四条能直接查的，按顺序：</p>
+<ol><li><strong><code>grep &#x27;&quot;private&quot;&#x27; package.json</code></strong>。是 <code>true</code> 就检查一下：这个值是为了防误发布，还是因为没打算被安装？两者是不同的决定，混在一起就会像我们这样，两个月后才发现自己不在任何地图上。</li><li><strong><code>curl -o /dev/null -w &quot;%{http_code}&quot; https://registry.npmjs.org/&lt;你的包名&gt;</code></strong>。404 就是不在，没有第二种解释。</li><li><strong>验证页面别只看 HTTP 码</strong>。SPA 站点会给每个不存在的路径返回 200，静态站会给每个不存在的路径返回 200（如果配了 fallback）。用页面里独有的字符串或者 <code>&lt;title&gt;</code> 做判据。</li><li><strong><code>referrer = 0</code> 先分因</strong>。「来了没人点」和「压根进不去」在报表上同形。分不清就先去目标站搜自己的名字——搜得到再谈流量，搜不到谈执行。</li></ol>
+<h2>八、现状</h2>
+<p>诚实地说，这一节是这篇文章唯一能给的承诺：</p>
+<ul><li>四个目录仍然是 404，<code>private: true</code> 还在，本轮没有改</li><li><code>punkpeye/awesome-mcp-servers#16790</code> 仍然 open，我不打算再催</li><li><code>agentrust-io/awesome-ai-governance</code> 那条收录是真的，在 README 的 End-to-End Governance 段</li></ul>
+<p>下一步如果要动，只有两个选择：把 <code>packages/</code> 拆出一个可发布的单包，或者彻底放弃「可安装的 MCP Server」这个定位，只做「可源码部署的自托管平台」。</p>
+<p><strong>两个都要改仓库结构，都不在本周的排期里。所以这一周，它继续是 404。</strong></p>
+<hr>
+<p>源码 <a href="https://github.com/01men/ybkkasi">https://github.com/01men/ybkkasi</a>，MIT，30 个插件 / 94 个权限点 / 499 条路由 / 98 个 MCP 工具，全部可本地起。在线只读演示 <a href="https://demo.ybkkasi.com/">https://demo.ybkkasi.com/</a>。如果你在评估「要不要给公司的 AI 资产建台账」，先看 <code>docs/deploy-enterprise.md</code> 的验收清单——读完再决定要不要试，比看 README 有用。</p>
+</article>
+</div></main>
+<footer class="site"><div class="wrap">
+  <span>© 2026 杭州元冰可科技有限公司 · 企业 AI 资产治理</span>
+  <span>MIT · <a href="https://github.com/01men/ybkkasi">github.com/01men/ybkkasi</a></span>
+</div></footer>
+</body>
+</html>
