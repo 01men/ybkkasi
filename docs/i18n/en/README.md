@@ -139,6 +139,16 @@ Endpoint and tool counts change with version and caller permissions, so they are
 - **Permissions and credentials** — grant the minimum required permissions and treat tokens, enrollment codes, and secrets as sensitive. Audit and approval coverage follows the configuration and permissions actually in force.
 - **Models and tools** — real invocations require configured services and credentials; demo data and demo execution results do not represent production calls.
 
+## How it relates to other frameworks
+
+In one line: Dify/n8n build AI apps, AI Gateway/ThinkWatch gate how calls pass, and **ybkkasi governs who owns the AI capability, who may invoke it, how much was used, who signed off, and how results are verified** — the control plane for enterprise AI assets and digital workers.
+
+- Not competing with app/workflow builders: assets registered with ybkkasi can still be invoked from Dify, n8n, Flowise, or Langflow.
+- Largest overlap is with model/MCP gateways; our difference is ownership, lifecycle, org attribution, and the digital-worker task loop.
+- Complementary to delivery workbenches such as LoopForge: we supply the org-level asset and approval substrate.
+
+See [docs/compare.md](../../compare.md) for the layered map, fit / no-fit scenarios and public sources (**public-docs assessment, not benchmarked, no ranking**).
+
 ## Documentation and community
 
 [Architecture](../../ARCHITECTURE.md) · [Enterprise deployment](deploy-enterprise.md) · [Changelog](../../../CHANGELOG.md) · [Contributing](../../../CONTRIBUTING.md) · [i18n governance](../README.md) · [日本語](../ja/README.md) · [中文](../../../README.md)

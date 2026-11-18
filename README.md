@@ -152,9 +152,19 @@ AI 原生组织需要在五个方面重塑生产关系，平台在每一项下�
 - **权限与凭据**：按需授予最小权限，妥善保管令牌、接入码和密钥；审计和审批以实际配置及操作权限为准。
 - **模型与工具**：真实调用需要配置相应服务和凭据；演示数据及演示执行结果不代表生产调用。
 
+## 与同类框架的关系
+
+一句话：Dify/n8n 一类解决「怎么搭 AI 应用」，AI Gateway/ThinkWatch 一类解决「调用怎么安全地过」，**ybkkasi 解决「这些 AI 能力归谁、谁能调、用了多少、谁签字、结果怎么验」**——企业 AI 资产与数字员工的控制面。
+
+- 不与应用/工作流平台竞争：资产登记后仍可在 Dify、n8n、Flowise、Langflow 里调用；
+- 与模型/MCP 网关重叠最多：差异在资产确权、生命周期与组织归属，以及数字员工任务闭环；
+- 与研发交付工作台（如 LoopForge）互补：我们提供组织级资产与审批底座。
+
+分层对照、适用/不适用场景与公开信息来源见 [docs/compare.md](docs/compare.md)（**公开资料评估，未做同环境实测，不做排名**）。
+
 ## 文档与社区
 
-[架构说明](docs/ARCHITECTURE.md) · [企业部署](docs/deploy-enterprise.md) · [更新记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [i18n 治理](docs/i18n/README.md) · [English](docs/i18n/en/README.md) · [日本語](docs/i18n/ja/README.md) · [Agent](README.agent.md)
+[架构说明](docs/ARCHITECTURE.md) · [与同类框架的关系](docs/compare.md) · [企业部署](docs/deploy-enterprise.md) · [更新记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [i18n 治理](docs/i18n/README.md) · [English](docs/i18n/en/README.md) · [日本語](docs/i18n/ja/README.md) · [Agent](README.agent.md)
 
 ## 技术笔记
 
